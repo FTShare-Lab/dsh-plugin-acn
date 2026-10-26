@@ -62,7 +62,7 @@ Inbox 同步先逐条持久化，再 ACK 成功保存的前缀；ACK 只确认 r
 
 队列领取、入队时抢占、跨进程监控和 Dream 阶段边界共用 runnableJob 条件：queued、未暂停、已注册处理器、nextRunAt 已到期。处理器禁用或退避中的高优先级任务仍持久保留，但不会导致 Dream 反复让位重领；重新启用或到期后才参与调度。
 
-选择**插件自管结构化上下文**。完整 Claim 以 effective_updated_at、created_at 降序、ID 升序装入，保守字符预算 64000；超长单条跳过，余量不足时从较旧条目截断，报告保留覆盖数。候选登记后逐个 draft → 硬校验 → review → execute，不能遗漏候选结束；允许明确保留和零修改。复核输入带原文、草稿、验证哈希与当前候选反馈；全文引用覆盖 name / statement / scope / evidence_summary，包含否定、条件和备选行动。复核仍是模型自评，不能证明事实或信息等价。M6 在 B 候选起草之前加入独立的受限文件查证，默认关闭；A/C 保持已有输入的清理与重组。
+选择**插件自管结构化上下文**。完整 Claim 以 effective_updated_at、created_at 降序、ID 升序装入，保守字符预算 64000；超长单条跳过，余量不足时从较旧条目截断，报告保留覆盖数。候选登记后逐个 draft → 硬校验 → review → execute，不能遗漏候选结束；允许明确保留和零修改。复核输入带原文、草稿、验证哈希与当前候选反馈；全文引用覆盖 name / statement / scope / evidence_summary，包含否定、条件和备选行动。复核仍是模型自评，不能证明事实或信息等价。证据校准在 B 候选起草之前加入独立的受限文件查证，默认关闭；A/C 保持已有输入的清理与重组。
 
 `dream/preservation.ts` 将完整原 evidence_summary 作为保守的不丢失单位，不做语言、关键词或模型抽取。草稿预检和最终提交都要求各 ID（包括废弃历史）逐字保留原摘要；C 另要求 coverage 指定的活跃去向完整承接每条输入摘要。复核入口同样检查原文承接，不能用完整的 before 引用加无关 after 引用骗过。新证据说明只能追加，旧判断可在正文按授权校准并在依据中明确区分新旧版本。同步重绑也检查当前 carrier 的原依据。DTO 与记录格式保持不变；旧未 prepared 草稿按新约束重起草，prepared 固定目标仍按原协议恢复。
 
@@ -100,4 +100,4 @@ review 自有私有窗口，不从可能被 Recap/Finalize 回收的 transcript 
 
 `commands/import.ts` 在目标写入之前验证源路径、UTF-8、DTO、归属和私有安全/容量，再持知识锁逐文件发布。`writeTextAtomicIfAbsent` 复用原子写的临时文件与 fsync，以独占硬链接发布完整目标，已有路径不覆盖；源目录从不加锁或写入。Memory 沿知识锁到双文件锁的顺序，复用 `MemoryFileStore` 的 pending / receipt 恢复边界。导入没有独立后台任务或网络调用；进程中断后用户重试补齐缺失文件，不承诺整批原子可见。
 
-M8 实际模型验收进一步明确了草稿协议：`operation.reason` 只作为无 changes、无独立 change_basis 的质量废弃简写，不是通用备注；所有其他依据使用 change_basis。JSON schema 字段说明与错误反馈给出具体操作 ID / 类别。整合时明确保留指向将废弃输入的既有来源，仅免除合回存续 ID 自身的自引用；这些说明没有放宽硬校验。
+草稿协议中，`operation.reason` 只作为无 changes、无独立 change_basis 的质量废弃简写，不是通用备注；所有其他依据使用 change_basis。JSON schema 字段说明与错误反馈给出具体操作 ID / 类别。整合时保留指向将废弃输入的既有来源，仅免除合回存续 ID 自身的自引用。

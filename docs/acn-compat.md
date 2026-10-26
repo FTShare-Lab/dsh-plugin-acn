@@ -1,8 +1,8 @@
 # ACN 兼容边界
 
-协议基准为 ACN `0.3.3`，参考提交 `c542b1931f72cb905b502bd0f5b3a6efd99affb6`。覆盖 47 份 Rust 导出 YAML、9 组 Claim revision 和 15 份适配模板快照。`pnpm test:compat` 把 TypeScript 写出的 YAML 交回 Rust 解码；`pnpm test:contract` 使用真实 Router / Maintainer。最终执行结果见[验收](acceptance.md)。
+协议基准为 ACN `0.3.3`，参考提交 `c542b1931f72cb905b502bd0f5b3a6efd99affb6`。兼容测试覆盖 Rust 导出的 YAML、Claim revision 和适配模板快照。`pnpm test:compat` 把 TypeScript 写出的 YAML 交回 Rust 解码；`pnpm test:contract` 使用真实 Router / Maintainer。运行方法见[开发指南](development.md)。
 
-Router 的模型重排和 Maintainer 的自动模型仲裁由 ACN 服务提供，须在服务侧配置；插件负责查询、Dispute 上报、建议内化和上传。指定模型下的三成员真实联通、Dream 并发及服务故障结果见[模型团队闭环验收](validation/2026-10-23-model-team-loop.md)，不代表插件实现了服务端仲裁或验证过所有模型。
+Router 的模型重排和 Maintainer 的自动模型仲裁由 ACN 服务提供，须在服务侧配置；插件负责查询、Dispute 上报、建议内化和上传。当前建议关闭 Router 的模型重排，原因见[团队仲裁与信息边界](outstanding-issues.md#团队仲裁与信息边界)。
 
 共享实体包括 Claim、Trace、Dispute、Policy、仲裁及 Inbox 消息，覆盖字段默认值、别名、null / 省略、RFC 3339 纳秒、UTF-8 revision 与来源 ID。UTC 规范年份限制在 0–9999，避免写出源实现无法读回的文件。
 
@@ -27,4 +27,4 @@ Dream、形成、Inbox effect、Memory review、会话状态和权限清单属�
 
 `/acn-import` 只复制校验通过且归属当前 Agent 的 `claims/`、`traces/` 及 `memories/MEMORY.md` / `USER.md`，跳过已有目标。不导入锁、会话、任务、Dream 日志、上传队列或团队状态，也不自动上传。源目录应停止写入以获得稳定快照；规则、预览及恢复语义见[导入说明](command-reference.md#从已有-acn-目录导入)。
 
-更详细的源用例与差异见[分阶段兼容记录](validation/acn-milestones.md)。结构、引用和模型自评不能证明事实正确或整合语义等价，见[已知限制](outstanding-issues.md)。
+结构、引用和模型自评不能证明事实正确或整合语义等价，见[已知限制](outstanding-issues.md)。

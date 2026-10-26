@@ -70,6 +70,6 @@ Each team member maintains local knowledge and uses Router to discover Claims sh
 
 Use a **Router without LLM reranking**: changes in reranked candidate sets can block automatic arbitration adoption. Knowledge reuse depends on the agent retrieving and applying relevant Claims. Evidence records and Dream's citation checks do not guarantee factual accuracy; scope and evidence limitations still matter. Memory protection is not an operating-system sandbox.
 
-Further documentation is in Chinese: [illustrated user guide](docs/user-guide.md), [configuration](docs/config.md), [command reference](docs/command-reference.md), [distribution](docs/release.md), [limitations](docs/outstanding-issues.md), [development](docs/development.md), [architecture](docs/architecture.md).
+Further documentation is in Chinese: [illustrated user guide](docs/user-guide.md), [configuration](docs/config.md), [command reference](docs/command-reference.md), [limitations](docs/outstanding-issues.md), [development](docs/development.md), [architecture](docs/architecture.md).
 
 License: [MIT](LICENSE-MIT) OR [Apache-2.0](LICENSE-APACHE).
