@@ -8,7 +8,8 @@ import type { Receipt } from './evidence.js';
 import { hasCode } from '../store/errors.js';
 
 export const within = (root: string, path: string): boolean => { const rel = relative(root, path); return rel === '' || rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel); };
-const blocked = (part: string): boolean => part.startsWith('.') || /^(?:memory\.md|user\.md|export_env\.sh|credentials(?:\.json|\.ya?ml)?|node_modules|memories)$/i.test(part) || /(?:^|[._-])(?:secret|credential|private[-_]?key|token)(?:[._-]|$)/i.test(part) || /\.(?:pem|key|p12|pfx)$/i.test(part);
+// 文件名和每层目录名共用规则；覆盖单复数凭据名称，保留词边界以免误拦 tokenizer 等普通源码。
+const blocked = (part: string): boolean => part.startsWith('.') || /^(?:memory\.md|user\.md|export_env\.sh|node_modules|memories)$/i.test(part) || /(?:^|[._-])(?:secrets?|credentials?|private[-_]?keys?|tokens?)(?:[._-]|$)/i.test(part) || /\.(?:pem|key|p12|pfx)$/i.test(part);
 export async function authorizeFile(workspace: string, privateHome: string, input: string): Promise<string> {
   requireDream(isAbsolute(workspace) && await fs.realpath(workspace) === workspace, '查证工作区已变化。');
   const path = resolve(workspace, input);

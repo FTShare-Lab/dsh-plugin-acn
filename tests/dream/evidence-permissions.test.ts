@@ -7,11 +7,28 @@ import { z } from 'zod';
 import { evidenceFixture, material } from './evidence-helpers.js';
 import { ClaimIdSchema } from '../../src/protocol/ids.js';
 
+const credentialPaths = ['secrets.json', 'tokens.json', 'app.credentials.json', 'SECRETS.YAML', 'private-keys.txt', join('secrets', 'config.json'), join('config', 'service_credentials.toml'), join('tokens', 'cache.json'), join('credentials', 'runtime.txt')];
+
 describe('restricted workspace evidence', () => {
-  it.each(['MEMORY.md', 'USER.md', 'export_env.sh', '.env', '.env.example', 'credentials.json', '.ssh/id', '.aws/config', '.git/config', 'client.key', 'access-token.txt', 'node_modules/example/index.js', 'memories/example.txt'])('rejects protected path %s without creating a receipt', async (path) => {
+  it.each(['MEMORY.md', 'USER.md', 'export_env.sh', '.env', '.env.example', 'credentials.json', '.ssh/id', '.aws/config', '.git/config', 'client.key', 'access-token.txt', 'node_modules/example/index.js', 'memories/example.txt', ...credentialPaths])('rejects protected path %s without creating a receipt', async (path) => {
     const f = await evidenceFixture();
     try { const target = join(f.workspace, path); await fs.mkdir(dirname(target), { recursive: true }); await fs.writeFile(target, 'PRIVATE_DATA_MARKER'); await expect(f.read(undefined, path)).rejects.toThrow(); expect((await f.store.read())?.receipts).toEqual({}); }
     finally { await f.close(); }
+  });
+  it('excludes credential filenames and directories from discovery and search while allowing ordinary source names', async () => {
+    const f = await evidenceFixture(); const signal = new AbortController().signal;
+    try {
+      for (const path of credentialPaths) { const target = join(f.workspace, path); await fs.mkdir(dirname(target), { recursive: true }); await fs.writeFile(target, 'PRIVATE_DATA_MARKER'); }
+      for (const path of ['tokenizer.ts', 'secretary.txt']) await fs.writeFile(join(f.workspace, path), 'Public source material.');
+      const paths = await f.store.execute('glob', {}, f.initial, signal);
+      expect(paths).toMatchObject({ truncated: false, independent_evidence: false });
+      const discovered = z.object({ matches: z.array(z.object({ path: z.string() })) }).parse(paths);
+      expect(discovered.matches.map((match) => match.path).sort()).toEqual(['secretary.txt', 'source.txt', 'tokenizer.ts']);
+      const matches = await f.store.execute('grep', { query: 'PRIVATE_DATA_MARKER' }, f.initial, signal);
+      expect(matches).toEqual({ matches: [], truncated: false, independent_evidence: false });
+      expect((await f.store.read())?.receipts).toEqual({});
+      for (const path of ['tokenizer.ts', 'secretary.txt']) await expect(f.read(undefined, path)).resolves.toHaveProperty('evidence_id');
+    } finally { await f.close(); }
   });
   it.each(['outside', 'traversal', 'symlink-file', 'symlink-directory', 'hardlink', 'private-home', 'directory', 'binary', 'invalid-utf8'])('rejects unsafe filesystem access: %s', async (mode) => {
     const f = await evidenceFixture(); const outside = join(f.root, 'outside.txt');
