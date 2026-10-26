@@ -1,0 +1,213 @@
+{
+  "acn_version": "0.3.3",
+  "fixtures": [
+    {
+      "kind": "memory-ops",
+      "name": "memory-ops"
+    },
+    {
+      "kind": "memory-snapshot",
+      "name": "memory-snapshot"
+    },
+    {
+      "kind": "memory-snapshot",
+      "name": "memory-snapshot-empty"
+    },
+    {
+      "kind": "memory-usage",
+      "name": "memory-usage"
+    },
+    {
+      "kind": "memory-report",
+      "name": "memory-report"
+    },
+    {
+      "kind": "memory-report",
+      "name": "memory-report-legacy"
+    },
+    {
+      "kind": "claim",
+      "name": "claim-seconds",
+      "revision": "sha256-v1:086cd40e45af96b808773a45a85dabc8e6a854d8cbd15482042cf781f0b579b3"
+    },
+    {
+      "kind": "claim",
+      "name": "claim-ms",
+      "revision": "sha256-v1:26349e624a9642261e4dd9e1bd37535e79a71ee4498d95866533f1f78e0121ee"
+    },
+    {
+      "kind": "claim",
+      "name": "claim-micro",
+      "revision": "sha256-v1:4d9bbda91c894f90daa4c6b498dcdb13859ab012fa712b17ef7788ae633b10d7"
+    },
+    {
+      "kind": "claim",
+      "name": "claim-nanos",
+      "revision": "sha256-v1:9fc2d86305a4a2b34a41db1698a81046f13c727236db2d2b51ae23f0aeec76fb"
+    },
+    {
+      "kind": "claim",
+      "name": "claim-offset",
+      "revision": "sha256-v1:b42d09cb3cd593ddec484bcf9ebd0cddc025f1894164a9b2ecfc64f270a35cfd"
+    },
+    {
+      "kind": "claim",
+      "name": "claim-leap",
+      "revision": "sha256-v1:bce2ee6cf0c31c7d9a21e1c4f929db3eb9d3d9e5f151bd848f6b2ab59408340c"
+    },
+    {
+      "kind": "claim",
+      "name": "claim-long-fraction",
+      "revision": "sha256-v1:9fc2d86305a4a2b34a41db1698a81046f13c727236db2d2b51ae23f0aeec76fb"
+    },
+    {
+      "kind": "claim",
+      "name": "claim-updated",
+      "revision": "sha256-v1:aef3ece4a0cbd9a973a9497cf7be449d6ebdf1cdfe5e76ff9af705e5984b6453"
+    },
+    {
+      "kind": "claim",
+      "name": "claim-legacy",
+      "revision": "sha256-v1:811c863742a8de25993d40a3a01262c2cb4e3b95e3c586969a6bfd577e06dace"
+    },
+    {
+      "kind": "trace",
+      "name": "trace"
+    },
+    {
+      "kind": "trace",
+      "name": "trace-empty"
+    },
+    {
+      "kind": "dispute",
+      "name": "dispute-open"
+    },
+    {
+      "kind": "dispute",
+      "name": "dispute-resolved"
+    },
+    {
+      "kind": "dispute",
+      "name": "dispute-legacy"
+    },
+    {
+      "kind": "policy",
+      "name": "policy-broadcast"
+    },
+    {
+      "kind": "policy",
+      "name": "policy-targeted"
+    },
+    {
+      "kind": "arbitration",
+      "name": "arbitration"
+    },
+    {
+      "kind": "arbitration",
+      "name": "arbitration-legacy"
+    },
+    {
+      "kind": "inbox",
+      "name": "inbox-policy"
+    },
+    {
+      "kind": "inbox",
+      "name": "inbox-attribute"
+    },
+    {
+      "kind": "inbox",
+      "name": "inbox-resolution"
+    },
+    {
+      "kind": "router",
+      "name": "router"
+    },
+    {
+      "kind": "router",
+      "name": "router-empty"
+    },
+    {
+      "kind": "overview",
+      "name": "overview"
+    },
+    {
+      "kind": "overview",
+      "name": "overview-empty"
+    },
+    {
+      "kind": "auth-query",
+      "name": "auth-query"
+    },
+    {
+      "kind": "auth",
+      "name": "auth"
+    },
+    {
+      "kind": "inbox-ack",
+      "name": "inbox-ack"
+    },
+    {
+      "kind": "uploads",
+      "name": "uploads"
+    },
+    {
+      "kind": "uploads",
+      "name": "uploads-empty"
+    },
+    {
+      "kind": "pending-edit",
+      "name": "pending-edit"
+    },
+    {
+      "kind": "reported-sets",
+      "name": "reported-sets"
+    },
+    {
+      "kind": "dream-state",
+      "name": "dream-state-empty"
+    },
+    {
+      "kind": "dream-state",
+      "name": "dream-state"
+    },
+    {
+      "kind": "dream-pending",
+      "name": "dream-pending"
+    },
+    {
+      "kind": "dream-checkpoint",
+      "name": "dream-checkpoint-legacy"
+    },
+    {
+      "kind": "dream-validation",
+      "name": "dream-validation"
+    },
+    {
+      "kind": "dream-checkpoint",
+      "name": "dream-checkpoint-operation"
+    },
+    {
+      "kind": "dream-checkpoint",
+      "name": "dream-checkpoint-legacy-group"
+    },
+    {
+      "kind": "dream-validation",
+      "name": "dream-validation-evidence"
+    },
+    {
+      "kind": "dream-checkpoint",
+      "name": "dream-checkpoint-evidence"
+    }
+  ],
+  "mirrored_private_formats": [
+    "uploads",
+    "pending-edit",
+    "reported-sets",
+    "dream-state",
+    "dream-checkpoint",
+    "dream-validation",
+    "dream-pending"
+  ],
+  "schema_version": 1,
+  "source_commit": "c542b1931f72cb905b502bd0f5b3a6efd99affb6"
+}

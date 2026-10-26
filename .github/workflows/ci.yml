@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm check:security
+      - run: pnpm check:docs
+      - run: pnpm test
+      - run: pnpm build
+      - run: pnpm pack --pack-destination .artifacts
+      - run: pnpm add --global @deepseek-ai/dsh@0.2.1-rc.2
+      - run: pnpm smoke:install
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-node-${{ matrix.node }}
+          path: .artifacts/*.tgz
+  contracts:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [22, 24]
+    steps:
+      - name: Require contract reference repository
+        env:
+          ACN_REFERENCE_REPOSITORY: ${{ vars.ACN_REFERENCE_REPOSITORY }}
+        run: |
+          if [[ -z "$ACN_REFERENCE_REPOSITORY" ]]; then
+            printf '%s\n' 'Configure ACN_REFERENCE_REPOSITORY to run the required live contracts.' >&2
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.ACN_REFERENCE_REPOSITORY }}
+          ref: c542b1931f72cb905b502bd0f5b3a6efd99affb6
+          path: .artifacts/acn-reference
+          token: ${{ secrets.ACN_REFERENCE_TOKEN || github.token }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test:contract
+        env:
+          ACN_REPO: ${{ github.workspace }}/.artifacts/acn-reference

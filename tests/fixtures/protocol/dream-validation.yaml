@@ -1,0 +1,43 @@
+validation_id: 5695055b3bbc50ad910eb33d9831c6924e66386cd476af72ff3377d5235a5407
+input:
+  after:
+  - confidence: medium
+    evidence_summary: example evidence
+    id: claim_00000001
+    name: example
+    scope: example / scope
+    source_claim_ids:
+    - claim_00000002
+    - policy_00000001
+    statement: "中文 😀 / \\ \" \n\t\0\x01\b\f\r"
+    status: deprecated
+  before:
+  - confidence: medium
+    created_at: 2026-10-21T00:00:00Z
+    evidence_summary: example evidence
+    holder: agent-a
+    id: claim_00000001
+    name: example
+    scope: example / scope
+    source_claim_ids:
+    - claim_00000002
+    - policy_00000001
+    statement: "中文 😀 / \\ \" \n\t\0\x01\b\f\r"
+    status: stale
+    updated_at: 2026-10-21T00:01:00.123456789Z
+  change_basis:
+  - added: ''
+    claim_id: claim_00000001
+    evidence_ids: []
+    justification: Historical body remains.
+    removed_or_changed: Remove episodic test material.
+  changes:
+  - action: deprecate
+    changes: {}
+    id: claim_00000001
+  coverage: []
+  evidence: {}
+  group_id: group-example
+  kind: quality
+  reason: '  Review synthetic one-time material.  '
+  unversioned_evidence_omitted: []

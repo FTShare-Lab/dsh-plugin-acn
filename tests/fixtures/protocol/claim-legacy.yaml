@@ -1,0 +1,10 @@
+id: claim_00000002
+name: legacy
+statement: legacy
+scope: example
+holder: agent-a
+confidence: low
+status: deprecated
+created_at: 2026-10-21T00:00:00Z
+source_claim_ids: []
+evidence_summary: example

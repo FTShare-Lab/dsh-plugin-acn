@@ -1,0 +1,1 @@
+{"id":"claim_00000001","name":"example","statement":"中文 😀 / \\ \" \n\t\u0000\u0001\b\f\r","scope":"example / scope","holder":"agent-a","confidence":"high","status":"active","created_at":"2026-10-21T00:00:00.123456Z","source_claim_ids":[],"evidence_summary":"example evidence"}

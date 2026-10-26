@@ -1,0 +1,10 @@
+id: claim_00000001
+name: example
+statement: "中文 😀 / \\ \" \n\t\0\x01\b\f\r"
+scope: example / scope
+holder: agent-a
+confidence: high
+status: active
+created_at: 2016-12-31T23:59:60.123Z
+source_claim_ids: []
+evidence_summary: example evidence

@@ -1,0 +1,9 @@
+id: dispute_00000001
+name: example conflict
+reporter_agent_id: agent-a
+claims:
+- claim_00000001
+- claim_00000002
+summary: example conflict
+status: open
+created_at: 2026-10-21T00:00:00Z

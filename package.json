@@ -1,0 +1,240 @@
+{
+  "name": "dsh-plugin-acn",
+  "version": "0.1.0",
+  "description": "从agent工作轨迹中沉淀可复用的知识与记忆，让知识经验在团队中流动",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "memory",
+    "knowledge",
+    "claim",
+    "acn"
+  ],
+  "license": "MIT OR Apache-2.0",
+  "type": "module",
+  "packageManager": "pnpm@11.25.0",
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0",
+    "dsh": ">=0.2.1-rc.2 <0.3.0"
+  },
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./knowledge": {
+      "types": "./lib/types/plugins/knowledge.d.ts",
+      "default": "./lib/plugins/knowledge.js"
+    },
+    "./tools": {
+      "types": "./lib/types/plugins/tools.d.ts",
+      "default": "./lib/plugins/tools.js"
+    },
+    "./prompt": {
+      "types": "./lib/types/plugins/prompt.d.ts",
+      "default": "./lib/plugins/prompt.js"
+    },
+    "./commands": {
+      "types": "./lib/types/plugins/commands.d.ts",
+      "default": "./lib/plugins/commands.js"
+    },
+    "./protocol": {
+      "types": "./lib/types/protocol/index.d.ts",
+      "default": "./lib/protocol.js"
+    },
+    "./store": {
+      "types": "./lib/types/store/index.d.ts",
+      "default": "./lib/store.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json",
+    "./formation": {
+      "types": "./lib/types/plugins/formation.d.ts",
+      "default": "./lib/plugins/formation.js"
+    },
+    "./formation-core": {
+      "types": "./lib/types/formation/index.d.ts",
+      "default": "./lib/formation.js"
+    },
+    "./inbox": {
+      "types": "./lib/types/plugins/inbox.d.ts",
+      "default": "./lib/plugins/inbox.js"
+    },
+    "./inbox-core": {
+      "types": "./lib/types/inbox/index.d.ts",
+      "default": "./lib/inbox.js"
+    },
+    "./team": {
+      "types": "./lib/types/team/index.d.ts",
+      "default": "./lib/team.js"
+    },
+    "./upload-core": {
+      "types": "./lib/types/upload/index.d.ts",
+      "default": "./lib/upload.js"
+    },
+    "./dream": {
+      "types": "./lib/types/plugins/dream.d.ts",
+      "default": "./lib/plugins/dream.js"
+    },
+    "./dream-core": {
+      "types": "./lib/types/dream/index.d.ts",
+      "default": "./lib/dream.js"
+    },
+    "./memory": {
+      "types": "./lib/types/plugins/memory.d.ts",
+      "default": "./lib/plugins/memory.js"
+    },
+    "./memory-core": {
+      "types": "./lib/types/memory/index.d.ts",
+      "default": "./lib/memory.js"
+    },
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./knowledge/locale/*.json": "./locale/knowledge/*.json",
+    "./knowledge/icon": "./icon.svg",
+    "./prompt/locale/*.json": "./locale/prompt/*.json",
+    "./prompt/icon": "./icon.svg",
+    "./tools/locale/*.json": "./locale/tools/*.json",
+    "./tools/icon": "./icon.svg",
+    "./formation/locale/*.json": "./locale/formation/*.json",
+    "./formation/icon": "./icon.svg",
+    "./inbox/locale/*.json": "./locale/inbox/*.json",
+    "./inbox/icon": "./icon.svg",
+    "./dream/locale/*.json": "./locale/dream/*.json",
+    "./dream/icon": "./icon.svg",
+    "./memory/locale/*.json": "./locale/memory/*.json",
+    "./memory/icon": "./icon.svg",
+    "./commands/locale/*.json": "./locale/commands/*.json",
+    "./commands/icon": "./icon.svg",
+    "./client": {
+      "types": "./lib/types/plugins/client.d.ts",
+      "default": "./lib/client.js"
+    }
+  },
+  "files": [
+    "lib/**/*.js",
+    "lib/types/**/*.d.ts",
+    "prompts/*.j2",
+    "cordis.patch.yml",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+    "README_EN.md",
+    "CHANGELOG.md",
+    "docs/**/*.md",
+    "docs/assets/*.png",
+    "docs/assets/*.jpg",
+    "locale/**/*.json",
+    "icon.svg"
+  ],
+  "dsh": {
+    "manifestVersion": 1,
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-api-remotes",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-plugin-manager"
+      ]
+    }
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "3.18.5",
+    "nunjucks": "3.2.4",
+    "proper-lockfile": "4.1.2",
+    "undici": "8.11.2",
+    "yaml": "2.8.3",
+    "zod": "4.4.3"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.5",
+    "@deepseek-ai/dsh-agent": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-commands": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-credentials": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-fs": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-llm": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-session": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-system-prompt": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-tools": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-typert-protocol": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-working-directory": "0.2.1-rc.2"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.5",
+    "@deepseek-ai/cordis-plugin-include": "1.0.10",
+    "@deepseek-ai/cordis-plugin-loader": "1.0.6",
+    "@deepseek-ai/dsh-agent": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-agent-loop": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-agent-loop-testkit": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-api-gateway": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-api-remotes": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-app-boot": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-client-locale": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-client-ui-plugin-manager": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-client-ui-renderer": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-client-ui-slots": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-commands": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-config-editor": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-credentials": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-fs": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-llm": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-llm-deepseek": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-llm-mock-server": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-loader-smoke": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-ptc-runtime": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-session": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-session-persistence-jsonl": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-subprocess": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-subprocess-local": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-system-prompt": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-tool-fs": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-tool-fs-search": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-tools": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-typert-protocol": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-typert-registry": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-user-approval": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-working-directory": "0.2.1-rc.2",
+    "@eslint/js": "10.0.1",
+    "@testing-library/react": "16.3.0",
+    "@types/node": "22.20.1",
+    "@types/nunjucks": "3.2.6",
+    "@types/proper-lockfile": "4.1.4",
+    "@types/react": "18.3.28",
+    "eslint": "10.13.0",
+    "globals": "17.4.0",
+    "jsdom": "26.1.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "tsdown": "0.22.2",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.72.0",
+    "vitest": "4.1.11"
+  },
+  "scripts": {
+    "build": "tsdown --config tsdown.config.ts && tsdown --config client.config.ts && tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "pretest": "pnpm run build",
+    "test": "vitest run",
+    "test:compat": "bash scripts/check-acn-compat.sh",
+    "check:security": "node scripts/check-security.mjs",
+    "smoke:install": "bash scripts/smoke-install.sh",
+    "fixtures:export": "bash scripts/export-acn-fixtures.sh",
+    "prepack": "pnpm run build",
+    "test:contract": "bash scripts/contract-up.sh",
+    "check:docs": "node scripts/check-docs.mjs",
+    "smoke:web": "node scripts/smoke-web.mjs"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-fs": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-working-directory": {
+      "optional": true
+    }
+  }
+}

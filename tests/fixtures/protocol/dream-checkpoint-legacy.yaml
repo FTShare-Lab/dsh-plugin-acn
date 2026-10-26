@@ -1,0 +1,20 @@
+snapshot_at: 2026-10-21T00:00:00Z
+input_versions: {}
+coverage:
+  included: 0
+  total: 0
+plan:
+  review:
+    quality: Check one-time material.
+    evidence: Not available in this stage.
+    consolidation: Preserve information destinations.
+  groups: []
+receipts: {}
+groups: []
+safety_reviews: []
+self_reviews: []
+trace_id: trace_00000001
+applied: false
+success_at: null
+self_versions: {}
+operation: null

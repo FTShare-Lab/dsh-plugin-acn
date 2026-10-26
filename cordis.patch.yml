@@ -1,0 +1,31 @@
+- insert:
+    - id: acn
+      name: cordis:group
+      group: true
+      isolate:
+        acnKnowledge: true
+        acnFormation: true
+        acnInbox: true
+        acnDream: true
+        acnMemory: true
+      config:
+        - id: acn-configuration
+          name: dsh-plugin-acn
+        - id: acn-knowledge
+          name: dsh-plugin-acn/knowledge
+          config:
+            agentId: ''
+        - id: acn-prompt
+          name: dsh-plugin-acn/prompt
+        - id: acn-tools
+          name: dsh-plugin-acn/tools
+        - id: acn-formation
+          name: dsh-plugin-acn/formation
+        - id: acn-inbox
+          name: dsh-plugin-acn/inbox
+        - id: acn-dream
+          name: dsh-plugin-acn/dream
+        - id: acn-memory
+          name: dsh-plugin-acn/memory
+        - id: acn-commands
+          name: dsh-plugin-acn/commands

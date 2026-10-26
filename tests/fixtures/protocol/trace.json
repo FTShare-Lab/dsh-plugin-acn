@@ -1,0 +1,1 @@
+{"id":"trace_00000001","name":"example task","task":"task\n第二行","agent":"agent-a","input_claims":["claim_00000001","policy_00000001"],"output_claims":["claim_00000002"],"created_at":"2026-10-21T00:00:00.123456789Z"}

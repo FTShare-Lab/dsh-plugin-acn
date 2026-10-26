@@ -1,0 +1,1 @@
+{"id":"inbox_00000001","message_type":"claim_attribute_update","policy":{"id":"policy_00000001","message_type":"claim_attribute_update","name":"example policy","statement":"example instruction","scope":"example","status":"deprecated","created_at":"2026-10-21T00:00:00Z","updated_at":"2026-10-21T01:00:00Z","target_agents":["agent-a","agent-b"]}}

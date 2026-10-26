@@ -1,0 +1,158 @@
+# 命令与行为参考
+
+第一次使用请先阅读带界面截图的[使用指南](user-guide.md)。本文保留工具参数、恢复行为和安全边界，供查阅与排障。
+
+配置 `agentId` 后，插件读取该 Agent 目录中的 Claim / Trace。支持浏览、修订已有知识，以及 Recap / Finalize 自动形成知识。单人模式不会联系团队服务。
+
+模型可调用 `claim`：
+
+| action | 参数 | 行为 |
+| --- | --- | --- |
+| `list` | `query?`、`include_deprecated?`、`offset?`、`limit?` | 搜索 name/scope/statement，默认不显示 deprecated |
+| `read` | `id` | 返回完整 Claim 与 revision，只允许读取当前 holder 的 Claim |
+| `update` | `id`、`expected_revision`、至少一个可编辑字段 | CAS 修订；过期时返回 `{conflict:true,current_revision}` |
+| `traces` | `claim_id?`、`offset?`、`limit?` | 查找当前 Agent 的 Trace，可按输入或输出关系过滤 |
+| `read_trace` | `id`、`task_offset?`、`task_limit?` | 分页返回原始任务文本 |
+
+列表默认每页 20 条，最多 100 条；Trace 正文默认每页 4000 个 Unicode 字符，最多 16000 个。分页结果包含遗漏计数和下一页 offset。动作只接受自身字段。
+
+可编辑字段为 `name`、`statement`、`scope`、`evidence_summary`、`confidence`、`status`。修订保留 id、holder、created_at 和 source_claim_ids，拒绝空白文本、不可见控制字符和明确的指令劫持/凭据外传模式。每次接受的修订都会推进更新时间，即使给出的值与原值相同；未来时间戳也保证严格递增。子代理可以读取，修订会被门禁拒绝。
+
+```json
+{"action":"read","id":"claim_00000001"}
+```
+
+取得实际 revision 后，将其原样用于 update。领域失败以规范 JSON 返回，文件损坏等基础设施失败由工具执行器报告为错误。
+
+用户可以直接运行：
+
+```text
+/acn-status
+/claim
+/claim list example --offset 0 --limit 20
+/claim list --include-deprecated
+/claim show claim_00000001
+/claim set claim_00000001 name="revised name" confidence=medium
+```
+
+`set` 会先读取当前 revision，再进行同样的 CAS 修订。命令及其输出不提交给模型；状态命令显示身份、计数和最近十项后台任务，不输出凭据或私有正文。
+
+每个会话在创建时冻结有界目录；resume、compact 和 fork 沿用已有目录，clear 重建基线。fork 独立确认当前知识变化，不继承父会话的通知游标。目录只有身份字段，完整基线覆盖未展示的 Claim。其他会话或进程修改知识后，下一个获准请求会收到累计变化提示；同一知识版本只准入一次。提示只包含 id、name、scope、status 和变化类型，正文仍需按相关性调用 `read`。
+
+使用原子替换写文件时，目录 mtime 可立即触发重新检查；外部程序原地写入文件时，最多经过约两秒的缓存兜底检查发现变化。当前会话目录不因变化提示而重写。
+
+
+## 知识形成与失败重试
+
+默认在上下文压缩后对已压缩区间执行 Recap；空闲 30 分钟、会话 dispose、手动命令或重启发现未处理投影时执行 Finalize。两者共享处理游标，已成功形成的区间不会再次调用模型。Finalize 可以取消尚未 prepared 的 Recap；prepared 后先补完本地提交。
+
+```text
+/acn-finalize
+/acn-status
+/acn-status retry <job_id>
+```
+
+`/acn-finalize` 返回持久任务 ID，不向普通对话追加用户命令。用 `/acn-status` 查看 queued / running / succeeded / failed、尝试次数及可操作的失败提示。连续五次结构或引用校验失败后任务失败；模型超时或临时服务错误使用独立传输重试和持久退避。修正模型路由或凭据后可按任务 ID 重试。没有本会话的请求路由时，需要先完成普通模型请求，或配置 `llm.provider` / `llm.model`；不会借用别的会话路由。
+
+只有有价值的新增、更新或实际使用已有 Claim 时才写 Trace；空结果也推进游标。新增 Claim 默认 active，更新只能针对自身持有且本轮可见的 Claim。来源必须合法，伪造的 used IDs 会丢弃并告警；非法来源、未声明占位符、越权更新或重复 Dispute 引用会让整批结果重新校验。首次 prepared 提交前发现分析快照被并发修改时，保留原对话区间并按新快照重试；Inbox 同样保留待内化输入。已经 prepared 的崩溃恢复若遇到外部第三版本，则保留已提交结果和用户编辑，告警并放弃剩余旧方案。
+
+会话投影从插件激活后增量记录，仅在本地保存。系统指令、目录、插件变化提示、压缩替换、私有记忆工具内容和模型私有推理不进入复盘；工具正文最多 4000 个 Unicode 字符，附件只保留占位符。不读取私有 MEMORY / USER 文件。主 transcript 文件最多 50MiB，装不下的未处理投影保存为本地有界分片，成功处理后回收；单条投影超过上限会阻止不完整区间形成。投影超过所选模型上下文时，请换用更大上下文模型后重试。
+
+关闭插件时先保存应收尾的任务，中止尚未 prepared 的模型请求；未完成任务下次启动补做。prepared 本地提交到达安全点后才释放 worker 租约。单人模式只保存本地知识；团队模式先持久入队，再于锁外投递。
+
+## 团队查询、Inbox 与同步
+
+配置两个团队 endpoint 后，模型可使用 `consult_router`：`{"mode":"overview"}` 发现 scope，再以 `{"mode":"query","scope":"service / retries","semantic_query":"bounded retry"}` 获取完整候选及关联 Dispute。query 的 scope 必填；overview 不能带 query 字段。概览是发现入口，候选正文才可作为来源引用。会话创建时冻结团队概览，resume/compact 沿用，clear 重建。
+
+启动与恢复会话时，Inbox 默认后台同步并排队内化，不向普通对话插入命令。用户也可执行 `/inbox`：显示拉取、持久化、ACK 和待内化数量以及任务 ID。通过 `/acn-status` 查看结果，失败后用 `/acn-status retry <job_id>` 重试。Inbox 没有自身会话路由，默认使用最近任意会话的请求路由；首次请求之前，可显式配置后台 provider/model。
+
+Policy 是建议，只有内化后才改变本地 Claim。普通 Policy 可创建、修订或跳过；CAU 同时校验持有权、仲裁冻结上下文和相关 Policy 来源。连续同类消息合批，单 Policy CAU 可补充兼容归因，多 Policy 必须由模型明确指出相关来源。撤回 Policy 直接废弃依赖它的本地 Claim，不递归废弃间接下游。内化只读取 Policy、冻结 Claim 和本地 Claim，不读取私有 Memory / USER 或会话正文。
+
+在插件管理器关闭 Inbox 组件时，会取消等待中的拉取和模型调用，并等待当前本地提交收敛。已经 prepared 的批次完成固定提交后停止，不能继续下一批。未完成消息和持久任务保留，重新启用后继续；知识存储及其他任务仍可工作。
+
+ACK 表示消息已经在本地持久化，ACK 失败也会继续处理已保存内容。服务不可用时保留本地队列；鉴权失败只告警一次，可继续本地会话。修复凭据后再调用 `/inbox` 会触发补传，非空队列也会每十分钟自动尝试。普通编辑和形成成功同样触发投递，Claim 会先于依赖它的 Dispute 送达。状态页显示两项服务的独立连接状态和待上传数量，不包含凭据或服务器响应正文。
+
+从团队切换到单人期间，旧队列保持冻结。恢复团队后，普通待上传版本若已与本地不同，会暂停该项并告警，相关 Dispute 也继续等待；不能把旧 active 版本重新发布，也不能把单人期间的整合弃用自动当作团队裁决。应在团队模式核对并修订需要共享的 Claim，再触发投递；新的单人知识不会自动加入队列。
+
+单人模式不提供 `consult_router`；`/inbox` 提示没有团队 inbox，并可处理已有本地 pending，始终不发团队请求、不创建上传目录。子代理可以团队查询，但不能手动触发 Inbox、形成或修改知识。
+
+## Dream 知识整理
+
+```text
+/dream
+/dream stop
+/acn-status
+/acn-status retry <job_id>
+```
+
+Dream 清理自身 Claim 中的纯一次性记录，或把同主题知识整理到已有存续 ID。原始废弃正文仍可通过包含 deprecated 的列表读取；有用规则、条件、例外、备选行动和来源必须保留。没有安全改动时可以保持原样。默认不查证工作区；不读取私有 Memory / USER、会话 transcript 或裁决 Dispute。
+
+所有 Dream 修改必须在该 ID 的 `evidence_summary` 中逐字保留完整原摘要，包括废弃历史和证据校准。新证据可以修订判断，摘要中先明确标注旧依据及其版本，再追加新证据、范围和限制。整合还要求每条输入的原摘要完整出现在其 coverage 指定的至少一个存续输出摘要中；仅保留在废弃历史、其他无关输出、正文或 `medium` 等级中均不满足。该规则不靠关键词识别限制，不证明新旧说明语义一致；无法安全承接时保持原样。
+
+默认插件激活、会话创建与每四小时检查一次；上次成功满 24 小时且至少五条不同的自有 Claim 版本变化后自动执行。`/dream` 跳过时间和数量门槛，已有排队、运行或暂停任务时继续原任务；failed 任务通过 `/acn-status retry <job_id>` 重试。`dream.enabled=false` 同时禁止自动和手动执行。路由使用最近任意会话的请求路由，或显式配置的 `llm.provider` / `llm.model`。子代理不能触发或停止 Dream。
+
+`/dream stop` 取消正在等待的模型调用或知识锁，保留候选、草稿和已提交组。已 prepared 的本地组先完成，再暂停；停止确认表示请求已记录，可通过状态页观察是否到达暂停点。再次 `/dream` 或重新启用插件会继续原任务。停止和部分完成不会消耗成功冷却；高优先级知识任务可让尚未 prepared 的 Dream 让位。
+
+只向当前可执行的高优先级任务让位。禁用处理器后保留的排队任务、暂停任务及尚未到期的重试任务不会阻止 Dream；恢复处理器或到期后会重新参与调度。
+
+报告位于 Agent 数据目录的 `dream/<job_id>/report.md`，包含装入覆盖数、候选的执行/保留/跳过原因和实际修改 ID。逐组 `executions/*.md` 记录 before/after、复核与执行结果。预算没有装入的 Claim 不代表不存在；全文引用与模型复核不等同于独立知识质量评估。
+
+复核错误不会直接落盘为知识。重试反馈指出多余字段或引用的具体 before/after、Claim ID 与字段；历史废弃条目不能充当存续承接者。最终失败提示标明阶段和最后失败类别；`runtime/llm-calls/*.jsonl` 记录 Dream phase、失败类别及 schema 错误代码，不保存模型正文、引用原文、额外字段名或私有双文件。确认原因后可对同一任务重试，继续已保存的有效草稿。
+
+团队整合先上传完整存续承接，确认后才投递来源的 deprecated 版本。服务故障时，已完成的本地整理保留，上传队列独立补送。承接被其他编辑修改后，旧弃用请求会阻塞；后续 Dream 可把它作为同步候选，重新复核当前承接并重绑依赖。该步骤不改 Claim。来源重新 active 会取消旧弃用依赖。
+
+重绑前也检查当前承接是否仍包含原来源的完整证据摘要，丢失则保留阻塞的弃用依赖，不自动替用户重写 Claim。升级后，尚未 prepared 的旧草稿若不满足保留规则，会清除旧复核、携带具体反馈重新起草；已经 prepared 的固定提交仍沿原恢复协议完成，已生效历史不自动重写。
+
+## Dream 证据校准
+
+显式启用 `dream.evidenceCalibration: true` 后，Dream 可以选择自身 medium/low Claim 做文件查证。原始 high 不进入校准，也不能先降低置信度再纠正；high 的纯质量清理和信息重组仍可进行。
+
+`/dream` 冻结当前命令会话的工作区；自动任务冻结最近普通会话的工作区。子会话只获得当前候选和插件自建的 `read`、`grep`、`glob`、只读 `claim list/read`。grep/glob 做有界字面搜索，仅用于定位；read 返回完整文件 SHA-256/字节数、实际读取页和持久 evidence_id。当前不提供 Web、命令、通用代码、编辑、Memory、上传或委托工具，也不会为工具拒绝申请扩大权限。
+
+工作区外、隐藏/凭据路径、MEMORY/USER、私有知识根、符号链接、硬链接、非普通文件和非 UTF-8 文本均不能读取。每组工具次数、模型步数、文件字节、返回文本及搜索范围有持久预算；到期、停止或卸载会中止并排空子会话。查证子会话不会进入普通形成投影，也不触发 Inbox 或额外 Dream。
+
+每条事实修改都要在 change_basis 中引用该 Claim 自己的新直接证据，更新 evidence_summary，并逐字引用证据接受复核。提高置信度也遵循相同条件，没有按读取次数自动升级的规则；不确定或矛盾时保留原置信度。其他 Claim、Trace、命令输出、模型结论和搜索结果均不能独立授权修改。引用及版本符合要求仍不代表模型的事实判断正确。
+
+本地 `dream/<job>/evidence/<group>.yaml` 保存工作区、候选版本、已用预算和读取回执。完整查证在重试时复用；证据变化使本候选跳过。提交和恢复重检文件版本，过期证据停止尚未完成的写入，已生效结果保留。恢复不再运行模型或查证工具；真实 I/O 故障会暂缓其他知识写入，修复存储后继续。
+
+## 私有 Memory
+
+启用后，`memories/MEMORY.md` 保存稳定环境和可复用经验，`memories/USER.md` 保存稳定用户事实与偏好。它们只供主会话和私有 review 使用。任务进度、一次性结果、日志和凭据不应写入。
+
+模型通过 `memory` 提交一批操作：
+
+```json
+{"ops":[{"op":"add","target":"user","entry":"偏好简洁中文说明。"},{"op":"add","target":"memory","entry":"示例工程使用临时目录进行存储测试。"}]}
+```
+
+替换用 `{"op":"replace","target":"memory","old_text":"唯一定位文本","new_text":"完整新条目"}`；删除用 `{"op":"remove","target":"user","old_text":"唯一定位文本"}`。old_text 必须匹配唯一条目，replace 会替换整条内容。重复 add 成功但不重复保存；`{"ops":[]}` 是合法零操作。工具返回用量、上限、条目数和最后一个 target 的最新条目。匹配错误不回显定位文本，容量错误提供候选条目以便精简。
+
+整批操作在双文件锁内基于最新磁盘校验，任一步失败都不写入。默认扫描 add / replace 新内容的不可见字符、指令覆盖和凭据外传模式；允许删除危险旧条目。扫描是模式检查，不能证明文本可信。条目不能包含保留分隔符 `§`；写回统一为 `\n\n§\n\n`，容量包含分隔符并按 Unicode 字符计算。
+
+会话创建时将双文件冻结到 `sessions/<sid>/state.yaml` 的 `memory` 字段，系统段落名为 `acn:memory`。工具写入立即落盘，当前冻结段落保持不变；新会话和 clear 读取新内容，resume / compact / fork 沿用已保存的快照。工具结果仍会成为当前普通对话的一部分。子代理没有私有段落，也不能使用 Memory 工具。
+
+默认每十个完成且有助手回答的人工用户 turn 排队一次 review，使用最近十个 turn 和执行时的最新 Memory；内部消息、未完成 turn、Memory 工具参数与结果均排除。投影默认总计 32000 字符，裁剪有遗漏标记，独立于形成 transcript 的回收。review 只返回批量操作，不使用工具；模型调用在锁外。调用期间若文件改变，会跳过旧操作并保留新版本。失败不打断主会话，通过 `/acn-status` 查看及重试任务。
+
+双文件写入先保存 `memories/pending.yaml`，再原子发布文件，完成后保存 `memories/receipts/` 回执。崩溃后按原固定目标继续；发现外部第三版本时保留已生效写入和外部内容，停止剩余覆盖。同一次工具调用重放由 session / call ID 去重。review 的窗口、请求及 checkpoint 位于 `memories/windows/`、`requests/`、`reviews/`，队列本身只保存请求 ID。关闭 Memory 保留文件及任务，已持久事务仍会恢复。
+
+普通 `read/read_image/write/edit/str_replace_editor/grep/glob` 不能访问整个 `<home>/agents/`，包括其他 Agent、快照与回执。canonical 路径、符号链接别名、多链接文件和搜索祖先根均受校验；搜索默认使用会话的实时 cwd。本机递归搜索先检查硬链接，超过 100000 个目录项时拒绝并要求缩小目录。`memory.enabled=false` 或禁用 Memory 行时，这层保护仍随知识服务保持。
+
+这层保护覆盖已知工具及宿主写入/编辑意图事件；宿主没有读取前事件。它不约束任意 shell、可直接访问 Node 文件系统的通用代码或其他自定义工具，不提供 OS 沙箱，也不保证抵御宿主外进程同时更换路径。自动 Recap / Finalize、Inbox、Dream 和团队请求不读取双文件；程序桥只投影公共子调用，私有调用及外层程序/回显被排除。普通回答若主动复述私有事实，其文字仍属于对话，结构过滤不能证明后续语义上绝不泄漏。
+
+## 从已有 ACN 目录导入
+
+`/acn-import` 是一次性只读迁移。先让原 ACN 停止写入，找到实际 Agent 目录，例如 `<acn_home>/<upstream>/data/agents/agent-a/`；某些部署还有 `dev/` 一层。传入的目录应直接包含 `claims/`、`traces/` 或 `memories/`，不是整个数据根目录。
+
+```text
+/acn-import --dry-run "~/Documents/data/example/data/agents/agent-a"
+/acn-import "~/Documents/data/example/data/agents/agent-a"
+/acn-import --without-memory "/path/to/agent-a"
+```
+
+`~` 会在插件内展开，含空格的路径加引号；命令不会执行 Shell。预览只给出可复制数量与冲突列表，不创建目标。实际导入先完整校验源文件，再复制原始 UTF-8 字节；Claim holder 与 Trace agent 必须等于当前 `agentId`，不改归属。私有文件没有独立 holder；仅含私有文件的源目录必须以当前 `agentId` 命名。单文件上限 16 MiB，不接受符号链接、硬链接、目录伪装、非法 YAML、ID 与文件名不一致或重叠源/目标。
+
+现有目标一律保留，包含同 ID 的不同正文和空的私有文件；输出逐项列出跳过内容。私有文件遵守当前安全扫描和字符容量，超限时先调整配置或用 `--without-memory`；不会截断。`memory.enabled=false` 时跳过双文件。导入后的 Memory 对新会话生效，旧会话仍用冻结快照。
+
+只导入 Claim、Trace、`MEMORY.md`、`USER.md`；锁、会话、待处理任务、Dream 状态、团队队列和凭据不复制。不会请求团队服务或加入上传队列，团队模式也一样；以后主动修订 Claim 会按普通规则入队。
+
+Claim / Trace 使用独占的原子文件发布，私有双文件复用已有事务和恢复日志。整批不是一次原子切换：进程中断后可能已有部分文件可读，重新执行命令会跳过已有文件并补齐缺失文件。源内容应保持稳定；并发源写入会尽力检测并拒绝，但不提供跨运行时的活动数据库快照。子代理不能导入，命令结果不进入模型历史，也不回显私有正文。
