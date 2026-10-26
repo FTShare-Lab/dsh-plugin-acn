@@ -82,7 +82,7 @@ for (const part of ['', ...group.config.filter((entry) => entry.name.startsWith(
       const packageRoot = dirname(installed.resolve('dsh-plugin-acn/package.json'));
       const detailPath = join(packageRoot, locale.meta.detail);
       const detail = await readFile(detailPath, 'utf8');
-      assert.ok(detail.includes('deepseek-v4-flash-api'));
+      assert.equal(detail, await readFile(join(process.cwd(), locale.meta.detail), 'utf8'), 'Installed documentation must match the repository README.');
       const images = [...detail.matchAll(/!\[[^\]]*\]\(([^)]+)\)/g)];
       assert.ok(images.length > 0, 'The localized detail must include the real configuration screenshot.');
       for (const image of images) {

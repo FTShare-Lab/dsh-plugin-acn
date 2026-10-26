@@ -6,6 +6,8 @@
 
 ACN adds knowledge and private memory to DeepSeek Harness (DSH). DSH still owns the agent loop, context compaction, sessions and default file tools. ACN does not replace the host harness.
 
+This repository contains the TypeScript plugin, its web configuration page, model prompts and automated tests. Router and Maintainer are separately deployed ACN services; the plugin provides their clients.
+
 ## Capabilities
 
 | Feature | What it does |
@@ -19,7 +21,7 @@ ACN adds knowledge and private memory to DeepSeek Harness (DSH). DSH still owns 
 
 ## Install and configure
 
-Version `0.1.0` remains unpublished. No public repository URL has been selected. Build a local package with Node `^22.19.0 || >=24.0.0` and pnpm `11.25.0`:
+Version `0.1.0` remains unpublished. Build a local package from source with Node `^22.19.0 || >=24.0.0` and pnpm `11.25.0`:
 
 ```sh
 pnpm install --frozen-lockfile
@@ -30,18 +32,44 @@ In DSH, open **Plugins**, expand **Add plugin**, choose the third-party installa
 
 Solo mode needs no team services. Choose a stable ID such as `personal`; all projects using the same ID and directory share knowledge and private memory. Team members need distinct IDs matching their service authorization. Set both Router and Maintainer URLs and the credential environment variable **name**, never its value.
 
-Chat and background models are selected separately. Both can use `deepseek-v4-flash-api` if it is registered in DSH. Changing identity or storage location does not migrate data; old sessions require a new session. Private memory review sends its input to the configured model provider, not to team services.
+Chat and background models are selected separately from the models configured in DSH. Changing identity or storage location does not migrate data; start a new session after either change. Private memory review sends its input to the configured model provider, not to team services.
 
-![Actual DSH configuration page, Chinese UI](docs/assets/config-identity.jpg)
+![ACN configuration page in DSH, Chinese UI](docs/assets/config-identity.jpg)
 
-The tested host is DSH `0.2.1-rc.2`. The declared range `>=0.2.1-rc.2 <0.3.0` is not a claim that every version was tested. The package identifier is `dsh-plugin-acn`; the Chinese display name is **ACN记忆框架**.
+The declared DSH version range is `>=0.2.1-rc.2 <0.3.0`, with `0.2.1-rc.2` as the compatibility baseline. The package identifier is `dsh-plugin-acn`; the Chinese display name is **ACN记忆框架**.
 
-## Observed results and limits
+## Repository layout
 
-The [EatWhich team trial](docs/validation/2026-10-26-eatwhich-team-development.md) used three real DSH identities and `deepseek-v4-flash-api` to develop a feature, discover knowledge, process disputes and propagate corrections. With Router LLM reranking disabled, both original disputes were adopted on the first arbitration round and delivered to three members. Dream and file-evidence checks also completed.
+| Path | Contents |
+| --- | --- |
+| `src/` | Knowledge, memory, storage, team clients, DSH integration and web configuration |
+| `prompts/` | Model prompts for knowledge formation, consolidation, internalization and memory review |
+| `cordis.patch.yml` | Plugin component composition and registration |
+| `locale/` | Chinese and English localization resources |
+| `tests/` | Unit, integration, protocol contract, concurrency and crash recovery tests |
+| `scripts/` | Compatibility checks, installation checks and local team service tests |
+| `docs/` | Usage, configuration, architecture and development documentation |
 
-Use a **Router without LLM reranking** for this tested setup. Reranked candidate sets can vary and block Maintainer's adoption checks; that service limitation remains unresolved. These trials demonstrate specific workflows, not guaranteed autonomous recall or factual accuracy. Memory protection is not an operating-system sandbox.
+## Development and testing
 
-Further documentation is in Chinese: [illustrated user guide](docs/user-guide.md), [configuration](docs/config.md), [command reference](docs/command-reference.md), [release and marketplace preparation](docs/release.md), [acceptance](docs/acceptance.md), [limitations](docs/outstanding-issues.md), [development](docs/development.md), [architecture](docs/architecture.md).
+After installing dependencies, run these commands from the repository root:
+
+```sh
+pnpm typecheck
+pnpm lint
+pnpm check:security
+pnpm check:docs
+pnpm test
+```
+
+`pnpm test` builds the plugin first. Regular automated tests use temporary directories and local test models. Team contract tests require a separate ACN source checkout. Run builds, tests, packaging and installation checks sequentially; see the [development guide](docs/development.md) for the complete commands.
+
+## Team usage and limitations
+
+Each team member maintains local knowledge and uses Router to discover Claims shared by others. Members can submit conflicting knowledge to Maintainer as disputes. Its suggestions arrive through Inbox and update each member's local knowledge only after internalization.
+
+Use a **Router without LLM reranking**: changes in reranked candidate sets can block automatic arbitration adoption. Knowledge reuse depends on the agent retrieving and applying relevant Claims. Evidence records and Dream's citation checks do not guarantee factual accuracy; scope and evidence limitations still matter. Memory protection is not an operating-system sandbox.
+
+Further documentation is in Chinese: [illustrated user guide](docs/user-guide.md), [configuration](docs/config.md), [command reference](docs/command-reference.md), [distribution](docs/release.md), [limitations](docs/outstanding-issues.md), [development](docs/development.md), [architecture](docs/architecture.md).
 
 License: [MIT](LICENSE-MIT) OR [Apache-2.0](LICENSE-APACHE).
