@@ -14,6 +14,12 @@ import { JobQueue } from '../../src/worker/queue.js';
 import { context } from '../helpers.js';
 import { sampleClaim } from '../knowledge-fixtures.js';
 import { waitJob } from './helpers.js';
+import { emptyOutput } from './helpers.js';
+import { AcnFormation } from '../../src/formation/service.js';
+import { AcnKnowledge } from '../../src/knowledge/service.js';
+import { resolveConfig } from '../../src/config.js';
+import { loadPromptRenderer } from '../../src/prompt/render.js';
+import { logger } from '../helpers.js';
 
 let root: string; let children: ChildProcess[];
 beforeEach(async () => { root = await fs.mkdtemp(join(tmpdir(), 'acn-formation-crash-')); children = []; });
@@ -21,8 +27,8 @@ afterEach(async () => {
   await Promise.all(children.filter((child) => child.exitCode === null && child.signalCode === null).map(async (child) => { const exited = once(child, 'exit'); child.kill('SIGKILL'); await exited; }));
   await fs.rm(root, { recursive: true, force: true });
 });
-function spawn(mode: string) {
-  const child = fork(new URL('./fixtures/worker.mjs', import.meta.url), [root, mode], { silent: true }); children.push(child);
+function spawn(mode: string, fixture = 'worker.mjs') {
+  const child = fork(new URL(`./fixtures/${fixture}`, import.meta.url), [root, mode], { silent: true }); children.push(child);
   let stderr = ''; child.stderr?.on('data', (data: Buffer) => { stderr += data.toString(); });
   const ready = new Promise<void>((resolve, reject) => { child.once('message', () => { resolve(); }); child.once('error', reject); child.once('exit', (code) => { if (code !== null) reject(new Error(`Worker exited: ${code}: ${stderr}`)); }); });
   return { child, ready, kill: async () => { const exited = once(child, 'exit'); child.kill('SIGKILL'); await exited; } };
@@ -37,6 +43,21 @@ async function expireOrphanLocks(directory: string): Promise<void> {
 }
 
 describe('process crash recovery', () => {
+  it.each(['intent', 'archive-pending', 'archive-queued'])('SIGKILL at %s resumes exactly one frozen archive range', async (stage) => {
+    const first = spawn(stage, 'archive.mjs'); await first.ready; await first.kill(); await expireOrphanLocks(root);
+    const knowledge = new AcnKnowledge(resolveConfig({ agentId: 'agent-a', home: root }), logger); await knowledge.initialize();
+    const inputs: string[] = [];
+    const formation = new AcnFormation(knowledge, (_route, _system, input) => { inputs.push(input); return Promise.resolve({ text: JSON.stringify(emptyOutput()) }); }, await loadPromptRenderer(), { pollMs: 10 });
+    try {
+      await formation.reconcileArchives(new Set(['session-a'])); await formation.start();
+      const jobs = await formation.worker.queue.list(); expect(jobs).toHaveLength(1);
+      const job = jobs[0]; if (!job) throw new Error('Missing recovered archive'); await waitJob(formation.worker.queue, job.id);
+      expect(job).toMatchObject({ kind: 'finalize', payload: { untilSeq: 2, trigger: 'archive' } });
+      expect(inputs).toHaveLength(1); expect(inputs[0]).toContain('FROZEN_RANGE'); expect(inputs[0]).not.toContain('LATE_RANGE');
+      expect(await formation.transcript.state('session-a')).toMatchObject({ autoPaused: true, archiveIntent: null, archivePending: false, recappedThroughSeq: 2, lastSeenSeq: 4 });
+      await formation.scan(Date.now() + 7_200_000); expect(await formation.worker.queue.list()).toHaveLength(1);
+    } finally { await formation.close(); }
+  });
   it.each(['prepared', 'after-claim', 'after-progress', 'after-trace', 'after-upload', 'after-applied', 'before-state'])('SIGKILL at %s completes the exact checkpoint without duplicate entities or uploads', async (stage) => {
     const ctx = context(root, 'team'); await new ClaimStore(ctx).write(sampleClaim());
     const transcript = new TranscriptStore(ctx);

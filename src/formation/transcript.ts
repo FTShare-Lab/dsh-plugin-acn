@@ -14,11 +14,18 @@ const seq = z.number().int().min(-1).max(Number.MAX_SAFE_INTEGER);
 export const FormationStateSchema = z.object({
   lastSeenSeq: seq.default(-1), recappedThroughSeq: seq.default(-1), finalizedThroughSeq: seq.default(-1),
   lastRoute: RouteSchema.optional(), seenSourceIds: z.array(z.string()).default([]), privateToolCalls: z.array(z.string()).default([]),
+  activityAt: z.number().int().nonnegative().default(0), activitySeq: seq.default(-1),
+  humanTurn: z.boolean().default(false), completedTurns: z.array(seq).default([]),
+  autoPaused: z.boolean().default(false), archivedThroughSeq: seq.nullable().default(null),
+  archiveIntent: seq.nullable().default(null), archivePending: z.boolean().default(false),
 });
 export type FormationState = z.infer<typeof FormationStateSchema>;
 export const TranscriptEntrySchema = z.strictObject({ seq: seq.refine((value) => value >= 0), type: z.enum(['user', 'assistant', 'tool_call', 'tool_result']), text: z.string() });
 export type TranscriptEntry = z.infer<typeof TranscriptEntrySchema>;
-export interface Projection { entry?: TranscriptEntry; route?: Route; seenSourceIds?: string[]; privateCallId?: string; resultCallId?: string }
+export interface Projection {
+  entry?: TranscriptEntry; route?: Route; seenSourceIds?: string[]; privateCallId?: string; resultCallId?: string;
+  activity?: { seq: number; at: number; human?: boolean; turn?: 'start' | 'completed' | 'ended' };
+}
 export const processedThrough = (state: FormationState): number => Math.max(state.recappedThroughSeq, state.finalizedThroughSeq);
 
 export class TranscriptStore {
@@ -96,6 +103,21 @@ export class TranscriptStore {
         }
         state.lastSeenSeq = entry.seq;
       }
+      const activity = projection.activity;
+      if (!privateResult && activity !== undefined && activity.seq > state.activitySeq) {
+        state.activitySeq = activity.seq;
+        if (activity.turn === 'start') state.humanTurn = false;
+        if (activity.human) {
+          state.humanTurn = true;
+          // 只有真正准入的用户输入解除暂停；查看历史、撤销归档和迟到工具结果均不解除。
+          if (state.archiveIntent === null) state.autoPaused = false;
+        }
+        if (!state.autoPaused && state.archiveIntent === null) state.activityAt = Math.max(state.activityAt, activity.at);
+        if (activity.turn === 'completed' && state.humanTurn && state.lastSeenSeq > processedThrough(state)) state.completedTurns.push(state.lastSeenSeq);
+        if (activity.turn === 'completed' || activity.turn === 'ended') state.humanTurn = false;
+      }
+      // 旧版本投影没有活动元数据；迁移只初始化一次，重启和查看不会刷新时间。
+      if (state.activityAt === 0 && state.lastSeenSeq >= 0) state.activityAt = Date.now();
       return VersionedDocumentSchema.parse({ ...current, schemaVersion: 1, ...state });
     });
   }
@@ -105,10 +127,17 @@ export class TranscriptStore {
       state.recappedThroughSeq = Math.max(state.recappedThroughSeq, untilSeq);
       state.lastSeenSeq = Math.max(state.lastSeenSeq, untilSeq);
       if (kind === 'finalize') state.finalizedThroughSeq = Math.max(state.finalizedThroughSeq, untilSeq);
+      state.completedTurns = state.completedTurns.filter((end) => end > processedThrough(state));
       const remaining = (await this.read(id, true)).filter((entry) => entry.seq > processedThrough(state));
       await this.materialize(id, remaining);
       return VersionedDocumentSchema.parse({ ...current, schemaVersion: 1, ...state });
     });
+  }
+  async lifecycle(id: string, change: (state: FormationState) => void): Promise<FormationState> {
+    return FormationStateSchema.parse(await this.states.update(id, (current) => {
+      const state = FormationStateSchema.parse(current ?? {}); change(state);
+      return VersionedDocumentSchema.parse({ ...current, schemaVersion: 1, ...state });
+    }));
   }
   async sessions(): Promise<string[]> {
     let entries;

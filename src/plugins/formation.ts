@@ -8,6 +8,7 @@ import { loadPromptRenderer } from '../prompt/render.js';
 import { structuredBackend } from '../dsh-adapter/llm.js';
 import { compactionEnd, projectEvent } from '../dsh-adapter/formation.js';
 import { isSubagent } from '../tools/subagent.js';
+import { connectArchives } from '../dsh-adapter/formation-archive.js';
 
 declare module '@deepseek-ai/cordis' { interface Context { acnFormation: AcnFormation } }
 export const name = 'acn-formation';
@@ -17,7 +18,9 @@ export async function apply(ctx: Context): Promise<void> {
   const knowledge = ctx.acnKnowledge;
   const worker = knowledge.jobs;
   if (worker === null) return;
-  const service = new AcnFormation(ctx.acnKnowledge, structuredBackend(ctx), await loadPromptRenderer(), {}, worker);
+  const service = new AcnFormation(ctx.acnKnowledge, structuredBackend(ctx), await loadPromptRenderer(), {}, worker, async (route) => {
+    try { await ctx.llm.prepareCall(route, AbortSignal.timeout(15_000)); return true; } catch { return false; }
+  });
   ctx.provide('acnFormation', service);
   ctx.on('session/event', (session, event) => {
     if (sessionAllowed(ctx, knowledge.config, session.header) && !isSubagent(session.header)) {
@@ -30,6 +33,8 @@ export async function apply(ctx: Context): Promise<void> {
   ctx.on('agent/disposed', ({ agent }) => { if (sessionAllowed(ctx, knowledge.config, agent.session.header) && !isSubagent(agent.session.header)) service.disposed(agent.session.id); });
   ctx.effect(() => () => service.close());
   for (const agent of ctx.agents.list()) if (sessionAllowed(ctx, knowledge.config, agent.session.header) && !isSubagent(agent.session.header)) { service.attach(agent.session.id); if (agent.status === 'running') service.running(agent.session.id); }
+  // 已归档会话必须先恢复暂停状态，才能开始扫描空闲增量。
+  await ctx.inject(['workspaceRegistry'], (child) => connectArchives(child, service));
   await service.start();
 }
 export default { name, inject, apply };

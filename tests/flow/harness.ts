@@ -9,6 +9,10 @@ import { createUserMessage, ToolCallId } from '@deepseek-ai/dsh-llm';
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import { SessionId } from '@deepseek-ai/dsh-session';
 import * as Persistence from '@deepseek-ai/dsh-session-persistence-jsonl';
+import Storage from '@deepseek-ai/dsh-storage';
+import * as StorageJson from '@deepseek-ai/dsh-storage-json';
+import * as StorageDomain from '@deepseek-ai/dsh-storage-domain';
+import { WorkspaceRegistry } from '@deepseek-ai/dsh-workspace';
 import Knowledge from '../../src/plugins/knowledge.js';
 import Tools from '../../src/plugins/tools.js';
 import Prompt from '../../src/plugins/prompt.js';
@@ -23,13 +27,19 @@ import { ClaimStore } from '../../src/store/claims.js';
 import { sampleClaim } from '../knowledge-fixtures.js';
 import { ScriptAdapter } from './adapter.js';
 
-export async function flowHarness(adapter: ScriptAdapter, options: { configured?: boolean; persistence?: boolean; formation?: boolean; inbox?: boolean; dream?: boolean; memory?: boolean; filesystem?: boolean; toolMode?: 'native' | 'ptc'; config?: ConfigInput } = {}) {
+export async function flowHarness(adapter: ScriptAdapter, options: { configured?: boolean; persistence?: boolean; workspace?: boolean; formation?: boolean; inbox?: boolean; dream?: boolean; memory?: boolean; filesystem?: boolean; toolMode?: 'native' | 'ptc'; config?: ConfigInput } = {}) {
   const root = await fs.mkdtemp(join(tmpdir(), 'acn-flow-'));
   const ctx = new Context();
   try {
     await mountAgentLoopTestDependencies(ctx, { tools: { mode: options.toolMode ?? 'native' }, workingDirectory: options.filesystem ?? false });
     await ctx.plugin(Commands);
-    if (options.persistence) await ctx.plugin(Persistence, { root: join(root, 'logs') });
+    if (options.persistence || options.workspace) await ctx.plugin(Persistence, { root: join(root, 'logs') });
+    if (options.workspace) {
+      await ctx.plugin(Storage);
+      await ctx.plugin(StorageJson, { root: join(root, 'storage') });
+      await ctx.plugin(StorageDomain, { backend: 'json' });
+      await ctx.plugin(WorkspaceRegistry);
+    }
     ctx.llm.registerAdapter(['mock'], adapter);
     const knowledgeFiber = await ctx.plugin(Knowledge, resolveConfig({ ...options.config, agentId: options.configured === false ? '' : 'agent-a', home: join(root, 'knowledge') }));
     const promptFiber = await ctx.plugin(Prompt);

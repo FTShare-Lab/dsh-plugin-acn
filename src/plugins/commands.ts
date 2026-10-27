@@ -65,6 +65,12 @@ export function apply(ctx: Context): void {
     } });
   });
   void ctx.inject(['acnFormation', 'commands'], (child) => {
+    child.commands.register({ name: 'recap', description: 'Review this session’s unprocessed knowledge without closing it.', handler: async ({ agent }) => {
+      const reason = denied(agent); if (reason !== undefined) return { kind: 'error', text: reason };
+      if (isSubagent(agent.session.header)) return { kind: 'error', text: '子 agent 不能触发知识形成。' };
+      const job = await child.acnFormation.recap(agent.session.id);
+      return { kind: 'success', text: job === null ? '没有可复盘的新增内容，未创建任务。' : `Recap 任务：${job.id}；使用 /acn-status 查看结果。` };
+    } });
     child.commands.register({ name: 'acn-finalize', description: 'Form knowledge from this session’s unprocessed transcript.', handler: async ({ agent }) => {
       const reason = denied(agent); if (reason !== undefined) return { kind: 'error', text: reason };
       if (isSubagent(agent.session.header)) return { kind: 'error', text: '子 agent 不能触发知识形成。' };

@@ -13,6 +13,7 @@ import { TranscriptStore, RouteSchema, processedThrough } from './transcript.js'
 import type { Projection, Route } from './transcript.js';
 import { RecapOutputSchema } from './schema.js';
 import { prepareFormation } from './prepare.js';
+import { idleTrigger } from './triggers.js';
 
 export class AcnFormation {
   readonly worker: DurableWorker;
@@ -21,10 +22,13 @@ export class AcnFormation {
   private captureError: unknown;
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly attached = new Set<string>();
+  private readonly activeSessions = new Set<string>();
+  private scanner: ReturnType<typeof setInterval> | undefined;
+  private started = false;
   private closing = false;
   private readonly unregister: (() => void)[];
   private readonly ownsWorker: boolean;
-  constructor(readonly knowledge: AcnKnowledge, private readonly backend: StructuredBackend, private readonly render: (name: string, context: object) => string, workerOptions: ConstructorParameters<typeof DurableWorker>[1] = {}, worker?: DurableWorker) {
+  constructor(readonly knowledge: AcnKnowledge, private readonly backend: StructuredBackend, private readonly render: (name: string, context: object) => string, workerOptions: ConstructorParameters<typeof DurableWorker>[1] = {}, worker?: DurableWorker, private readonly routeReady?: (route: Route) => Promise<boolean>) {
     this.worker = worker ?? new DurableWorker(knowledge.context(), workerOptions);
     this.ownsWorker = worker === undefined;
     this.transcript = new TranscriptStore(knowledge.context());
@@ -35,9 +39,13 @@ export class AcnFormation {
     for (const id of await this.transcript.sessions()) {
       await this.transcript.record(id, {});
       const state = await this.transcript.state(id);
-      if (state.lastSeenSeq > state.finalizedThroughSeq) await this.enqueue(id, 'finalize');
+      if (state.archivePending) await this.finishArchive(id);
     }
     await this.worker.start();
+    this.started = true;
+    this.scanner = setInterval(() => { this.schedule(() => this.scanPending(Date.now())); }, this.knowledge.config.formation.recapScanSeconds * 1000);
+    this.scanner.unref();
+    await this.scanPending(Date.now());
   }
   attach(id: string): void { this.attached.add(id); this.idle(id); }
   capture(id: string, projection: Projection, compactedUntil?: number): void {
@@ -45,7 +53,7 @@ export class AcnFormation {
     this.schedule(async () => {
       await this.transcript.record(id, projection);
       if (projection.route !== undefined) await this.rememberRoute(projection.route);
-      if (compactedUntil !== undefined && this.knowledge.config.formation.recapOnCompaction) await this.enqueue(id, 'recap', compactedUntil);
+      if (compactedUntil !== undefined && this.knowledge.config.formation.recapOnCompaction) await this.enqueueNew(id, 'recap', 'compaction', compactedUntil);
     });
   }
   private schedule(action: () => Promise<unknown>): void {
@@ -56,9 +64,11 @@ export class AcnFormation {
     const context = this.knowledge.context();
     await withFileLock(`${context.paths.lastRoute}.lock`, () => writeYamlAtomic(context.paths.lastRoute, route, RouteSchema, context.logger));
   }
-  running(id: string): void { const timer = this.timers.get(id); if (timer !== undefined) clearTimeout(timer); this.timers.delete(id); }
+  running(id: string): void { this.activeSessions.add(id); const timer = this.timers.get(id); if (timer !== undefined) clearTimeout(timer); this.timers.delete(id); }
   idle(id: string): void {
     this.running(id);
+    this.activeSessions.delete(id);
+    if (!this.closing) this.schedule(() => this.checkIdle(id, Date.now()));
     const minutes = this.knowledge.config.formation.finalizeIdleMinutes;
     if (this.closing || minutes === 0) return;
     // 配置允许较长空闲时间，分段等待避免平台计时器溢出后立即触发。
@@ -72,12 +82,76 @@ export class AcnFormation {
   }
   disposed(id: string): void {
     this.running(id); this.attached.delete(id);
+    this.activeSessions.delete(id);
     if (!this.closing && this.knowledge.config.formation.finalizeOnDispose) this.schedule(() => this.enqueue(id, 'finalize'));
   }
   async finalize(id: string): Promise<Job> { await this.flush(); return this.enqueue(id, 'finalize'); }
+  async recap(id: string): Promise<Job | null> {
+    await this.flush();
+    const state = await this.transcript.state(id);
+    const until = this.activeSessions.has(id) ? Math.max(processedThrough(state), ...state.completedTurns) : state.lastSeenSeq;
+    return this.enqueueNew(id, 'recap', 'manual', until);
+  }
+  async scan(now = Date.now()): Promise<void> { await this.flush(); await this.scanPending(now); }
+  private async scanPending(now: number): Promise<void> {
+    if (this.closing) return;
+    for (const id of await this.transcript.sessions()) await this.checkIdle(id, now);
+  }
+  private async checkIdle(id: string, now: number): Promise<void> {
+    if (!this.started || this.closing || this.activeSessions.has(id)) return;
+    const state = await this.transcript.state(id);
+    const trigger = idleTrigger(this.knowledge.config.formation, state, await this.transcript.read(id), now);
+    if (trigger === undefined) return;
+    const config = this.knowledge.config.llm;
+    const route = config.provider && config.model ? { provider: config.provider, model: config.model } : state.lastRoute;
+    if (route === undefined || this.routeReady !== undefined && !await this.routeReady(route)) return;
+    if (!this.activeSessions.has(id)) await this.enqueueNew(id, 'recap', trigger);
+  }
+  async beginArchive(id: string, upper?: number): Promise<number | null> {
+    await this.flush();
+    if (!this.attached.has(id) && await this.transcript.states.read(id) === null) return null;
+    const state = await this.transcript.lifecycle(id, (current) => {
+      current.archiveIntent = current.autoPaused && current.archivedThroughSeq !== null ? current.archivedThroughSeq : Math.min(upper ?? current.lastSeenSeq, current.lastSeenSeq);
+    });
+    return state.archiveIntent;
+  }
+  async cancelArchive(id: string): Promise<void> { await this.transcript.lifecycle(id, (state) => { state.archiveIntent = null; }); }
+  async archived(id: string, upper: number): Promise<void> {
+    await this.flush();
+    await this.transcript.lifecycle(id, (state) => {
+      if (!state.autoPaused) { state.autoPaused = true; state.archivedThroughSeq = upper; state.archivePending = true; }
+      state.archiveIntent = null;
+    });
+    await this.finishArchive(id);
+  }
+  async reconcileArchives(archived: ReadonlySet<string>): Promise<void> {
+    await this.flush();
+    for (const id of await this.transcript.sessions()) {
+      const state = await this.transcript.state(id);
+      if (state.archiveIntent !== null) {
+        if (archived.has(id)) await this.archived(id, state.archiveIntent); else await this.cancelArchive(id);
+      } else if (archived.has(id) && state.archivedThroughSeq === null) await this.archived(id, state.lastSeenSeq);
+    }
+  }
+  private async finishArchive(id: string): Promise<void> {
+    const state = await this.transcript.state(id);
+    if (!state.archivePending || state.archivedThroughSeq === null) return;
+    await this.enqueueNew(id, 'finalize', 'archive', state.archivedThroughSeq);
+    await this.transcript.lifecycle(id, (current) => { current.archivePending = false; });
+  }
+  private async enqueueNew(id: string, kind: 'finalize' | 'recap', trigger: string, requestedUntil?: number): Promise<Job | null> {
+    const state = await this.transcript.state(id);
+    if (state.archiveIntent !== null || state.autoPaused && trigger !== 'archive' && trigger !== 'manual') return null;
+    const untilSeq = Math.min(requestedUntil ?? state.lastSeenSeq, state.lastSeenSeq, state.autoPaused ? state.archivedThroughSeq ?? -1 : state.lastSeenSeq);
+    const cursor = processedThrough(state);
+    if (untilSeq <= cursor || !(await this.transcript.read(id)).some((entry) => entry.seq > cursor && entry.seq <= untilSeq && entry.text.trim() !== '')) return null;
+    const existing = (await this.worker.queue.list()).find((job) => job.sessionId === id && (job.kind === kind || kind === 'recap' && job.kind === 'finalize') && typeof job.payload['untilSeq'] === 'number' && job.payload['untilSeq'] >= untilSeq && (job.state === 'queued' || job.state === 'running' || trigger.endsWith('-idle') && job.state === 'failed'));
+    if (existing !== undefined) return existing;
+    return this.worker.enqueue(kind, { untilSeq, trigger }, id);
+  }
   private async enqueue(id: string, kind: 'finalize' | 'recap', requestedUntil?: number): Promise<Job> {
     const state = await this.transcript.state(id);
-    const untilSeq = Math.min(requestedUntil ?? state.lastSeenSeq, state.lastSeenSeq);
+    const untilSeq = Math.min(requestedUntil ?? state.lastSeenSeq, state.lastSeenSeq, state.archiveIntent ?? (state.autoPaused ? state.archivedThroughSeq ?? -1 : state.lastSeenSeq));
     return this.worker.enqueue(kind, { untilSeq }, id);
   }
   private async run(job: Job, control: JobControl): Promise<Job['result']> {
@@ -88,7 +162,7 @@ export class AcnFormation {
     await new FormationStore(this.knowledge.context()).recover();
     const state = await this.transcript.state(id);
     const fromSeq = processedThrough(state);
-    const untilSeq = Math.min(until, state.lastSeenSeq);
+    const untilSeq = Math.min(until, state.lastSeenSeq, state.archiveIntent ?? (state.autoPaused ? state.archivedThroughSeq ?? -1 : state.lastSeenSeq));
     if (untilSeq <= fromSeq) {
       if (job.kind === 'finalize' && untilSeq >= 0) await this.transcript.advance(id, 'finalize', untilSeq);
       return { skipped: 'already_processed' };
@@ -110,6 +184,7 @@ export class AcnFormation {
   }
   async close(): Promise<void> {
     this.closing = true;
+    if (this.scanner !== undefined) clearInterval(this.scanner);
     for (const timer of this.timers.values()) clearTimeout(timer);
     this.timers.clear();
     try {

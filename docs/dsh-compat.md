@@ -16,6 +16,7 @@
 | `agents.create` setup / dispose | 隔离只读证据子会话、专属系统上下文与预算 |
 | `dsh.client`、`plugins.bundle.config`、ModuleLoader | 网页入口、插件详情表单、宿主共享 React |
 | Typert Remote / Gateway、`configEditor.edit` | 宿主认证、严格入参、profile 文件锁、原子写和普通字段重载 |
+| `workspaceRegistry.archiveSession`、`archivedSessionIds` | 归档前冻结范围，归档后暂停；包裹公开方法，卸载时恢复。宿主升级需重验普通及停止归档 |
 | `commands.register` | 命令不进入普通模型历史，贡献随依赖卸载撤销 |
 | fs 路径解析、写 / 编辑意图 | 已知文件工具的私有路径保护；没有通用读取前 hook |
 

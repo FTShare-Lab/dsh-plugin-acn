@@ -40,6 +40,10 @@
 
 `acn-formation` 增量消费公开 session/event，投影与状态共用 session 锁，先同步正文再推进 lastSeenSeq。未处理行超过主文件 50MiB 时写入 `transcript-pending/`，先持久分片再替换主文件，最后清理副本；恢复核对重复 seq 的完整正文，冲突即拒绝。模型输入为未处理区间、全部 active/stale 本地 Claim 和形成说明。系统内容、私有记忆及 provider replay 不会进入输入。
 
+形成状态还持久化活动时间、已完成人工轮次和归档暂停标记。`turn/start` / `turn/end` 与真正准入的 `user/message` 决定轮次；attach、查看历史和状态查询不更新活动时间。空闲策略对未处理投影计算批量或尾部门槛，路由可用且无前台 turn 时入队。手动 Recap、压缩和归档各自冻结上界，成功提交才推进共享游标并清理轮次。
+
+兼容基线没有普通归档完成事件，`dsh-adapter/formation-archive.ts` 在插件生命周期内包裹公开 `workspaceRegistry.archiveSession`，保留宿主的活动检查和停止行为，卸载时恢复方法。归档前持久保存 intent 和上界，成功后持久暂停及待派发标记，再投递 Finalize；启动时依据宿主归档集合恢复已完成归档或撤销未完成 intent。暂停只被实际用户输入解除，撤销归档本身不解除。已有 workspaceRegistry 在空闲扫描启动前完成对账；没有该服务的宿主组合仍支持其他形成入口。
+
 任务保存于 `jobs/<id>.yaml`，包含状态、尝试次数、退避时间及单调 ordinal；固定优先级后按入队顺序执行。只有取得 worker.lock 的进程恢复 running 并消费。持有者每秒检查队列；其他进程在入队或每 60 秒尝试接管。租约与队列短锁独立，领域提交仍遵循知识锁到上传锁的顺序。
 
 Dream 的暂停状态保存在共享任务中。持有者在模型等待时监听该标记，并在每个阶段边界重读；其他宿主发出的 stop 同样生效。prepared 期间先完成当前本地组，之后读取暂停标记，不能继续下一候选或最终收尾。

@@ -18,7 +18,7 @@ function bodySources(value: unknown): string[] {
   if (policy.success) return [policy.data.id];
   return Object.values(value).flatMap((item: unknown) => bodySources(item));
 }
-export function projectEvent(event: SessionEvent): Projection {
+function projectContent(event: SessionEvent): Projection {
   switch (event.type) {
     case 'request/header': return { route: { provider: event.data.header.config.provider, model: event.data.header.config.model } };
     case 'user/message':
@@ -46,6 +46,17 @@ export function projectEvent(event: SessionEvent): Projection {
     }
     default: return {};
   }
+}
+export function projectEvent(event: SessionEvent): Projection {
+  const projection = projectContent(event);
+  if (event.type === 'turn/start' || event.type === 'turn/end') return { ...projection, activity: {
+    seq: event.seq, at: event.time,
+    turn: event.type === 'turn/start' ? 'start' : event.data.reason.kind === 'completed' ? 'completed' : 'ended',
+  } };
+  if (projection.entry !== undefined) return { ...projection, activity: { seq: event.seq, at: event.time,
+    ...(event.type === 'user/message' && event.data.source.kind === 'user' && event.surfaceOp === 'append' ? { human: true } : {}),
+  } };
+  return projection;
 }
 const compactionSchema = z.object({ type: z.literal('compaction/summary'), data: z.object({ shadowedRange: z.object({ end: z.number().int().nonnegative() }), shadowedSeqs: z.array(z.number().int().nonnegative()).optional() }) });
 export function compactionEnd(event: unknown): number | undefined {

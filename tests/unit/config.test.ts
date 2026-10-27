@@ -15,3 +15,14 @@ describe('background model output budget', () => {
     expect(resolveConfig(HostConfig(input)).llm.maxOutputTokens).toBe(8192);
   });
 });
+
+describe('Recap trigger defaults', () => {
+  it('keeps domain and host defaults aligned, with legacy Finalize triggers opt-in', () => {
+    const expected = { recapOnCompaction: true, idleRecap: true, recapMinTurns: 10, recapMinTokens: 100_000, recapBatchIdleMinutes: 5, recapTailIdleMinutes: 60, recapScanSeconds: 30, finalizeIdleMinutes: 0, finalizeOnDispose: false };
+    expect(resolveConfig({}).formation).toEqual(expected);
+    expect(resolveConfig(HostConfig({})).formation).toEqual(expected);
+  });
+  it.each(['recapMinTurns', 'recapMinTokens', 'recapBatchIdleMinutes', 'recapTailIdleMinutes', 'recapScanSeconds'])('rejects zero and fractional values for %s', (field) => {
+    for (const value of [0, -1, 0.5]) expect(() => resolveConfig({ formation: { [field]: value } })).toThrow();
+  });
+});

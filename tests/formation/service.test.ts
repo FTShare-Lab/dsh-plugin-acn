@@ -74,14 +74,19 @@ describe('durable knowledge formation', () => {
       await expect(fs.access(fixture.knowledge.context().paths.uploads)).rejects.toMatchObject({ code: 'ENOENT' });
     } finally { await fixture.close(); }
   });
-  it('startup finalizes a persisted gap, and repeated Finalize only processes new sequences', async () => {
+  it('startup preserves an idle deadline, and repeated Finalize only processes new sequences', async () => {
     const calls: string[] = []; const backend = (_route: object, _system: string, input: string) => { calls.push(input); return Promise.resolve({ text: JSON.stringify(emptyOutput()) }); };
     const fixture = await formationFixture(backend);
     let resumed: AcnFormation | undefined;
     try {
       await fixture.formation.transcript.record('session-a', { route: { provider: 'mock', model: 'mock' }, entry: { seq: 2, type: 'user', text: 'First segment.' } });
       resumed = new AcnFormation(fixture.knowledge, backend, await loadPromptRenderer(), { pollMs: 10 }); await resumed.start();
-      await vi.waitFor(async () => { expect((await resumed?.worker.queue.list())?.every((job) => job.state === 'succeeded')).toBe(true); expect(calls).toHaveLength(1); });
+      expect(calls).toHaveLength(0); expect(await resumed.worker.queue.list()).toEqual([]);
+      const activity = (await resumed.transcript.state('session-a')).activityAt;
+      await resumed.scan(activity + 3_600_000);
+      await vi.waitFor(() => { expect(calls).toHaveLength(1); });
+      const tail = (await resumed.worker.queue.list())[0]; if (!tail) throw new Error('Missing recovered tail Recap');
+      await waitJob(resumed.worker.queue, tail.id);
       await waitJob(resumed.worker.queue, (await resumed.finalize('session-a')).id); expect(calls).toHaveLength(1);
       resumed.capture('session-a', { entry: { seq: 8, type: 'user', text: 'Second segment.' } });
       await waitJob(resumed.worker.queue, (await resumed.finalize('session-a')).id);

@@ -27,8 +27,10 @@ export const ConfigSchema = z.strictObject({
   }).prefault({}),
   catalog: z.strictObject({ maxClaims: positive().default(200), maxChars: positive().default(24_000) }).prefault({}),
   formation: z.strictObject({
-    recapOnCompaction: z.boolean().default(true), finalizeIdleMinutes: nonnegative().default(30),
-    finalizeOnDispose: z.boolean().default(true),
+    recapOnCompaction: z.boolean().default(true), idleRecap: z.boolean().default(true),
+    recapMinTurns: positive().default(10), recapMinTokens: positive().default(100_000),
+    recapBatchIdleMinutes: positive().default(5), recapTailIdleMinutes: positive().default(60), recapScanSeconds: positive().default(30),
+    finalizeIdleMinutes: nonnegative().default(0), finalizeOnDispose: z.boolean().default(false),
   }).prefault({}),
   inbox: z.strictObject({ pullOnSessionStart: z.boolean().default(true), processingStaleAfterSecs: positive().default(600) }).prefault({}),
   dream: z.strictObject({

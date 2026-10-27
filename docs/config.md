@@ -60,8 +60,14 @@
       maxChars: 24000
     formation:
       recapOnCompaction: true
-      finalizeIdleMinutes: 30
-      finalizeOnDispose: true
+      idleRecap: true
+      recapMinTurns: 10
+      recapMinTokens: 100000
+      recapBatchIdleMinutes: 5
+      recapTailIdleMinutes: 60
+      recapScanSeconds: 30
+      finalizeIdleMinutes: 0
+      finalizeOnDispose: false
     inbox:
       pullOnSessionStart: true
       processingStaleAfterSecs: 600
@@ -105,8 +111,14 @@
 | `llm.timeoutMs` | 600000 | 每次后台传输调用超时毫秒数 |
 | `llm.structuredRetries` | 5 | 结构和引用校验的最大模型响应次数 |
 | `formation.recapOnCompaction` | true | 压缩后入队 Recap |
-| `formation.finalizeIdleMinutes` | 30 | 空闲 Finalize 分钟数；0 禁用空闲触发 |
-| `formation.finalizeOnDispose` | true | 会话关闭时入队 Finalize |
+| `formation.idleRecap` | true | 启用批量和尾部空闲 Recap；不影响手动、压缩及归档 |
+| `formation.recapMinTurns` | 10 | 批量门槛：尚未处理的已完成人工轮次 |
+| `formation.recapMinTokens` | 100000 | 批量门槛：尚未处理公开投影的估算 token，与轮次取“或” |
+| `formation.recapBatchIdleMinutes` | 5 | 达到批量门槛后仍需满足的空闲分钟数 |
+| `formation.recapTailIdleMinutes` | 60 | 少量未处理内容的空闲分钟数 |
+| `formation.recapScanSeconds` | 30 | 自动空闲扫描间隔，达到条件后入持久队列 |
+| `formation.finalizeIdleMinutes` | 0 | 旧版定时 Finalize 兼容项；0 关闭，显式开启会增加独立触发 |
+| `formation.finalizeOnDispose` | false | 旧版释放会话收尾兼容项；默认不因关闭或重启立即收尾 |
 | `team.routerEndpoint` / `team.maintainerEndpoint` | 空 | 成对配置团队 HTTP(S) 服务，可带路径前缀 |
 | `team.keyEnv` | 空 | 每次请求从该环境变量读取团队凭据 |
 | `team.timeoutMs` | 15000 | 每次 HTTP 尝试（含响应正文）的总超时 |
@@ -158,7 +170,7 @@ Memory review 使用自身会话路由，或显式 `llm.provider` / `llm.model`�
   disabled: true
 ```
 
-可分别禁用 `acn-tools`、`acn-prompt`、`acn-formation`、`acn-inbox`、`acn-dream`、`acn-memory` 和 `acn-commands`。禁用 formation 会撤销 `/acn-finalize`，Inbox 仍可运行；禁用 inbox 会撤销 `/inbox`，已有消息和任务保留；禁用 dream 会撤销 `/dream`，中止调用并保留进度，prepared 组先到达安全点。Memory 独立于 Claim 工具、知识提示词及 formation，禁用这些行仍可使用 Memory。上传投递属于知识服务，禁用 Inbox、Dream 或 Memory 不会停止已形成知识的投递。`/acn-status retry` 共用知识服务的 worker。禁用知识行时，其依赖贡献全部撤销。
+可分别禁用 `acn-tools`、`acn-prompt`、`acn-formation`、`acn-inbox`、`acn-dream`、`acn-memory` 和 `acn-commands`。禁用 formation 会撤销 `/recap` 和 `/acn-finalize`，Inbox 仍可运行；禁用 inbox 会撤销 `/inbox`，已有消息和任务保留；禁用 dream 会撤销 `/dream`，中止调用并保留进度，prepared 组先到达安全点。Memory 独立于 Claim 工具、知识提示词及 formation，禁用这些行仍可使用 Memory。上传投递属于知识服务，禁用 Inbox、Dream 或 Memory 不会停止已形成知识的投递。`/acn-status retry` 共用知识服务的 worker。禁用知识行时，其依赖贡献全部撤销。
 
 ## 宿主压缩与 Recap
 
@@ -176,6 +188,6 @@ DSH `0.2.1-rc.2` 的 Web 模板默认关闭压缩插件。需要 `/compact` 和�
   disabled: false
 ```
 
-这是宿主配置，不属于 `acn-knowledge.config`。示例选择手动压缩且不保留旧区间，便于观察 Recap；日常使用可按宿主说明配置保留窗口和自动阈值。压缩使用宿主模型；成功产生压缩结果才触发 Recap。没有需要压缩的区间或摘要没有缩小上下文时，宿主可能不产生压缩，不能据此认定 Recap 已执行。`/acn-finalize` 可独立使用。
+这是宿主配置，不属于 `acn-knowledge.config`。示例选择手动压缩且不保留旧区间，便于观察 Recap；日常使用可按宿主说明配置保留窗口和自动阈值。压缩使用宿主模型；成功产生压缩结果才触发 Recap。没有需要压缩的区间或摘要没有缩小上下文时，宿主可能不产生压缩，不能据此认定 Recap 已执行。`/recap` 和 `/acn-finalize` 可独立使用。
 
 所有正整数配置必须是安全整数；`team.retryCount` 与 `formation.finalizeIdleMinutes` 可为 0。证据预算和 review 输入另有表中上限，未知字段拒绝；最大退避不得小于起始退避。模型供应端的凭据由宿主管理，插件不新增密钥配置。
