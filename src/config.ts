@@ -22,7 +22,7 @@ export const ConfigSchema = z.strictObject({
   }).prefault({}),
   llm: z.strictObject({
     provider: z.string().default(''), model: z.string().default(''),
-    maxOutputTokens: positive().default(16_384), timeoutMs: positive().default(600_000),
+    maxOutputTokens: positive().default(32_768), timeoutMs: positive().default(600_000),
     structuredRetries: positive().default(5),
   }).prefault({}),
   catalog: z.strictObject({ maxClaims: positive().default(200), maxChars: positive().default(24_000) }).prefault({}),

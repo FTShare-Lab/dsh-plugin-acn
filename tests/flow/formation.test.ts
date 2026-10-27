@@ -16,6 +16,18 @@ import { ScriptAdapter, textResponse } from './adapter.js';
 import { flowHarness, turn } from './harness.js';
 
 describe('formation in the production host', () => {
+  it.each([{ llm: {}, expected: 32_768 }, { llm: { maxOutputTokens: 8192 }, expected: 8192 }])('passes the resolved output budget to the background model: $expected', async ({ llm, expected }) => {
+    const adapter = new ScriptAdapter([textResponse('The task is complete.'), textResponse(JSON.stringify(emptyOutput()))]);
+    const flow = await flowHarness(adapter, { formation: true, config: { llm, formation: { finalizeIdleMinutes: 0, finalizeOnDispose: false } } });
+    try {
+      const agent = await flow.create(); await turn(agent);
+      const job = await flow.ctx.acnFormation.finalize(agent.session.id);
+      await waitJob(flow.ctx.acnFormation.worker.queue, job.id);
+      expect(adapter.requests).toHaveLength(2);
+      expect(adapter.requests[1]?.maxTokens).toBe(expected);
+    } finally { await flow.close(); }
+  });
+
   it.each([false, true])('normalizes explicit reasoning envelopes while retaining reference validation (invalid=%s)', async (invalid) => {
     const draft = newDraft(); if (invalid) draft.source_claim_ids = ['claim_deadbeef'];
     const response = `REASONING_ONLY_MARKER with {"example":true}. </think>${JSON.stringify({ ...emptyOutput(), new_claims: [draft] })}`;

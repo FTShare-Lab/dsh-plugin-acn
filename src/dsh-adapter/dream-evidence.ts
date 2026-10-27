@@ -6,12 +6,12 @@ import type {} from '@deepseek-ai/dsh-system-prompt';
 import { createUserMessage } from '@deepseek-ai/dsh-llm';
 import { SessionId } from '@deepseek-ai/dsh-session';
 import { defineTool } from '@deepseek-ai/dsh-tools';
-import { z } from 'zod';
 import { EvidenceTools, type EvidenceTool } from '../dream/evidence-store.js';
 import { DreamValidationError } from '../dream/schema.js';
 import { abortable } from '../llm/structured.js';
 import { JobError } from '../worker/types.js';
 import type { EvidenceExplorer } from '../dream/service.js';
+import { toolParameters } from './tool-schema.js';
 
 const allowed = (name: string): name is EvidenceTool => Object.hasOwn(EvidenceTools, name);
 export function restrictedExplorer(ctx: Context, system: string): EvidenceExplorer {
@@ -26,7 +26,7 @@ export function restrictedExplorer(ctx: Context, system: string): EvidenceExplor
           try { return await store.execute(name, args, claims, AbortSignal.any([bounded, execution.signal])); }
           catch (error) { bounded.throwIfAborted(); return { error: error instanceof DreamValidationError ? error.message : '受限读取失败；未产生可引用的新证据。' }; }
         } });
-        child.tools.register({ ...tool, parameters: z.record(z.string(), z.json()).parse(JSON.parse(JSON.stringify(z.toJSONSchema(EvidenceTools[name])))) });
+        child.tools.register({ ...tool, parameters: toolParameters(EvidenceTools[name]) });
       }
       child.systemPrompt.suppressRuntimeContext();
       child.systemPrompt.section({ name: 'acn-evidence-only', order: 0, text: system, interpolate: false, complete: true });

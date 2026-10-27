@@ -112,6 +112,7 @@ try {
     assert.equal(entry.fiber.state, activeState);
     const scopedContext = entry.fiber.ctx;
     assert.ok(scopedContext.get('acnKnowledge'), 'Knowledge service must be visible inside its group.');
+    assert.equal(scopedContext.acnKnowledge.config.llm.maxOutputTokens, 32_768, 'The loaded bundle must use the current background output default.');
     assert.ok(harness);
     const agent = await harness.create(SessionId('loader-session'), { provider: 'local-model', model: 'example-model' });
     const toolNames = ctx.tools.schemas().map((tool) => tool.name);

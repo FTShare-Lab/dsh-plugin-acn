@@ -25,7 +25,7 @@ export const Config = Schema.object({
     routerEndpoint: Schema.string().default(''), maintainerEndpoint: Schema.string().default(''), keyEnv: Schema.string().default(''),
     timeoutMs: number(15_000), retryCount: number(3), retryBaseDelayMs: number(500), retryMaxDelayMs: number(8000),
   }),
-  llm: Schema.object({ provider: Schema.string().default(''), model: Schema.string().default(''), maxOutputTokens: number(16_384), timeoutMs: number(600_000), structuredRetries: number(5) }),
+  llm: Schema.object({ provider: Schema.string().default(''), model: Schema.string().default(''), maxOutputTokens: number(32_768), timeoutMs: number(600_000), structuredRetries: number(5) }),
   catalog: Schema.object({ maxClaims: number(200), maxChars: number(24_000) }),
   formation: Schema.object({ recapOnCompaction: boolean(true), finalizeIdleMinutes: number(30), finalizeOnDispose: boolean(true) }),
   inbox: Schema.object({ pullOnSessionStart: boolean(true), processingStaleAfterSecs: number(600) }),

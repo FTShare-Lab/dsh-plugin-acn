@@ -52,7 +52,7 @@
     llm:
       provider: ''
       model: ''
-      maxOutputTokens: 16384
+      maxOutputTokens: 32768
       timeoutMs: 600000
       structuredRetries: 5
     catalog:
@@ -101,7 +101,7 @@
 | `catalog.maxClaims` | 200 | 冻结目录条数上限 |
 | `catalog.maxChars` | 24000 | 目录的 Unicode 字符上限 |
 | `llm.provider` / `llm.model` | 空 | 指定后台路由；为空时形成用本会话路由，Inbox / Dream 用持久的最近任意会话路由 |
-| `llm.maxOutputTokens` | 16384 | 后台模型输出 token 上限 |
+| `llm.maxOutputTokens` | 32768 | 后台模型输出 token 上限；显式配置优先于默认值 |
 | `llm.timeoutMs` | 600000 | 每次后台传输调用超时毫秒数 |
 | `llm.structuredRetries` | 5 | 结构和引用校验的最大模型响应次数 |
 | `formation.recapOnCompaction` | true | 压缩后入队 Recap |

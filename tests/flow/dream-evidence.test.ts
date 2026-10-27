@@ -25,7 +25,18 @@ describe('restricted evidence child in the host', () => {
     const workspace = await fs.realpath(await fs.mkdtemp(join(tmpdir(), 'acn-host-evidence-'))); await fs.writeFile(join(workspace, 'source.txt'), material);
     const adapter = new ScriptAdapter([
       () => textResponse(JSON.stringify({ review: reviewSummary, candidates: input ? [candidate([input], 'evidence')] : [], sync_candidates: [] })),
-      (request) => { expect(request.tools?.map((tool) => tool.name).sort()).toEqual(['claim', 'glob', 'grep', 'read']); expect(requestText(request)).toContain(workspace); return toolResponse('read-a', 'read', { path: 'source.txt', claim_ids: [input?.id] }); },
+      (request) => {
+        expect(request.tools?.map((tool) => tool.name).sort()).toEqual(['claim', 'glob', 'grep', 'read']);
+        const schema = request.tools?.find((tool) => tool.name === 'claim')?.parameters;
+        expect({ properties: schema?.properties ?? {}, required: schema?.required ?? [] }).toMatchObject({
+          properties: { action: { type: 'string', enum: ['list', 'read'] }, id: { type: 'string' } },
+          required: ['action'],
+        });
+        expect(Object.keys(schema?.properties ?? {})).toEqual(['action', 'id']);
+        expect(schema?.oneOf).toHaveLength(2);
+        expect(requestText(request)).toContain(workspace);
+        return toolResponse('read-a', 'read', { path: 'source.txt', claim_ids: [input?.id] });
+      },
       (request) => { expect(requestText(request)).toContain('file_version'); return textResponse('The file provides a direct read-only limitation.'); },
       (request) => { const data = JSON.parse(requestText(request)) as { evidence: Receipts }; return textResponse(JSON.stringify({ action: 'stage', group: calibrationDraft(input ? [input] : [], data.evidence) })); },
       (request) => { const data = JSON.parse(requestText(request)) as { validation: Validation }; return textResponse(JSON.stringify({ decision: 'apply', reason: 'Direct evidence supports this bounded correction.', reason_kind: 'useful_knowledge', ...calibrationReviews(data.validation) })); },
@@ -35,6 +46,7 @@ describe('restricted evidence child in the host', () => {
       const handle = await f.ctx.agents.create({ sessionId: SessionId('foreground-evidence'), meta: { cwd: workspace }, agentOptions: { provider: 'mock', model: 'mock' } });
       const result = await f.ctx.commands.execute(handle.agent, '/dream', [], new AbortController().signal); expect(result?.result.kind).toBe('success'); const worker = f.knowledge.jobs; if (!worker) throw new Error('Missing worker.'); const job = (await worker.queue.list()).find((job) => job.kind === 'dream'); if (!job) throw new Error('Missing job.');
       await waitJob(worker.queue, job.id); expect(adapter.requests).toHaveLength(5); expect((await new ClaimStore(f.knowledge.context()).list())[0]).toMatchObject({ confidence: 'high', statement: material });
+      for (const request of adapter.requests) expect(request.maxTokens).toBe(32_768);
       const manifest = await new EvidenceStore(f.knowledge.context(), job.id, 'group-a').read(); expect(manifest).toMatchObject({ completed: true, calls: 1, model_steps: 2, workspace_root: workspace });
       const jobs = await worker.queue.list(); expect(jobs.every((job) => job.kind === 'dream')).toBe(true); const sessions = await fs.readdir(f.knowledge.context().paths.sessions); expect(sessions.some((session) => session.startsWith('acn-evidence-'))).toBe(false);
     } finally { await f.close(); await fs.rm(workspace, { recursive: true, force: true }); }

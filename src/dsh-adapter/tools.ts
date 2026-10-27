@@ -5,6 +5,7 @@ import { z } from 'zod';
 import type { AcnKnowledge } from '../knowledge/service.js';
 import { ClaimToolArgsSchema, CLAIM_DESCRIPTION, executeClaim } from '../tools/claim.js';
 import { ConsultRouterArgsSchema, CONSULT_ROUTER_DESCRIPTION, executeConsultRouter } from '../tools/consult-router.js';
+import { toolParameters } from './tool-schema.js';
 
 export function claimTool(knowledge: AcnKnowledge): ToolDefinition {
   const tool = defineTool({
@@ -20,9 +21,7 @@ export function claimTool(knowledge: AcnKnowledge): ToolDefinition {
       return z.json().parse(json);
     },
   });
-  // schema 生成器带有非枚举的校验元数据，跨宿主边界前只保留 JSON 投影。
-  const projection: unknown = JSON.parse(JSON.stringify(z.toJSONSchema(ClaimToolArgsSchema)));
-  return { ...tool, parameters: z.record(z.string(), z.json()).parse(projection) };
+  return { ...tool, parameters: toolParameters(ClaimToolArgsSchema) };
 }
 export function consultRouterTool(knowledge: AcnKnowledge): ToolDefinition {
   const tool = defineTool({ name: 'consult_router', description: CONSULT_ROUTER_DESCRIPTION,
@@ -34,6 +33,5 @@ export function consultRouterTool(knowledge: AcnKnowledge): ToolDefinition {
       return z.json().parse(JSON.parse(JSON.stringify(result)));
     },
   });
-  const projection: unknown = JSON.parse(JSON.stringify(z.toJSONSchema(ConsultRouterArgsSchema)));
-  return { ...tool, parameters: z.record(z.string(), z.json()).parse(projection) };
+  return { ...tool, parameters: toolParameters(ConsultRouterArgsSchema) };
 }

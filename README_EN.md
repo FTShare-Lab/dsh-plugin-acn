@@ -34,6 +34,8 @@ Solo mode needs no team services. Choose a stable ID such as `personal`; all pro
 
 Chat and background models are selected separately from the models configured in DSH. Changing identity or storage location does not migrate data; start a new session after either change. Private memory review sends its input to the configured model provider, not to team services.
 
+ACN background tasks default to a 32,768-token output limit. Explicit `llm.maxOutputTokens` settings continue to take precedence; see the [configuration reference](docs/config.md).
+
 ![ACN configuration page in DSH, Chinese UI](docs/assets/config-identity.jpg)
 
 The declared DSH version range is `>=0.2.1-rc.2 <0.3.0`, with `0.2.1-rc.2` as the compatibility baseline. The package identifier is `dsh-plugin-acn`; the Chinese display name is **ACN记忆框架**.
