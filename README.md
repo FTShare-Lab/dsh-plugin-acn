@@ -4,7 +4,7 @@
 
 **从agent工作轨迹中沉淀可复用的知识与记忆，让知识经验在团队中流动。**
 
-ACN 是 DeepSeek Harness（DSH）的记忆插件。它把工作中的经验整理成可引用、可修订的知识，让新会话有机会复用之前的成果；也可连接 ACN 团队服务，在多个 Agent 之间分享知识和处理争议。
+ACN记忆框架是 DeepSeek Harness（DSH）的知识与记忆插件。它把工作中的经验整理成可引用、可修订的知识，让新会话有机会复用之前的成果；也可连接 ACN 团队服务，在多个 Agent 之间分享知识和处理争议。
 
 本仓库包含插件的 TypeScript 实现、网页配置界面、模型提示词和自动化测试。Router 与 Maintainer 是独立部署的 ACN 服务，插件提供与它们通信的客户端。
 
@@ -81,3 +81,7 @@ pnpm test
 [文档导航](docs/index.md) · [架构](docs/architecture.md) · [开发指南](docs/development.md) · [更新记录](CHANGELOG.md)
 
 许可证：[MIT](LICENSE-MIT) 或 [Apache-2.0](LICENSE-APACHE)。
+
+## ACN 原仓库
+
+ACN 原生应用、Router 和 Maintainer 的源码与使用说明见 [FTShare-Lab/agent-claim-network](https://github.com/FTShare-Lab/agent-claim-network)。本仓库维护其 DSH 插件实现。

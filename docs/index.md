@@ -12,3 +12,5 @@
 | 共享协议、团队服务与迁移边界 | [ACN 兼容边界](acn-compat.md) |
 | 构建、自动化测试、安装检查与本地调试 | [开发指南](development.md) |
 | 使用限制与尚未覆盖的能力 | [已知限制](outstanding-issues.md) |
+
+首次使用按[使用指南](user-guide.md)完成安装和一次知识复用。查询自动复盘条件、归档暂停或失败重试时，直接查看[知识形成与失败重试](command-reference.md#知识形成与失败重试)；调整阈值见[配置说明](config.md)，复现触发边界见[Recap 触发与恢复验收](development.md#recap-触发与恢复验收)。
