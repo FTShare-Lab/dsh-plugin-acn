@@ -20,6 +20,11 @@ export function findViolations(text) {
   );
 }
 
+// 用户确认的邮箱可以出现在 Git 身份元数据中，文件正文仍执行完整隐私检查。
+export function findIdentityViolations(text) {
+  return findViolations(text).filter(({ kind }) => kind !== 'email-address');
+}
+
 async function main() {
   const { stdout } = await promisify(execFile)('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z']);
   let count = 0;
@@ -32,7 +37,7 @@ async function main() {
     }
   }
   const { stdout: identities } = await promisify(execFile)('git', ['log', '--all', '--format=%H %ae %ce']);
-  for (const violation of findViolations(identities)) {
+  for (const violation of findIdentityViolations(identities)) {
     process.stderr.write(`git-identities:${violation.line}: ${violation.kind}\n`);
     count += 1;
   }

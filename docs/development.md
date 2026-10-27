@@ -28,7 +28,7 @@ pnpm smoke:install
 | `pnpm test:compat` | 已提交的协议 fixture，以及 TypeScript 写出的 YAML 能否被 Rust 读回 |
 | `pnpm test:contract` | 在临时目录启动真实 Router / Maintainer，验证查询、上传、Inbox 和整合依赖 |
 | `pnpm smoke:install` | 新 DSH profile 中的实际包安装、Loader 生命周期、公开资源和不兼容引擎拒绝 |
-| `pnpm check:security` | 版本控制文本中的凭据、邮箱、个人路径，以及可达提交邮箱 |
+| `pnpm check:security` | 版本控制文本中的凭据、邮箱和个人路径，以及提交元数据中的其他敏感内容；允许用户确认的 Git 身份邮箱 |
 | `pnpm check:docs` | Markdown 相对链接与标题锚点 |
 
 安装包包含运行 JS、类型声明、提示词、组合 patch、双语说明、本地化资源、图标、使用截图和许可证；不包含源码测试、依赖缓存、临时项目或运行日志。安装检查使用独立的 `DSH_HOME`，不会修改日常 profile。
