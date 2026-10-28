@@ -107,6 +107,14 @@ pnpm test:contract
 
 以输出的根目录作为 `ACN_WEB_HOME` 启动 `pnpm smoke:web`。新任务场景可同时设置 `ACN_WEB_DISABLE_MEMORY_REVIEW=true`，保留预置 review 排队任务，检查禁用处理器不会阻塞 Dream。随后运行 `/dream`，通过 `/acn-status` 和 `/claim show <id>` 核对恢复结果、证据摘要与来源承接。脚本不导入日常知识。
 
+## 提示词维护
+
+内容选择和知识使用纪律以原 ACN 的同名模板、`agent_system.j2` 中的知识段落为基准，保留其原文和示例，不以缩短提示词为由删减或弱化规则。适配范围限于插件实际提供的工具参数、结构化输出格式、会话投影、私有数据边界及 Dream 额度和收尾通知。
+
+正常插件使用当前自主 Dream 提示词；旧固定阶段模板只用于兼容适配器及其测试，不注入当前自主流程。
+
+修改后核对前台与后台 Memory 的共同规则、单人模式不出现团队调用指令，并使用参考模板引擎重新导出受影响的快照；同时运行宿主集成与真实模型验收，检查输出接口和知识选择结果。
+
 ## CI 配置
 
 工作流定义在 `.github/workflows/ci.yml`，检查矩阵使用 Node 22 / 24。团队契约 job 需要仓库变量 `ACN_REFERENCE_REPOSITORY`，其值为参考源码仓库；私有跨仓库访问另用 `ACN_REFERENCE_TOKEN` secret。缺少参考仓库变量会明确失败，不会跳过契约检查。

@@ -5,7 +5,7 @@ import type {} from '@deepseek-ai/dsh-agent';
 import type {} from './knowledge.js';
 import { AcnDream } from '../dream/service.js';
 import { structuredBackend } from '../dsh-adapter/llm.js';
-import { restrictedExplorer } from '../dsh-adapter/dream-evidence.js';
+import { autonomousDreamRunner } from '../dsh-adapter/dream-agent.js';
 import { z } from 'zod';
 import { readYamlOr } from '../store/yaml.js';
 import { projectEvent } from '../dsh-adapter/formation.js';
@@ -22,7 +22,7 @@ export async function apply(ctx: Context): Promise<void> {
   const knowledge = ctx.acnKnowledge; if (!knowledge.configured) return;
   let pending = Promise.resolve();
   const render = await loadPromptRenderer();
-  const service = new AcnDream(knowledge, structuredBackend(ctx), render, () => pending, { workspace: async () => { await pending; return readYamlOr(knowledge.context().paths.dreamWorkspace, z.string(), () => process.cwd()); }, explore: restrictedExplorer(ctx, render('dream_evidence.j2', {})) }); ctx.provide('acnDream', service);
+  const service = new AcnDream(knowledge, structuredBackend(ctx), render, () => pending, { workspace: async () => { await pending; return readYamlOr(knowledge.context().paths.dreamWorkspace, z.string(), () => process.cwd()); }, run: autonomousDreamRunner(ctx) }); ctx.provide('acnDream', service);
   ctx.on('session/event', (session, event) => {
     if (!sessionAllowed(ctx, knowledge.config, session.header) || isSubagent(session.header)) return;
     const route = projectEvent(event).route;

@@ -17,7 +17,7 @@ export async function statusCommand(knowledge: AcnKnowledge): Promise<string> {
     knowledge.mode === 'solo' ? '团队连接: 单人模式，不请求团队服务。' : `团队连接: Router=${team.router.state}；Maintainer=${team.maintainer.state}`,
     ...[team.router.error, team.maintainer.error].filter((error) => error !== undefined),
     `后台任务: queued=${jobs.filter((job) => job.state === 'queued').length} running=${jobs.filter((job) => job.state === 'running').length} failed=${jobs.filter((job) => job.state === 'failed').length}`,
-    ...jobs.slice(0, 10).map((job) => `${job.id} ${job.kind} ${job.state} attempts=${job.attempts}${job.lastError === undefined ? '' : ` — ${job.lastError}`}`),
+    ...jobs.slice(0, 10).map((job) => `${job.id} ${job.kind} ${job.state} attempts=${job.attempts}${job.payload['paused'] === true ? ' — 已暂停' : ''}${job.lastError === undefined ? '' : ` — ${job.lastError}`}`),
     ...(jobs.some((job) => job.state === 'failed') ? ['重试失败任务：/acn-status retry <job_id>'] : []),
   ].join('\n');
 }

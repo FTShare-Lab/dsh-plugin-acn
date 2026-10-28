@@ -1,5 +1,6 @@
 // 共享 worker 顺序处理持久候选、草稿、复核和提交；停止与让位均保留已接受进度。
 import { z } from 'zod';
+import { DreamSession } from './autonomous.js';
 import fs from 'node:fs/promises';
 import type { Claim } from '../protocol/claim.js';
 import type { ResolvedConfig } from '../config.js';
@@ -26,7 +27,8 @@ import { validateEvidencePreservation } from './preservation.js';
 
 const SummarySchema = z.strictObject({ checked: z.string(), findings: z.string(), uncertainties: z.string(), next_steps: z.string() });
 export type EvidenceExplorer = (input: { store: EvidenceStore; claims: readonly Claim[]; route: Route; config: ResolvedConfig['llm']; signal: AbortSignal }) => Promise<void>;
-export interface DreamOptions { workspace?: () => Promise<string>; explore?: EvidenceExplorer }
+export type AutonomousDreamRunner = (input: { session: DreamSession; route: Route; config: ResolvedConfig['llm']; system: string; signal: AbortSignal }) => Promise<void>;
+export interface DreamOptions { workspace?: () => Promise<string>; explore?: EvidenceExplorer; run?: AutonomousDreamRunner }
 export class AcnDream {
   private readonly unregister: () => void;
   private readonly timers = new Set<ReturnType<typeof setTimeout>>();
@@ -75,7 +77,7 @@ export class AcnDream {
     if (jobs.some((current) => current.id === job.id && current.payload['paused'] === true)) throw new DreamStopped();
     if (jobs.some((job) => this.knowledge.jobs?.canRun(job) && jobPriority[job.kind] < jobPriority.dream)) throw new DreamYield();
   }
-  private async call<T>(job: Job, control: JobControl, phase: StructuredPhase, data: object, schema: z.ZodType<T>, parse: (value: T) => T = (value) => value, systemName = 'claim_dream.j2'): Promise<T> {
+  private async call<T>(job: Job, control: JobControl, phase: StructuredPhase, data: object, schema: z.ZodType<T>, parse: (value: T) => T = (value) => value, systemName = 'claim_dream_legacy.j2'): Promise<T> {
     await this.boundary(job, control); await this.beforeCall?.(); const route = await resolveRoute(this.knowledge.config.llm, this.knowledge.context());
     return structuredCall({ backend: this.backend, context: this.knowledge.context(), config: this.knowledge.config.llm, route, jobId: job.id, phase, system: this.render(systemName, {}), input: JSON.stringify({ phase, ...data }), schema, parse: (value) => parse(schema.parse(value)), signal: control.signal });
   }
@@ -87,6 +89,17 @@ export class AcnDream {
       if (!dreamEligible(this.knowledge.config.dream, await store.state(), claims, this.knowledge.context().agentId, job.payload['manual'] === true)) return { skipped: 'not_eligible' };
       const input = claimInput(claims.filter((claim) => claim.status !== 'deprecated')); origin = { snapshot_at: nowSeconds(), claims, coverage: input.coverage, workspace_root: await this.workspace(typeof job.payload['workspace_root'] === 'string' ? job.payload['workspace_root'] : undefined) };
       await store.saveOrigin(job.id, origin);
+    }
+    // 宿主使用自主工具会话；旧固定阶段入口保留用于旧协议适配器与恢复测试。
+    if (this.options.run !== undefined) {
+      const session = await DreamSession.create(this.knowledge, job, control, () => this.boundary(job, control));
+      if (!session.finished) {
+        await this.beforeCall?.();
+        await this.options.run({ session, route: await resolveRoute(this.knowledge.config.llm, this.knowledge.context()), config: this.knowledge.config.llm, system: this.render('claim_dream.j2', {}), signal: control.signal });
+        requireDream(session.finished, '自主 Dream 尚未完成。');
+      }
+      await new UploadDelivery(this.knowledge.context(), this.knowledge.team).deliver(control.signal);
+      return { updatedClaimIds: [...new Set((await store.records(job.id)).flatMap(({ checkpoint }) => Object.keys(checkpoint.self_versions)))], modelSteps: session.progress.autonomy?.steps ?? 0, wrapUpSteps: session.progress.autonomy?.wrap_up?.steps ?? 0, budgetLimited: session.exhausted, report: 'Dream report.md 已保存。' };
     }
     const loaded = claimInput(origin.claims.filter((claim) => claim.status !== 'deprecated')).loaded;
     const evidenceEnabled = this.knowledge.config.dream.evidenceCalibration && this.options.explore !== undefined && origin.workspace_root !== undefined;

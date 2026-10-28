@@ -28,9 +28,9 @@ describe('private Memory operations', () => {
     const ops: MemoryOp[] = mode === 'add' ? [{ op: 'add', target: 'memory', entry: 'bad § entry' }] : mode === 'replace' ? [{ op: 'replace', target: 'memory', old_text: 'first', new_text: 'bad § entry' }] : [{ op: 'add', target: mode === 'user-capacity' ? 'user' : 'memory', entry: mode === 'blank-entry' ? ' \n ' : 'a long entry' }];
     expect(() => applyMemoryOps({ memory: 'first', user: '' }, { ...config, memoryCharLimit: mode === 'memory-capacity' ? 5 : 200, userCharLimit: mode === 'user-capacity' ? 5 : 100 }, ops)).toThrow(MemoryError);
   });
-  it('capacity failure returns actual candidate entries and excess without echoing the input locator', () => {
-    try { applyMemoryOps({ memory: 'first', user: '' }, { ...config, memoryCharLimit: 6 }, [{ op: 'add', target: 'memory', entry: 'second' }]); throw new Error('Expected capacity failure.'); }
-    catch (error) { expect(error).toBeInstanceOf(MemoryError); expect((error as MemoryError).details).toMatchObject({ current: 16, cap: 6, need_free: 10, current_entries: ['first', 'second'] }); }
+  it.each(['memory', 'user'] as const)('capacity failure distinguishes stored %s entries from the uncommitted batch', (target) => {
+    try { applyMemoryOps({ memory: 'first', user: 'first' }, { ...config, memoryCharLimit: 6, userCharLimit: 6 }, [{ op: 'replace', target, old_text: 'first', new_text: 'edited' }, { op: 'add', target, entry: 'second' }]); throw new Error('Expected capacity failure.'); }
+    catch (error) { expect(error).toBeInstanceOf(MemoryError); expect(String(error)).toContain('no operations were applied'); expect((error as MemoryError).details).toEqual({ target, applied: false, current: 5, proposed: 17, cap: 6, need_free: 11, current_entries: ['first'], usage: '5/6' }); }
   });
   it('renders capacity, entry counts, separators and empty prompt blocks', () => { expect(renderMemoryBlock('memory', [], 8000)).toBe(''); expect(renderMemoryBlock('user', ['用户偏好简洁'], 4000)).toContain('USER PROFILE (who the user is) [0% — 6/4,000 chars]'); });
   it.each([

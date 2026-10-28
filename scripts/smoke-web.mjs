@@ -51,6 +51,7 @@ function responseFor(body) {
   const messages = body.messages ?? []; const last = messages.at(-1); const text = textOf(last?.content); const system = textOf(body.system);
   if (text.includes('acting as a compaction engine')) return { phase: 'compact', text: summary };
   let data; try { data = JSON.parse(text); } catch { /* 普通用户消息按下方场景驱动。 */ }
+  if (data?.dream_context && data?.authoritative_state) return { phase: 'dream', call: { name: 'dream_finish', args: { review: { quality: 'The bounded rules are reusable.', evidence: 'No concrete doubt needs calibration.', consolidation: 'Separate scopes remain useful.' } } } };
   if (data?.phase === 'memory_review') return { phase: 'memory_review', text: JSON.stringify({ ops: [{ op: 'add', target: 'user', entry: 'Prefers concise technical summaries.' }] }) };
   if (data?.phase === 'candidates') return { phase: 'dream', text: JSON.stringify({ review: { quality: 'The bounded rules are reusable.', evidence: 'Calibration is disabled.', consolidation: 'The claims have distinct useful scopes.' }, candidates: [], sync_candidates: [] }) };
   if (Array.isArray(data?.transcript) && Array.isArray(data.local_claims)) {

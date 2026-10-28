@@ -66,7 +66,10 @@ export class JobQueue {
   pauseDream(paused: boolean): Promise<Job[]> { return this.locked(async () => {
     const result: Job[] = [];
     for (const job of await this.list()) if (job.kind === 'dream' && (job.state === 'queued' || job.state === 'running')) {
-      const next = { ...job, payload: { ...job.payload, paused }, updatedAt: Date.now() }; await this.write(next); result.push(next);
+      // 兼容旧额度暂停：恢复后只做有限收尾，不给原任务重新分配探索额度。
+      const next: Job = { ...job, payload: { ...job.payload, paused }, updatedAt: Date.now() };
+      delete next.payload['budget_exhausted']; delete next.payload['budget_epoch'];
+      await this.write(next); result.push(next);
     }
     return result;
   }); }

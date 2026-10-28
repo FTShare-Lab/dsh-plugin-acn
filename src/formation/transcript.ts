@@ -20,7 +20,7 @@ export const FormationStateSchema = z.object({
   archiveIntent: seq.nullable().default(null), archivePending: z.boolean().default(false),
 });
 export type FormationState = z.infer<typeof FormationStateSchema>;
-export const TranscriptEntrySchema = z.strictObject({ seq: seq.refine((value) => value >= 0), type: z.enum(['user', 'assistant', 'tool_call', 'tool_result']), text: z.string() });
+export const TranscriptEntrySchema = z.strictObject({ seq: seq.refine((value) => value >= 0), type: z.enum(['user', 'assistant', 'tool_call', 'tool_result']), text: z.string(), projection: z.strictObject({ truncated: z.boolean(), original_chars: z.number().int().nonnegative(), retained_chars: z.number().int().nonnegative() }).optional() });
 export type TranscriptEntry = z.infer<typeof TranscriptEntrySchema>;
 export interface Projection {
   entry?: TranscriptEntry; route?: Route; seenSourceIds?: string[]; privateCallId?: string; resultCallId?: string;

@@ -6,7 +6,7 @@ import { AgentIdSchema } from '../../../lib/protocol.js';
 import { AgentPaths, ClaimStore, UploadStore } from '../../../lib/store.js';
 import { DreamStore, DreamSync, DraftGroupSchema, expandDraft, reviewInput, ProgressSchema, CheckpointSchema } from '../../../lib/dream.js';
 
-const [root, jobId, stage] = process.argv.slice(2);
+const [root, jobId, stage, reviewMode] = process.argv.slice(2);
 const context = { paths: new AgentPaths(root), agentId: AgentIdSchema.parse('agent-a'), mode: 'team', logger: { warn() {}, debug() {} } };
 const store = new DreamStore(context); const input = await new ClaimStore(context).list(); const [first, second] = input;
 if (!first || !second) throw new Error('Missing crash inputs.');
@@ -19,7 +19,7 @@ const draft = DraftGroupSchema.parse({ kind: 'consolidation', reason: 'Combine r
 const group = expandDraft(draft, input); const validation = reviewInput('group-a', group, input); const outputs = validation.input.after.filter((claim) => claim.status !== 'deprecated');
 const selfReview = { group_id: 'group-a', validation_id: validation.validation_id, preservation: input.flatMap((claim) => fields.map((field) => ({ before: quote(claim, field), after: outputs.map((output) => quote(output, field)), disposition: 'preserved', reason: 'Represented by the surviving topic.', evidence: [] }))), support: outputs.flatMap((claim) => fields.map((field) => ({ after: quote(claim, field), before: input.map((before) => quote(before, field)), evidence: [], reason: 'Supported by the complete input fields.' }))), scope_and_certainty: 'Scope and certainty unchanged.' };
 const review = { quality: 'No episodic cleanup required.', evidence: 'Calibration unavailable.', consolidation: 'Combine complete related conditions.' };
-await store.saveOrigin(jobId, { snapshot_at: '2026-01-04T00:00:00Z', claims: input, coverage: { total: 2, included: 2, omitted: 0 } });
+await store.saveOrigin(jobId, { snapshot_at: '2026-01-04T00:00:00Z', claims: input, coverage: { total: 2, included: 2, omitted: 0 }, workspace_root: root });
 const progress = ProgressSchema.parse({ schemaVersion: 1, discovery: { review, candidates: [{ group_id: 'group-a', claim_ids: input.map((claim) => claim.id), kind: 'consolidation', reason: 'Shared topic.' }], sync_candidates: [] }, entries: [{ candidate: { group_id: 'group-a', claim_ids: input.map((claim) => claim.id), kind: 'consolidation', reason: 'Shared topic.' }, status: 'pending', reason: '', draft: group, validation, review: { decision: 'apply', reason: 'Complete review.', reason_kind: 'useful_knowledge', semantic: semantic(validation), self_review: selfReview } }], syncCompleted: [], finished: false, summary: null });
 await store.saveProgress(jobId, progress); await fs.writeFile(join(root, 'model-calls'), 'one', { mode: 0o600 });
 let finalizing = false;
@@ -42,7 +42,8 @@ fs.rename = async (source, target) => {
   if (stage === 'sync-upload' && target === context.paths.pendingUploads && finalizing) match = true;
   if (match) await pause();
 };
-await store.commitGroup(jobId, 'group-a', group, validation, semantic(validation), selfReview, { signal: new AbortController().signal, prepared() {} });
+await store.commitGroup(jobId, 'group-a', group, validation, semantic(validation), reviewMode === 'semantic' || reviewMode === 'budget' ? null : selfReview, { signal: new AbortController().signal, prepared() {} });
+if (reviewMode === 'budget') progress.autonomy = { steps: 1, limit: 1, epoch: 0, read_ids: input.map((claim) => claim.id), wrap_up: { steps: 3, limit: 3 } };
 progress.entries[0].status = 'executed'; await store.saveProgress(jobId, progress); finalizing = true;
 if (stage.startsWith('sync-')) {
   const carrier = await new ClaimStore(context).read(first.id); const revised = { ...carrier, statement: `${carrier.statement} Keep the original scope.`, updated_at: '2027-01-01T00:00:00Z' }; await new ClaimStore(context).write(revised);

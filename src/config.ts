@@ -36,7 +36,7 @@ export const ConfigSchema = z.strictObject({
   dream: z.strictObject({
     enabled: z.boolean().default(true), minIntervalHours: positive().default(24),
     minChangedClaims: positive().default(5), checkIntervalHours: positive().default(4),
-    evidenceCalibration: z.boolean().default(false),
+    evidenceCalibration: z.boolean().default(false), maxModelSteps: positive().max(128).default(24), maxWrapUpSteps: positive().max(8).default(3),
     evidenceMaxCalls: positive().max(256).default(32), evidenceMaxSteps: positive().max(128).default(24),
     evidenceMaxBytes: positive().max(16_777_216).default(1_048_576),
     evidenceMaxChars: positive().max(64_000).default(16_000), evidenceMaxFiles: positive().max(4096).default(256),

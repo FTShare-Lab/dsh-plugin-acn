@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import nunjucks from 'nunjucks';
 
-const templateNames = ['memory.j2', 'what_is_memory.j2', 'memory_review.j2', 'memory_review_system.j2', 'claim_dream.j2', 'dream_compaction.j2', 'dream_evidence.j2', 'knowledge.j2', 'session_recap.j2', 'inbox_policy_update_internalize.j2', 'inbox_claim_attribute_update_internalize.j2', 'what_is_claim.j2', 'what_is_dispute.j2', 'what_is_policy.j2'] as const;
+const templateNames = ['memory.j2', 'what_is_memory.j2', 'memory_review.j2', 'memory_review_system.j2', 'claim_dream.j2', 'claim_dream_legacy.j2', 'dream_compaction.j2', 'dream_evidence.j2', 'knowledge.j2', 'session_recap.j2', 'inbox_policy_update_internalize.j2', 'inbox_claim_attribute_update_internalize.j2', 'what_is_claim.j2', 'what_is_dispute.j2', 'what_is_policy.j2'] as const;
 class MemoryLoader extends nunjucks.Loader {
   constructor(private readonly sources: Readonly<Record<string, string>>) { super(); }
   getSource(name: string) {

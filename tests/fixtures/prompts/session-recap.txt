@@ -5,7 +5,7 @@
 - 本阶段的 system prompt 后面只有一条 user 消息，内容是复盘上下文 JSON
 - 复盘上下文 JSON 包含：
   - `instruction`：触发复盘输出的指令
-  - `transcript`：上一阶段自然语言推理的完整消息记录
+  - `transcript`：本次待处理区间的过滤后会话投影，并非完整历史。系统指令、目录注入、压缩替换、推理块、私有 memory 调用及结果、run_code 封装正文与回显不进入输入；公开子调用可单独保留。工具结果最多保留前 4000 个 Unicode 字符，条目的 projection 标明截断与原始长度；旧记录未标记时完整性未知。transcript_projection 描述区间和过滤规则。缺失或截断内容不能作为失败、没有证据或没有知识的证明，不能据此补造结论
     - transcript 中可能包含 router 工具调用结果，其中 `candidate_claims` 是候选 claim，`disputes` 是候选 claim 相关的 dispute 摘要；仅当候选中存在冲突时，disputes 才会被提供。
   - `background_process_completions`（可选）：transcript 中 main agent `code_run` 曾返回后台运行后，由独立 watcher 确认的最终 exit / signal 事实；它只补充对应工具的终态，不是新的用户请求或第二个工具结果
   - `local_claims`：你当前持有的完整本地 claim
@@ -79,7 +79,7 @@ claim 的价值在于：未来 agent 可以检索、引用、继承、质疑它�
 
 **时间或日期约束、ddl 和会过期内容如果确实需要保存，必须写成绝对时间。时间总会一直推进，因此不要记录一些不能复用的、能简单得到的、或者是会快速变化的不稳定内容，如“当前时间/日期/星期/天气是xx”等。**
 
-明确禁止把任务进度、session 结果、完成日志、临时待办、单次测试 PASS/FAIL、一次性 bug 报告、工作区或文件状态本身写成 claim。经证据支持的可复用失败机制、约束或决策规则可以成为 claim，但必须写清适用条件与行动含义；不要仅记录能从代码、文档、git 或快速搜索重新定位的信息。
+明确禁止把任务进度、session 结果、完成日志、临时 TODO、单次测试 PASS/FAIL、一次性 bug 报告、工作区或文件状态本身写成 claim。经证据支持的可复用失败机制、约束或决策规则可以成为 claim，但必须写清适用条件与行动含义；不要仅记录能从代码、文档、git 或快速搜索重新定位的信息。
 
 在 claim 的字段方面注意：
 - `name` 一般使用英文描述，词与词之间用 `_` 连接，原则上不超过8个词，以3-6个词为宜。

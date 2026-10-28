@@ -30,6 +30,7 @@ export class DreamStore {
   state() { return readYamlOr(this.context.paths.dreamState, DreamStateSchema, () => DreamStateSchema.parse({})); }
   origin(jobId: string): Promise<Origin | null> { return readYamlOr(join(this.context.paths.dreamJob(jobId), 'origin.yaml'), OriginSchema, () => null); }
   progress(jobId: string): Promise<Progress | null> { return readYamlOr(join(this.context.paths.dreamJob(jobId), 'progress.yaml'), ProgressSchema, () => null); }
+  final(jobId: string): Promise<Checkpoint | null> { return readYamlOr(this.context.paths.dreamFinal(jobId), CheckpointSchema, () => null); }
   async saveOrigin(jobId: string, origin: Origin): Promise<void> { if (await this.origin(jobId) === null) await writeYamlAtomic(join(this.context.paths.dreamJob(jobId), 'origin.yaml'), origin, OriginSchema, this.context.logger); }
   async saveProgress(jobId: string, progress: Progress): Promise<void> {
     await writeYamlAtomic(join(this.context.paths.dreamJob(jobId), 'progress.yaml'), progress, ProgressSchema, this.context.logger);
@@ -74,21 +75,23 @@ export class DreamStore {
     await withFileLock(this.context.paths.knowledgeLock, () => this.recoverLocked(), { timeoutMs: this.context.lockTimeoutMs });
   }
   async recoverLocked(): Promise<void> { for (const path of await this.unfinished()) await this.applyLocked(path); }
-  async commitGroup(jobId: string, groupId: string, group: Group, validation: Validation, semantic: SemanticReview, selfReview: SelfReview, control: JobControl): Promise<Checkpoint> {
+  async commitGroup(jobId: string, groupId: string, group: Group, validation: Validation, semantic: SemanticReview, selfReview: SelfReview | null, control: JobControl): Promise<Checkpoint> {
     const evidence = new EvidenceStore(this.context, jobId, groupId);
     const receipts = z.record(z.string(), z.json()).parse((await evidence.read())?.receipts ?? {});
     requireDream(sameJson(reviewInput(groupId, group, validation.input.before, receipts), validation), '草稿、真实查证回执与复核版本不一致。');
-    validateSelfReview(validation, selfReview); validateSemanticReview(validation, semantic);
-    const prepared = prepareGroup(group, validation.input.before, this.context.agentId, nowSeconds(), { enabled: group.kind === 'evidence' || Object.keys(receipts).length > 0, receipts });
+    if (selfReview !== null) validateSelfReview(validation, selfReview); validateSemanticReview(validation, semantic);
+    const prepared = prepareGroup(group, validation.input.before, this.context.agentId, nowSeconds(), { enabled: group.kind === 'evidence' || Object.keys(receipts).length > 0, receipts, semanticReview: selfReview === null });
     return withFileLock(this.context.paths.knowledgeLock, async () => {
       await this.recoverLocked(); await this.settleRegular?.();
       const path = this.context.paths.dreamExecution(jobId, validation.validation_id);
       const existing = await readYamlOr(path, CheckpointSchema, () => null); if (existing !== null) { requireDream(existing.operation?.group_id === groupId, '执行回执属于其他组。'); return this.applyLocked(path); }
       const origin = await this.origin(jobId); requireDream(origin !== null, '缺少 Dream 原始快照。');
-      requireDream(prepared.before.every((claim) => origin.claims.some((original) => sameClaim(original, claim))), '执行前原始 Claim 必须与冻结快照一致，不能先降低 high 再校准。');
+      const priorTargets = (await this.records(jobId)).flatMap(({ checkpoint }) => checkpoint.groups.filter((item) => item.completed && !item.skipped).flatMap((item) => item.after));
+      requireDream(prepared.before.every((claim) => origin.claims.some((original) => sameClaim(original, claim)) || selfReview === null && priorTargets.some((target) => sameClaim(target, claim))), '执行前 Claim 必须来自冻结快照或本轮已提交版本，不能采用外部并发修改。');
+      for (const item of semantic.claims) if (item.factual_correction || group.kind === 'evidence') requireDream(origin.claims.some((claim) => claim.id === item.claim_id && claim.confidence !== 'high'), '本轮原始 high Claim 不得先降级再进行事实校准。');
       await evidence.authorize(validation.input.evidence, origin.workspace_root, prepared.before);
       const snapshot_at = nowSeconds();
-      const checkpoint = CheckpointSchema.parse({ snapshot_at, input_versions: {}, coverage: origin.coverage, plan: { review: { quality: '逐组复核', evidence: '独立文件版本、逐 Claim 依据与引用校验；不保证语义正确', consolidation: '逐输入核对信息去向' }, groups: [group] }, receipts: validation.input.evidence, exploration_receipts: Object.keys(receipts).length, groups: [prepared], safety_reviews: [], self_reviews: [{ validation, review: selfReview }], trace_id: deriveTraceId(snapshot_at, 'dream_claim_review', prepared.before.map((claim) => claim.id), prepared.after.map((claim) => claim.id)), applied: false, success_at: null, self_versions: {}, operation: { job_id: jobId, group_id: groupId, validation_id: validation.validation_id, review: semantic, hard_validation_passed: true } });
+      const checkpoint = CheckpointSchema.parse({ snapshot_at, input_versions: {}, coverage: origin.coverage, plan: { review: { quality: '逐组复核', evidence: '独立文件版本、逐 Claim 依据与引用校验；不保证语义正确', consolidation: '逐输入核对信息去向' }, groups: [group] }, receipts: validation.input.evidence, exploration_receipts: Object.keys(receipts).length, groups: [prepared], safety_reviews: [], self_reviews: selfReview === null ? [] : [{ validation, review: selfReview }], trace_id: deriveTraceId(snapshot_at, 'dream_claim_review', prepared.before.map((claim) => claim.id), prepared.after.map((claim) => claim.id)), applied: false, success_at: null, self_versions: {}, operation: { job_id: jobId, group_id: groupId, validation_id: validation.validation_id, review: semantic, hard_validation_passed: true } });
       control.signal.throwIfAborted(); control.prepared();
       await writeYamlAtomic(path, checkpoint, CheckpointSchema, this.context.logger);
       return this.applyLocked(path);

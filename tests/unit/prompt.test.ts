@@ -8,6 +8,28 @@ import { ScriptAdapter } from '../flow/adapter.js';
 import { flowHarness } from '../flow/harness.js';
 
 describe('knowledge templates', () => {
+  it('restores scoped team retrieval and applicability discipline without adding host harness instructions', async () => {
+    const render = await loadPromptRenderer(); const team = render('knowledge.j2', { agent_id: 'agent-a', team: true });
+    expect(team).not.toContain('团队传输接入前');
+    for (const phrase of ['mode="overview"', 'mode="query"', 'semantic_query', 'disputes', '异常路径', '版本快照', '不能盲目重试', '作为 `expected_revision`', '不改来源链、不写 dispute', '主路径成立不代表方案已经完整']) expect(team).toContain(phrase);
+    expect(team).not.toContain('policy 是 maintainer');
+    const solo = render('knowledge.j2', { agent_id: 'agent-a', team: false }); expect(solo).not.toContain('consult_router'); expect(solo).toContain('适用条件');
+    const dream = render('claim_dream.j2', {}); expect(dream).toContain('dream_apply_group'); expect(dream).toContain('dream_record_candidates'); expect(dream).toContain('探索模型请求额度'); expect(dream).toContain('额外有限的收尾'); expect(dream).toContain('下次 Dream 重新读取当时的 Claim'); expect(dream).not.toContain('self_review 必须');
+  });
+  it('preserves Memory selection discipline in both foreground and background prompts', async () => {
+    const render = await loadPromptRenderer();
+    const memory = render('memory.j2', { memory_md: 'FROZEN_PRIVATE_MARKER', user_md: '' });
+    const review = render('memory_review_system.j2', { agent_id: 'agent-a' });
+    for (const prompt of [memory, review]) {
+      for (const rule of ['正向反馈和负向纠正都应作为潜在 memory 信号判断', '容易从当前代码、文档、git 或快速搜索重新发现的事实也不要保存', 'PR/issue/commit 编号', '“用户偏好简洁回答” ✓；“永远简洁回答” ✗', '降低 persistent memory 系统提供的信息密度', '增/删 文本使用的语言应该与使用 `memory` 工具时用户与 agent 交互的语言保持一致', '必须写成绝对时间']) expect(prompt).toContain(rule);
+      expect(prompt).toContain('`ops` 数组'); expect(prompt).toContain('不进入 Recap/Finalize、Inbox 或 Dream 输入');
+      expect(prompt).not.toContain('可以不保存'); expect(prompt).not.toContain('action="add"');
+    }
+    expect(memory).toContain('FROZEN_PRIVATE_MARKER'); expect(review).not.toContain('FROZEN_PRIVATE_MARKER');
+    expect(review).toContain('不要直接重复 `add`'); expect(review).toContain('只返回符合 schema 的 {"ops": [...]}');
+    expect(review).toContain('`memory_entries` / `user_entries`'); expect(review).toContain('截断或缺失内容');
+    expect(render('memory_review.j2', {})).toContain('只返回 {"ops": []}'); expect(render('memory_review.j2', {})).not.toContain('Nothing to save.');
+  });
   it.each([
     ['knowledge.j2', { agent_id: 'agent-a', team: false }, 'knowledge-solo'],
     ['knowledge.j2', { agent_id: 'agent-a', team: true }, 'knowledge-team'],

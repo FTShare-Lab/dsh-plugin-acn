@@ -60,7 +60,8 @@ export function applyMemoryOps(texts: MemoryTexts, config: Pick<ResolvedConfig['
   values.memory = [...new Set(values.memory)]; values.user = [...new Set(values.user)];
   for (const name of ['memory', 'user'] as const) {
     const usage = memoryUsage(values[name], name === 'memory' ? config.memoryCharLimit : config.userCharLimit);
-    if (usage.chars > usage.cap_chars) throw new MemoryError('validation', 'Memory capacity exceeded.', { target: name, current: usage.chars, cap: usage.cap_chars, need_free: usage.chars - usage.cap_chars, current_entries: values[name], usage: `${usage.chars}/${usage.cap_chars}` });
+    // 拒绝时整批尚未发布；当前内容必须来自原快照，不能把候选条目说成已落盘。
+    if (usage.chars > usage.cap_chars) throw new MemoryError('validation', 'Memory capacity exceeded; no operations were applied.', { target: name, applied: false, current: chars(original[name]), proposed: usage.chars, cap: usage.cap_chars, need_free: usage.chars - usage.cap_chars, current_entries: entries(original[name]), usage: `${chars(original[name])}/${usage.cap_chars}` });
   }
   const next = { memory: renderEntries(values.memory), user: renderEntries(values.user) }; const snapshot = snapshotTexts(next, config);
   const result = MemoryReportSchema.parse({ memory_chars: snapshot.memory_usage.chars, memory_cap_chars: snapshot.memory_usage.cap_chars, memory_percent: snapshot.memory_usage.percent, memory_entry_count: snapshot.memory_usage.entry_count, user_chars: snapshot.user_usage.chars, user_cap_chars: snapshot.user_usage.cap_chars, user_percent: snapshot.user_usage.percent, user_entry_count: snapshot.user_usage.entry_count, target, target_entries: target === null ? [] : values[target], no_op: next.memory === original.memory && next.user === original.user, message });

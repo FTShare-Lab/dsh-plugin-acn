@@ -18,7 +18,7 @@
 | `worker/` | 持久任务、优先级与 FIFO、单 worker、抢占、重试和接管 |
 | `team/` | 鉴权信封、代理、超时/重试、严格响应解码、连接状态与警告去重 |
 | `inbox/` | pull/ACK、同类消息批处理、仲裁和引用校验、撤回、批次 effect journal |
-| `dream/` | 调度、候选、草稿硬校验、全文及语义复核、逐组提交、依赖重绑与报告 |
+| `dream/` | 调度、候选、草稿硬校验、逐 Claim 语义复核、逐组提交、依赖重绑与报告 |
 | `memory/` | 双文件纯操作、事务入口、冻结快照、私有 review 窗口 / outbox / checkpoint |
 | `upload/` | 精确版本投递、整合依赖递归就绪、Dispute 集合去重、事件与空闲补传 |
 | `llm/structured.ts` | schema 提示、结构 / 传输重试、取消与无正文审计 |
@@ -66,11 +66,11 @@ Inbox 同步先逐条持久化，再 ACK 成功保存的前缀；ACK 只确认 r
 
 队列领取、入队时抢占、跨进程监控和 Dream 阶段边界共用 runnableJob 条件：queued、未暂停、已注册处理器、nextRunAt 已到期。处理器禁用或退避中的高优先级任务仍持久保留，但不会导致 Dream 反复让位重领；重新启用或到期后才参与调度。
 
-选择**插件自管结构化上下文**。完整 Claim 以 effective_updated_at、created_at 降序、ID 升序装入，保守字符预算 64000；超长单条跳过，余量不足时从较旧条目截断，报告保留覆盖数。候选登记后逐个 draft → 硬校验 → review → execute，不能遗漏候选结束；允许明确保留和零修改。复核输入带原文、草稿、验证哈希与当前候选反馈；全文引用覆盖 name / statement / scope / evidence_summary，包含否定、条件和备选行动。复核仍是模型自评，不能证明事实或信息等价。证据校准在 B 候选起草之前加入独立的受限文件查证，默认关闭；A/C 保持已有输入的清理与重组。
+自主整理运行在 DSH 的 AgentLoop 子会话中，插件不另建通用执行循环。初始 Claim 按 effective_updated_at、created_at 降序、ID 升序装入，保守预算 64000；超长或较旧条目可能遗漏，目录仅用于发现，须经 read_claim 完整读取后才能登记。模型自行决定探索顺序与深度，通过 dream_record_candidates、dream_stage_group、dream_validate、dream_apply_group、dream_keep_candidate 和 dream_finish 推进。允许继续发现候选、逐组立即执行、明确保留和零修改。
 
-`dream/preservation.ts` 将完整原 evidence_summary 作为保守的不丢失单位，不做语言、关键词或模型抽取。草稿预检和最终提交都要求各 ID（包括废弃历史）逐字保留原摘要；C 另要求 coverage 指定的活跃去向完整承接每条输入摘要。复核入口同样检查原文承接，不能用完整的 before 引用加无关 after 引用骗过。新证据说明只能追加，旧判断可在正文按授权校准并在依据中明确区分新旧版本。同步重绑也检查当前 carrier 的原依据。DTO 与记录格式保持不变；旧未 prepared 草稿按新约束重起草，prepared 固定目标仍按原协议恢复。
+`dream/autonomous.ts` 持有领域工具事务、候选、已读 ID 与持久模型轮数。复核采用当前原版的逐 Claim SemanticReview：解释信息去向、事实纠正、证据 ID、最终名称与确定性；不要求旧的双向全文引用或原摘要逐字复印。结构、来源、直接证据、权限和 CAS 仍由宿主独立校验；原始 high 资格固定，不能通过前一组降级绕过。旧格式的 prepared 记录及旧结构化适配入口保留兼容，不重新解释已经固定的提交。
 
-已完成上下文达到半预算时，先归档完整历史，再用移植的 `dream_compaction.j2` 生成 checked/findings/uncertainties/next_steps 摘要；摘要限制 12000 字符。压缩失败保留已提交组，重试先恢复压缩，再继续候选。结构化调用没有宿主对话或自动工具探索；这是对源端自主工具循环的明确适配。
+`dsh-adapter/dream-agent.ts` 只负责接入宿主循环、隔离工具与上下文、路由和生命周期。每次 agent/request（包括宿主同一步内重试）先落盘轮数，默认 24 次探索加最多 3 次收尾，恢复及自动重试不返还额度。收尾阶段通过独立 required context 在请求准入后刷新通知，不再允许发现候选、新证据读取或同步复核；已有项仍须通过正常版本与语义校验。模型结束收尾或收尾额度用尽后，未完成候选标为 skipped 并清除未提交草稿，持久 final checkpoint 终结本次并记录冷却。下次触发建立新任务与当前 Claim 快照。崩溃恢复可完成同一次尚未结束的收尾，但不会重置额度；旧版 budget_exhausted 暂停迁移为有限收尾，不分配新探索额度。
 
 每组先写 `dream/<job>/executions/<validation-hash>.yaml` 和可读审计，之后在知识锁内重检当前版本，写 `dream_pending.yaml` 字符串指针，先写存续承接、再写废弃来源，同锁内持久入队整合依赖。完成组、Trace、applied、DreamState 后删除 pending。最终 checkpoint 位于 `runtime/supervisor/dream/<job>.yaml`，其成功状态才更新冷却。恢复同时发现指针与指针落盘前的 prepared 记录；所有知识入口及 worker 领取任务前先恢复本地 Dream，失败不消耗其他任务 attempt。
 
@@ -78,9 +78,9 @@ Inbox 同步先逐条持久化，再 ACK 成功保存的前缀；ACK 只确认 r
 
 ## 受限证据校准
 
-任务 payload 和 origin 冻结可信会话 cwd 的 canonical 工作区；模型不能指定新根。`EvidenceStore` 持久化候选 Claim revision、工作区、额度和真实读取回执。工具调用、模型步数和读取预算在执行前预占，回执在响应工具前同步落盘；completed 后不能再追加。证据锁只覆盖本地短 I/O，子会话和结构化模型均在领域数据锁外。
+任务 payload 和 origin 冻结可信会话 cwd 的 canonical 工作区；模型不能指定新根。`EvidenceStore` 持久化候选 Claim revision、工作区、额度和真实读取回执。读取预算在执行前预占，回执在响应工具前同步落盘。当前候选在校验错误后可以继续读，但不能换根或版本；提交前关闭清单并重检实际证据。证据锁只覆盖本地短 I/O，子会话和结构化模型均在领域数据锁外。
 
-`dsh-adapter/dream-evidence.ts` 通过 agents.create 的 setup 在发布前清除继承能力、强制 native 模式、注册四个插件只读工具并安装单调 guard。完整系统段落不插值，关闭可选 context，并用同名空 scoped contribution 阻止 required context 在准入刷新时回流。知识目录和变化通知跳过这种查证会话；形成、Inbox 和 Dream 的普通会话触发也忽略子会话。子会话结束、取消和超时后必须 dispose 并排空循环，不能留下后台工具继续工作。
+`dsh-adapter/dream-agent.ts` 通过 agents.create 的 setup 在发布前清除继承能力、强制 native 模式、注册领域工具与受限只读工具并安装最终执行 guard。完整系统段落不插值，关闭可选 context，并用同名空 scoped contribution 阻止 required context 在准入刷新时回流。知识目录和变化通知跳过这种查证会话；形成、Inbox 和 Dream 的普通会话触发也忽略子会话。子会话结束、取消和超时后必须 dispose 并排空循环，不能留下后台工具继续工作。
 
 文件策略同时核对 lexical / canonical 根、逐层拒绝符号链接，打开时使用 no-follow/non-blocking，前后校验普通文件、inode、链接数、长度和修改时间。版本包含完整文件原始 SHA-256 和字节数，实际返回页保留完整行。glob/grep 有累计遍历和读取额度，只是定位结果；唯一独立证据是绑定明确 claim_ids 的 file_read。工具不暴露 shell、通用代码、网络、团队或私有 Memory 能力。
 

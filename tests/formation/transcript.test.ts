@@ -60,6 +60,7 @@ describe('transcript persistence', () => {
     const result = createToolResultMessage({ content: [{ type: 'text', text: '😀'.repeat(4500) }], callId: ToolCallId('call-a'), isError: false });
     const projected = projectEvent({ seq: SessionSeq(2), time: 2, type: 'tool/result', surfaceOp: 'append', data: { turn: 0, step: 0, message: result } });
     expect(Array.from(projected.entry?.text ?? '')).toHaveLength(4000);
+    expect(projected.entry?.projection).toEqual({ truncated: true, original_chars: 4500, retained_chars: 4000 });
     expect(compactionEnd({ type: 'compaction/summary', data: { shadowedRange: { start: 10, end: 3 }, shadowedSeqs: [10, 3] } })).toBe(10);
   });
   it('only complete tool bodies grant source visibility; private memory call results never enter transcript', async () => {

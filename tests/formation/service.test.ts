@@ -24,6 +24,8 @@ describe('durable knowledge formation', () => {
       await fixture.formation.start();
       fixture.formation.capture('session-a', { route: { provider: 'mock', model: 'mock' }, entry: { seq: 1, type: 'user', text: 'Check the retry invariant using the current service contract.' } });
       const job = await fixture.formation.finalize('session-a'); await waitJob(fixture.formation.worker.queue, job.id);
+      expect(JSON.parse(inputs[0] ?? '{}')).toMatchObject({ transcript_projection: { complete_history: false, from_seq_exclusive: -1, until_seq_inclusive: 1, tool_result_max_chars: 4000, legacy_tool_result_completeness: 'unknown' } });
+      expect(systems[0]).toContain('并非完整历史');
       expect(systems).toHaveLength(3); expect(systems[1]).toContain('上次响应未通过'); expect(systems[2]).toContain('unrecognized_keys');
       const context = fixture.knowledge.context();
       expect(await new ClaimStore(context).list()).toHaveLength(1); expect(await new TraceStore(context).list()).toHaveLength(1);

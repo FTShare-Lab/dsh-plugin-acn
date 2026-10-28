@@ -8,18 +8,41 @@ import { ClaimStore } from '../../src/store/claims.js';
 import { TraceStore } from '../../src/store/traces.js';
 import { UploadStore } from '../../src/store/uploads.js';
 import { DreamSync } from '../../src/dream/sync.js';
+import { DreamSession } from '../../src/dream/autonomous.js';
 import { waitJob } from '../formation/helpers.js';
 import { dreamFixture } from './helpers.js';
 
 async function expireOrphans(root: string): Promise<void> { const old = new Date(Date.now() - 60_000); for (const entry of await fs.readdir(root, { withFileTypes: true })) if (entry.isDirectory()) { const path = join(root, entry.name); if (entry.name.endsWith('.lock')) await fs.utimes(path, old, old); else await expireOrphans(path); } }
 function kill(child: ChildProcess) { const exit = once(child, 'exit'); child.kill('SIGKILL'); return exit; }
-async function crash(root: string, job: string, stage: string) {
-  const child = fork(new URL('./fixtures/worker.mjs', import.meta.url), [root, job, stage], { silent: true }); let stderr = ''; child.stderr?.on('data', (data: Buffer) => { stderr += data.toString(); });
+async function crash(root: string, job: string, stage: string, reviewMode = 'legacy') {
+  const child = fork(new URL('./fixtures/worker.mjs', import.meta.url), [root, job, stage, reviewMode], { silent: true }); let stderr = ''; child.stderr?.on('data', (data: Buffer) => { stderr += data.toString(); });
   try { await new Promise<void>((resolve, reject) => { child.once('message', () => { resolve(); }); child.once('error', reject); child.once('exit', (code) => { reject(new Error(`Crash worker exited ${code}: ${stderr}`)); }); }); }
   catch (error) { if (child.exitCode === null && child.signalCode === null) await kill(child); throw error; }
   await kill(child); await expireOrphans(root);
 }
 describe('Dream real process crash recovery', () => {
+  it.each(['final-prepared', 'final-state', 'final-applied'])('terminates an exhausted Dream after SIGKILL at %s without a new model allowance', async (stage) => {
+    const f = await dreamFixture(() => { throw new Error('Budget recovery cannot call a model.'); });
+    try {
+      const job = await f.worker.queue.enqueue('dream', { manual: true }); await crash(f.knowledge.context().paths.root, job.id, stage, 'budget');
+      await f.knowledge.dreamStore().recover();
+      const session = await DreamSession.create(f.knowledge, job, { signal: new AbortController().signal, prepared() {} }, () => Promise.resolve());
+      expect(session.finished).toBe(true); expect(session.progress.autonomy).toMatchObject({ steps: 1, limit: 1, wrap_up: { steps: 3, limit: 3 } });
+      await expect(session.admitStep()).rejects.toThrow('已结束'); expect(await f.knowledge.dreamStore().records(job.id)).toHaveLength(1);
+    } finally { await f.close(); }
+  });
+  it.each(['prepared', 'carrier', 'retired', 'applied', 'final-prepared'])('semantic-only checkpoint survives SIGKILL at %s', async (stage) => {
+    const f = await dreamFixture(() => { throw new Error('Recovery cannot use a model.'); }, { team: { routerEndpoint: 'http://127.0.0.1:1', maintainerEndpoint: 'http://127.0.0.1:1', retryCount: 0 } });
+    try {
+      const job = await f.worker.queue.enqueue('dream', { manual: true }); await crash(f.knowledge.context().paths.root, job.id, stage, 'semantic');
+      await f.knowledge.dreamStore().recover(); await f.knowledge.dreamStore().recover();
+      const record = (await f.knowledge.dreamStore().records(job.id))[0]?.checkpoint;
+      expect(record).toMatchObject({ applied: true, self_reviews: [], operation: { hard_validation_passed: true }, groups: [{ completed: true, skipped: false }] });
+      expect(record?.operation?.review.claims).toHaveLength(2);
+      expect((await new ClaimStore(f.knowledge.context()).list()).filter((claim) => claim.status === 'deprecated')).toHaveLength(1);
+      expect((await new UploadStore(f.knowledge.context()).read()).consolidations).toHaveLength(1);
+    } finally { await f.close(); }
+  });
   it.each(['carrier', 'retired'])('preserves a foreground third version after SIGKILL at %s and abandons remaining stale effects', async (stage) => {
     const f = await dreamFixture(() => { throw new Error('Stale recovery cannot call the model.'); }, { team: { routerEndpoint: 'http://127.0.0.1:1', maintainerEndpoint: 'http://127.0.0.1:1', retryCount: 0 } });
     try {

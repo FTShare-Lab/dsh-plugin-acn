@@ -29,7 +29,7 @@ export const Config = Schema.object({
   catalog: Schema.object({ maxClaims: number(200), maxChars: number(24_000) }),
   formation: Schema.object({ recapOnCompaction: boolean(true), idleRecap: boolean(true), recapMinTurns: number(10), recapMinTokens: number(100_000), recapBatchIdleMinutes: number(5), recapTailIdleMinutes: number(60), recapScanSeconds: number(30), finalizeIdleMinutes: number(0), finalizeOnDispose: boolean(false) }),
   inbox: Schema.object({ pullOnSessionStart: boolean(true), processingStaleAfterSecs: number(600) }),
-  dream: Schema.object({ enabled: boolean(true), minIntervalHours: number(24), minChangedClaims: number(5), checkIntervalHours: number(4), evidenceCalibration: boolean(false), evidenceMaxCalls: number(32), evidenceMaxSteps: number(24), evidenceMaxBytes: number(1_048_576), evidenceMaxChars: number(16_000), evidenceMaxFiles: number(256) }),
+  dream: Schema.object({ enabled: boolean(true), minIntervalHours: number(24), minChangedClaims: number(5), checkIntervalHours: number(4), evidenceCalibration: boolean(false), maxModelSteps: number(24), maxWrapUpSteps: number(3), evidenceMaxCalls: number(32), evidenceMaxSteps: number(24), evidenceMaxBytes: number(1_048_576), evidenceMaxChars: number(16_000), evidenceMaxFiles: number(256) }),
   memory: Schema.object({ enabled: boolean(true), memoryCharLimit: number(1600), userCharLimit: number(1000), safetyScan: boolean(true), review: Schema.object({ enabled: boolean(true), intervalTurns: number(10), maxTranscriptChars: number(32_000) }) }),
 });
 

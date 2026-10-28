@@ -76,7 +76,7 @@ pnpm test
 
 团队成员各自维护本地知识，通过 Router 发现其他成员分享的 Claim。遇到知识冲突时，可向 Maintainer 提交争议；处理建议通过 Inbox 送达成员，经各自内化后更新本地知识。
 
-当前建议使用**不启用 LLM 重排的 Router**；启用重排时，候选集合变化可能阻止自动仲裁采纳。知识复用依赖 Agent 的检索与应用；Claim 的证据记录和 Dream 的引用校验不能保证结论正确，使用时仍需关注适用范围与证据限制。
+当前建议使用**不启用 LLM 重排的 Router**；启用重排时，候选集合变化可能阻止自动仲裁采纳。知识复用依赖 Agent 的检索与应用；Claim 的证据记录和 Dream 的语义复核不能保证结论正确，使用时仍需关注适用范围与证据限制。
 
 [文档导航](docs/index.md) · [架构](docs/architecture.md) · [开发指南](docs/development.md) · [更新记录](CHANGELOG.md)
 

@@ -16,7 +16,15 @@ import type { Claim } from '../../../src/protocol/claim.js';
 import type { Validation } from '../../../src/dream/schema.js';
 import type {} from '../../../src/plugins/memory.js';
 
+function lastJson(options: GenerateOptions): unknown {
+  for (const message of [...options.messages].reverse()) for (const block of [...message.content].reverse()) if (block.type === 'text') {
+    try { return JSON.parse(block.text) as unknown; } catch { /* Ignore host wrappers. */ }
+  }
+  throw new Error('Missing tool JSON.');
+}
 class LocalModel extends LlmAdapter {
+  private dreamCalls = 0;
+
   calls = 0;
   private readonly calibration: boolean;
   constructor(calibration = false) { super(); this.calibration = calibration; }
@@ -24,6 +32,21 @@ class LocalModel extends LlmAdapter {
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     options.signal?.throwIfAborted(); await Promise.resolve(); this.calls += 1;
     const raw = options.messages.flatMap((message) => message.content).filter((block) => block.type === 'text').map((block) => block.text).join('');
+    if (options.tools?.some((tool) => tool.name === 'dream_apply_group')) {
+      const firstInput = options.messages.flatMap((message) => message.content).find((block) => block.type === 'text' && block.text.includes('"dream_context"'));
+      assert.ok(firstInput?.type === 'text'); const input = JSON.parse(firstInput.text) as { claims: Claim[] }; const current = input.claims[0]; assert.ok(current);
+      const step = this.dreamCalls++; let name: string; let args: object;
+      if (this.calibration && step === 0) { name = 'dream_record_candidates'; args = { candidates: [{ group_id: 'install-group', claim_ids: [current.id], kind: 'evidence', reason: 'Check the current direct contract.' }] }; }
+      else if (this.calibration && step === 1) { name = 'file_read'; args = { path: 'source.txt', claim_ids: [current.id] }; }
+      else if (step === (this.calibration ? 2 : 0)) {
+        name = 'dream_stage_group'; const receipt = this.calibration ? lastJson(options) as { evidence_id: string } : null;
+        args = { group_id: 'install-group', group: receipt === null ? { kind: 'quality', reason: 'Remove a synthetic one-time record.', operations: [{ id: current.id, action: 'deprecate', reason: 'Synthetic one-time material.' }] } : { kind: 'evidence', reason: 'Check direct file evidence.', evidence_ids: [receipt.evidence_id], change_basis: [{ claim_id: current.id, removed_or_changed: 'Narrow broad retries.', added: 'Only read retries.', justification: 'The file states the read boundary.', evidence_ids: [receipt.evidence_id] }], operations: [{ id: current.id, action: 'update', changes: { statement: 'Retry only read requests within the explicit service budget.', confidence: 'high', evidence_summary: 'A versioned file supports read-only retries; writes remain unverified.' } }] } };
+      } else if (step === (this.calibration ? 3 : 1)) { name = 'dream_validate'; args = { group_id: 'install-group' }; }
+      else if (step === (this.calibration ? 4 : 2)) { const validation = lastJson(options) as Validation; name = 'dream_apply_group'; args = { group_id: 'install-group', validation_id: validation.validation_id, review: { claims: validation.input.before.map((claim) => ({ claim_id: claim.id, final_name: claim.name, name_reason: 'Name matches the final body.', information_preserved: 'Only the synthetic record or the explicitly disproved scope is removed.', removal_or_correction: 'Current direct material bounds the correction.', factual_correction: this.calibration, output_ids: this.calibration ? [claim.id] : [], evidence_ids: Object.keys(validation.input.evidence) })), scope_and_certainty: 'No broader guarantees.' } }; }
+      else { name = 'dream_finish'; args = { review: { quality: 'Reviewed input.', evidence: 'Used the direct file when enabled.', consolidation: 'No other consolidation needed.' } }; }
+      const id = ToolCallId(`dream-${step}`); const argumentsJson = JSON.stringify(args);
+      yield { type: 'block-start', index: 0, blockType: 'tool-call' }; yield { type: 'tool-call-delta', index: 0, id, name, argumentsDelta: argumentsJson }; yield { type: 'block-end', index: 0, block: { type: 'tool-call', id, name, arguments: argumentsJson } }; yield { type: 'finish', reason: { kind: 'tool-calls' } }; return;
+    }
     if (this.calibration && options.tools?.some((tool) => tool.name === 'read')) {
       if (JSON.stringify(options.messages).includes('file_version')) { yield { type: 'text-delta', index: 0, text: 'The source directly limits retries to reads.' }; yield { type: 'finish', reason: { kind: 'stop' } }; return; }
       const childInput = options.messages.filter((message) => message.role === 'user' && message.source?.kind === 'acn-formation').flatMap((message) => message.content).filter((block) => block.type === 'text').map((block) => block.text).join('');

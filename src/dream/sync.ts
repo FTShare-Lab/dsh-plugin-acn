@@ -20,7 +20,7 @@ export const SyncValidationSchema = z.strictObject({ validation_id: HashSchema, 
 const SyncRecordSchema = z.strictObject({ validation: SyncValidationSchema, review: SemanticReviewSchema, applied: z.boolean(), abandoned: z.boolean().default(false) });
 export type SyncValidation = z.infer<typeof SyncValidationSchema>;
 export class DreamSync {
-  constructor(readonly context: StoreContext) {}
+  constructor(readonly context: StoreContext, private readonly semanticReview = false) {}
   async resume(jobId: string, sourceId: ClaimId, signal: AbortSignal): Promise<boolean> {
     const root = join(this.context.paths.dreamJob(jobId), 'sync_reviews'); let files: string[];
     try { files = await fs.readdir(root); } catch (error) { if (hasCode(error, 'ENOENT')) return false; throw error; }
@@ -37,8 +37,8 @@ export class DreamSync {
     }
     return false;
   }
-  async prepare(sourceId: ClaimId, carrierIds: readonly ClaimId[]): Promise<SyncValidation> {
-    return withFileLock(this.context.paths.knowledgeLock, async () => { await ensureKnowledgeReady(this.context.paths.root); return this.prepareLocked(sourceId, carrierIds); });
+  async prepare(sourceId: ClaimId, carrierIds: readonly ClaimId[], signal?: AbortSignal): Promise<SyncValidation> {
+    return withFileLock(this.context.paths.knowledgeLock, async () => { await ensureKnowledgeReady(this.context.paths.root); return this.prepareLocked(sourceId, carrierIds); }, { signal });
   }
   private async prepareLocked(sourceId: ClaimId, carrierIds: readonly ClaimId[]): Promise<SyncValidation> {
     requireDream(this.context.mode === 'team', '单人模式没有整合交付依赖。');
@@ -48,7 +48,7 @@ export class DreamSync {
     const carriers = carrierIds.map((id) => current.find((claim) => claim.id === id));
     requireDream(carriers.length > 0 && new Set(carrierIds).size === carrierIds.length && carriers.every((claim) => claim !== undefined && claim.holder === this.context.agentId && claim.status !== 'deprecated'), '承接必须是当前完整、唯一、存续的自身 Claim。');
     const input = { before: previous.before, carriers: carriers.filter((claim) => claim !== undefined), previous_dependency: previous, current_source: source };
-    validateEvidenceSummaryPreservation(input.before, input.carriers);
+    if (!this.semanticReview) validateEvidenceSummaryPreservation(input.before, input.carriers);
     return SyncValidationSchema.parse({ validation_id: valueHash(input), input });
   }
   async apply(jobId: string, validation: SyncValidation, review: SemanticReview, signal: AbortSignal): Promise<void> {

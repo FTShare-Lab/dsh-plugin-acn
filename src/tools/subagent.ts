@@ -2,4 +2,4 @@
 export function isSubagent(header: { origin?: string; delegationDepth?: number }): boolean {
   return header.origin === 'subagent' || (header.delegationDepth ?? 0) > 0;
 }
-export function isEvidenceAgent(header: { origin?: string; agentPreset?: string }): boolean { return header.origin === 'subagent' && header.agentPreset === 'acn-evidence'; }
+export function isEvidenceAgent(header: { origin?: string; agentPreset?: string }): boolean { return header.origin === 'subagent' && (header.agentPreset === 'acn-evidence' || header.agentPreset === 'acn-dream'); }

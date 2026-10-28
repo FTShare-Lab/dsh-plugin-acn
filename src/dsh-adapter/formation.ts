@@ -9,6 +9,10 @@ import type { Projection } from '../formation/transcript.js';
 function text(blocks: readonly ContentBlock[]): string {
   return blocks.map((block) => block.type === 'text' ? block.text : `[${block.type}]`).join('\n');
 }
+function projectedResult(seq: number, content: string): NonNullable<Projection['entry']> {
+  const chars = Array.from(content);
+  return { seq, type: 'tool_result', text: chars.slice(0, 4000).join(''), projection: { truncated: chars.length > 4000, original_chars: chars.length, retained_chars: Math.min(4000, chars.length) } };
+}
 function bodySources(value: unknown): string[] {
   if (Array.isArray(value)) return value.flatMap((item: unknown) => bodySources(item));
   if (typeof value !== 'object' || value === null) return [];
@@ -36,13 +40,13 @@ function projectContent(event: SessionEvent): Projection {
       if (event.data.name === 'memory' || event.data.name === 'run_code') return {};
       const content = text(event.data.content); let seenSourceIds: string[] = [];
       try { seenSourceIds = bodySources(JSON.parse(content)); } catch { /* 非 JSON 工具正文没有可验证的实体。 */ }
-      return { seenSourceIds, entry: { seq: event.seq, type: 'tool_result', text: Array.from(content).slice(0, 4000).join('') } };
+      return { seenSourceIds, entry: projectedResult(event.seq, content) };
     }
     case 'tool/result': {
       const content = text(event.data.message.content);
       let seenSourceIds: string[] = [];
       try { seenSourceIds = bodySources(JSON.parse(content)); } catch { /* 非 JSON 工具正文没有可验证的实体。 */ }
-      return { resultCallId: event.data.message.toolCallId, seenSourceIds, entry: { seq: event.seq, type: 'tool_result', text: Array.from(content).slice(0, 4000).join('') } };
+      return { resultCallId: event.data.message.toolCallId, seenSourceIds, entry: projectedResult(event.seq, content) };
     }
     default: return {};
   }

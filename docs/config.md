@@ -76,6 +76,8 @@
       minIntervalHours: 24
       minChangedClaims: 5
       checkIntervalHours: 4
+      maxModelSteps: 24
+      maxWrapUpSteps: 3
       evidenceCalibration: false
       evidenceMaxCalls: 32
       evidenceMaxSteps: 24
@@ -130,9 +132,11 @@
 | `dream.checkIntervalHours` | 4 | 自动检查间隔小时数 |
 | `dream.minIntervalHours` | 24 | 上次成功后的自动冷却小时数 |
 | `dream.minChangedClaims` | 5 | 自动运行所需的不同自有变更 Claim 数 |
+| `dream.maxModelSteps` | 24 | 每次 Dream 探索请求上限，最多 128；失败重试也计次 |
+| `dream.maxWrapUpSteps` | 3 | 探索结束后的额外收尾请求上限，最多 8；耗尽后终结本次 |
 | `dream.evidenceCalibration` | false | 启用受限文件查证与自身 medium/low Claim 校准 |
 | `dream.evidenceMaxCalls` | 32 | 每个候选组的工具调用总预算，最多 256；失败请求也计次 |
-| `dream.evidenceMaxSteps` | 24 | 每组查证模型步数，最多 128；重启不会返还已用步数 |
+| `dream.evidenceMaxSteps` | 24 | 旧查证适配器的每组模型步数上限，最多 128；当前自主流程使用整次 Dream 额度 |
 | `dream.evidenceMaxBytes` | 1048576 | 每组累计文件读取字节预算，最多 16777216；先保留额度再读取 |
 | `dream.evidenceMaxChars` | 16000 | 每次读取或搜索返回文本上限，最多 64000；读取仅返回完整行 |
 | `dream.evidenceMaxFiles` | 256 | 每组搜索累计检查的目录项预算，最多 4096 |
@@ -191,3 +195,5 @@ DSH `0.2.1-rc.2` 的 Web 模板默认关闭压缩插件。需要 `/compact` 和�
 这是宿主配置，不属于 `acn-knowledge.config`。示例选择手动压缩且不保留旧区间，便于观察 Recap；日常使用可按宿主说明配置保留窗口和自动阈值。压缩使用宿主模型；成功产生压缩结果才触发 Recap。没有需要压缩的区间或摘要没有缩小上下文时，宿主可能不产生压缩，不能据此认定 Recap 已执行。`/recap` 和 `/acn-finalize` 可独立使用。
 
 所有正整数配置必须是安全整数；`team.retryCount` 与 `formation.finalizeIdleMinutes` 可为 0。证据预算和 review 输入另有表中上限，未知字段拒绝；最大退避不得小于起始退避。模型供应端的凭据由宿主管理，插件不新增密钥配置。
+
+`dream.maxModelSteps` 是探索额度，`dream.maxWrapUpSteps` 是额外收尾额度；默认总计最多 27 次对话模型请求。工具反馈、格式修复及请求重试均计次，先持久记账再发送，崩溃和抢占不返还。收尾禁止扩展探索，保留已提交结果并记录未完成项，然后结束本次。下次 `/dream` 创建新的当前 Claim 快照，不恢复旧草稿。`evidenceMaxSteps` 仅供旧受限查证适配器兼容。

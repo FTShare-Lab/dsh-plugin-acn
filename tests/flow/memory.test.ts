@@ -14,11 +14,26 @@ const execute = (f: Awaited<ReturnType<typeof flowHarness>>, agent: Agent | unde
 const section = async (f: Awaited<ReturnType<typeof flowHarness>>, agent: Agent) => (await f.ctx.systemPrompt.assemble(assembleContextFor(agent))).sections.find((value) => value.name === 'acn:memory')?.text;
 
 describe('private Memory in the real host', () => {
+  it('returns stored contents after a capacity rejection and leaves both files unchanged', async () => {
+    const adapter = new ScriptAdapter([toolResponse('over-capacity', 'memory', { ops: [{ op: 'add', target: 'user', entry: 'UNCOMMITTED_PROFILE' }, { op: 'add', target: 'memory', entry: 'UNCOMMITTED_ENTRY'.repeat(10) }] }), textResponse('The batch was rejected without writing.')]);
+    const f = await flowHarness(adapter, { memory: true, config: { memory: { memoryCharLimit: 100, review: { enabled: false } } } });
+    try {
+      await f.ctx.acnMemory.apply({ ops: [{ op: 'add', target: 'memory', entry: 'Stored context.' }, { op: 'add', target: 'user', entry: 'Stored preference.' }] });
+      const before = await f.ctx.acnMemory.snapshot(); const agent = await f.create(); await turn(agent);
+      expect(await f.ctx.acnMemory.snapshot()).toEqual(before);
+      const reply = adapter.requests[1]?.messages.filter((message) => message.role === 'tool').flatMap((message) => message.content).find((block) => block.type === 'text');
+      if (reply?.type !== 'text') throw new Error('Missing Memory tool response.');
+      expect(JSON.parse(reply.text)).toMatchObject({ success: false, applied: false, current: before.memory_usage.chars, proposed: 190, current_entries: before.memory_entries, cap: 100, need_free: 90 });
+      expect(reply.text).not.toContain('UNCOMMITTED_');
+    } finally { await f.close(); }
+  });
   it('executes bulk operations but freezes the current prompt; new sessions read the latest version', async () => {
     const adapter = new ScriptAdapter([toolResponse('memory-write', 'memory', { ops: [{ op: 'add', target: 'memory', entry: 'NEW_DISK_MARKER {{literal}}' }, { op: 'add', target: 'user', entry: 'PRIVATE_PROFILE_MARKER' }] }), textResponse('Done.'), textResponse('Next task.')]);
     const f = await flowHarness(adapter, { memory: true, config: { memory: { review: { enabled: false } } } });
     try {
       const agent = await f.create(); const original = await section(f, agent); expect(original).toBeDefined(); await turn(agent);
+      const description = adapter.requests[0]?.tools?.find((tool) => tool.name === 'memory')?.description;
+      for (const rule of ['用户偏好和纠正 > 环境事实 > 流程性知识', '容易从当前代码/文档/git/快速搜索重新发现的信息', '用 ops 数组批量提交动作', 'new_text 替换整条', '不进入插件的 Recap/Finalize、Inbox 或 Dream 输入']) expect(description).toContain(rule);
       expect((await f.ctx.acnMemory.snapshot()).memory_entries).toEqual(['NEW_DISK_MARKER {{literal}}']); expect(await section(f, agent)).toBe(original);
       // 工具结果会出现在当前会话，冻结系统段落仍保持启动版本。
       expect(JSON.stringify(adapter.requests[1]?.messages.filter((message) => message.role === 'system'))).not.toContain('NEW_DISK_MARKER');
@@ -82,6 +97,8 @@ describe('private Memory in the real host', () => {
       await vi.waitFor(async () => { expect((await worker.queue.list()).some((job) => job.kind === 'memory_review')).toBe(true); });
       const job = (await worker.queue.list()).find((job) => job.kind === 'memory_review'); if (!job) throw new Error('Missing review.'); await waitJob(worker.queue, job.id);
       expect((await f.ctx.acnMemory.snapshot()).user_entries).toEqual(['Prefers concise explanations.']); expect(await section(f, agent)).toBe(original); expect(adapter.requests[1]?.tools).toBeUndefined();
+      const reviewSystem = adapter.requests[1]?.system;
+      expect(reviewSystem).toContain('正向反馈和负向纠正'); expect(reviewSystem).toContain('不要直接重复 `add`'); expect(reviewSystem).toContain('一次性结论或临时 TODO');
     } finally { await f.close(); }
   });
   it('filters both frozen private files and Memory tool arguments/results from Finalize and Trace', async () => {

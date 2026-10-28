@@ -36,6 +36,19 @@ describe('Dream evidence SIGKILL recovery', () => {
       await f.start(); await waitJob(f.worker.queue, job.id); expect(await fs.readFile(join(f.knowledge.context().paths.root, 'model-calls'), 'utf8')).toBe('one'); expect(await new TraceStore(f.knowledge.context()).list()).toHaveLength(2); expect((await new UploadStore(f.knowledge.context()).read()).claims).toEqual([]);
     } finally { await f.close(); }
   });
+  it('recovers a prepared group after new evidence access has been disabled', async () => {
+    const f = await evidenceFixture({ input: claims(2) });
+    try {
+      await crash(f.knowledge.context().paths.root, f.workspace, 'revoked-prepared', 'prepared');
+      const store = new EvidenceStore(f.knowledge.context(), 'revoked-prepared', 'group-a'); const manifest = await store.read();
+      f.knowledge.config.dream.evidenceCalibration = false;
+      await f.knowledge.dreamStore().recover(); await f.knowledge.dreamStore().recover();
+      const saved = (await f.knowledge.dreamStore().records('revoked-prepared'))[0]?.checkpoint;
+      expect(saved).toMatchObject({ applied: true, groups: [{ completed: true, skipped: false }] });
+      expect((await new ClaimStore(f.knowledge.context()).list()).every((claim) => claim.confidence === 'high')).toBe(true);
+      expect(await store.read()).toEqual(manifest);
+    } finally { await f.close(); }
+  });
   it.each(['prepared', 'first-claim'])('stale evidence after %s skips remaining writes and preserves applied effects', async (stage) => {
     const f = await evidenceFixture({ input: claims(2) });
     try {

@@ -36,15 +36,17 @@ export class EvidenceStore {
   async initialize(workspace: string, claims: readonly Claim[], config: ResolvedConfig['dream'], signal?: AbortSignal): Promise<EvidenceManifest> {
     return withFileLock(`${this.path}.lock`, async () => {
       signal?.throwIfAborted();
+      // 旧清单不延续已撤销的新读取权限；prepared 恢复只走 authorize，不重新初始化。
+      requireDream(config.evidenceCalibration, '证据校准未启用。');
       const prior = await this.read(); const versions = Object.fromEntries(claims.map((claim) => [claim.id, claimRevision(claim)]));
       requireDream(claims.length > 0 && claims.every((claim) => claim.holder === this.context.agentId && claim.confidence !== 'high' && claim.status !== 'deprecated'), '受限查证仅接受自身 medium/low 候选。');
       if (prior !== null) { requireDream(prior.workspace_root === workspace && valueHash(prior.claim_versions) === valueHash(versions), '查证权限不能换工作区或 Claim 版本。'); return prior; }
-      requireDream(config.evidenceCalibration, '证据校准未启用。');
       const manifest: EvidenceManifest = { schemaVersion: 1, job_id: this.jobId, group_id: this.groupId, workspace_root: workspace, claim_versions: versions, receipts: {}, calls: 0, model_steps: 0, bytes_read: 0, files_examined: 0, limits: { calls: config.evidenceMaxCalls, steps: config.evidenceMaxSteps, bytes: config.evidenceMaxBytes, chars: config.evidenceMaxChars, files: config.evidenceMaxFiles }, completed: false };
       await this.save(manifest); return manifest;
     }, { signal });
   }
   async admitStep(signal: AbortSignal): Promise<void> { await withFileLock(`${this.path}.lock`, async () => { signal.throwIfAborted(); const manifest = await this.read(); requireDream(manifest !== null && !manifest.completed && manifest.model_steps < manifest.limits.steps, '查证模型步数预算已用尽。'); manifest.model_steps += 1; await this.save(manifest); }, { signal }); }
+  async reopen(signal: AbortSignal): Promise<void> { await withFileLock(`${this.path}.lock`, async () => { signal.throwIfAborted(); const manifest = await this.read(); requireDream(manifest !== null, '缺少查证清单。'); manifest.completed = false; await this.save(manifest); }, { signal }); }
   async complete(signal: AbortSignal): Promise<void> { await withFileLock(`${this.path}.lock`, async () => { signal.throwIfAborted(); const manifest = await this.read(); requireDream(manifest !== null, '缺少查证清单。'); manifest.completed = true; await this.save(manifest); }, { signal }); }
   async current(manifest: EvidenceManifest): Promise<boolean> { for (const receipt of Object.values(manifest.receipts)) if (!await receiptCurrent(receipt, manifest.workspace_root, privateDataHome(this.context))) return false; return true; }
   // 在知识锁内仅做只读校验；不再获取 evidence 锁，也不调用模型或网络。
@@ -73,7 +75,7 @@ export class EvidenceStore {
         return readEvidenceFile(manifest.workspace_root, privateDataHome(this.context), path, stat.size);
       };
       if (name === 'read') {
-        const input = ReadArgs.parse(args); requireDream(new Set(input.claim_ids).size === input.claim_ids.length && input.claim_ids.every((id) => eligible.some((claim) => claim.id === id)), '读取证据必须明确绑定本组可校准 Claim。');
+        const input = ReadArgs.parse(args); requireDream(new Set(input.claim_ids).size === input.claim_ids.length && input.claim_ids.every((id) => eligible.some((claim) => claim.id === id)), `读取证据必须明确绑定本组可校准 Claim，允许的 claim_ids：${eligible.map((claim) => claim.id).join(', ')}。`);
         const file = await load(input.path); const lines = file.content.split('\n');
         requireDream(input.start <= lines.length, '读取起始行超过文件。');
         const selected: string[] = []; let chars = 0;

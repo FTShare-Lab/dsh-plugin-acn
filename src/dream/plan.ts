@@ -58,7 +58,7 @@ export function validateConsolidationSources(input: Claim, after: readonly Claim
   const missing = input.source_claim_ids.filter((source) => !after.some((claim) => destinations.includes(claim.id) && claim.status !== 'deprecated' && (claim.source_claim_ids.includes(source) || source === claim.id)));
   requireDream(missing.length === 0, `整合必须在存续去向中保留 ${input.id} 的既有来源：${missing.join(', ')}；来源对应输入将被 deprecated 也不能删除，仅合回来源 ID 自身时免去自引用。`);
 }
-export interface EvidenceContext { enabled: boolean; receipts: Receipts }
+export interface EvidenceContext { enabled: boolean; receipts: Receipts; semanticReview?: boolean }
 export function prepareGroup(group: Group, readable: readonly Claim[], owner: AgentId, now = nowSeconds(), evidence: EvidenceContext = { enabled: false, receipts: {} }): PreparedGroup {
   requireDream(group.kind !== 'evidence' || evidence.enabled, '证据校准未启用。');
   requireDream(group.evidence_ids.length === 0 || evidence.enabled, '证据校准关闭时不能引入新证据。');
@@ -80,7 +80,7 @@ export function prepareGroup(group: Group, readable: readonly Claim[], owner: Ag
     requireDream(rank[update.confidence] <= rank[original.confidence] || supported, '没有对应 Claim 的新独立证据和新的 evidence_summary，不得提高置信度。');
     requireDream(new Set(update.source_claim_ids).size === update.source_claim_ids.length && update.source_claim_ids.every((source) => source !== update.id && inherited.has(source)), 'source_claim_ids 只能继承本组已有来源，不得自引用或新增输入 ID。');
     const target: Claim = { ...original, ...update };
-    validateEvidenceSummaryPreservation(original, [target]);
+    if (!evidence.semanticReview) validateEvidenceSummaryPreservation(original, [target]);
     if (group.kind === 'evidence' && !sameClaim(original, target)) requireDream(original.confidence !== 'high' && supported, 'B 类事实校准必须针对原始 medium/low Claim，引用对应新证据并更新 evidence_summary。');
     if (!sameClaim(original, target)) target.updated_at = nextClaimUpdateAt(now, effectiveUpdatedAt(original));
     before.push(original); after.push(target);
@@ -95,7 +95,7 @@ export function prepareGroup(group: Group, readable: readonly Claim[], owner: Ag
       requireDream(coverage.output_ids.length > 0 && new Set(coverage.output_ids).size === coverage.output_ids.length && coverage.output_ids.every((id) => outputs.some((claim) => claim.id === id)), 'coverage 的去向必须是本组存续 Claim。');
       const original = before.find((claim) => claim.id === coverage.input_id); requireDream(original !== undefined, 'coverage 输入不存在。');
       validateConsolidationSources(original, outputs, coverage.output_ids);
-      validateEvidenceSummaryPreservation(original, outputs.filter((claim) => coverage.output_ids.includes(claim.id)));
+      if (!evidence.semanticReview) validateEvidenceSummaryPreservation(original, outputs.filter((claim) => coverage.output_ids.includes(claim.id)));
       requireDream(outputs.filter((claim) => coverage.output_ids.includes(claim.id)).every((claim) => rank[claim.confidence] <= rank[original.confidence] || directEvidence(evidence.receipts, group.change_basis.find((basis) => basis.claim_id === claim.id)?.evidence_ids ?? [], claim.id).length > 0 && claim.evidence_summary !== before.find((input) => input.id === claim.id)?.evidence_summary), '整合不得把较弱来源无证据提升为更高置信度。');
     }
     requireDream(outputs.some((claim) => before.find((input) => input.id === claim.id)?.statement !== claim.statement), '整合必须改写存续正文：至少一个存续 ID 应使用 update，并在 operations[].changes.statement 中提交不同于原文、完整承接有效信息的正文。仅 keep 一条并 deprecate 其余，或只修改名称/依据，均不满足要求。若没有安全且有收益的重组，返回 action=keep、reason_kind=no_consolidation_benefit，不能为通过校验无依据改写。');

@@ -10,13 +10,14 @@ import type { Agent } from '@deepseek-ai/dsh-agent';
 import { restrictedExplorer } from '../../src/dsh-adapter/dream-evidence.js';
 import { loadPromptRenderer } from '../../src/prompt/render.js';
 import { EvidenceStore } from '../../src/dream/evidence-store.js';
-import type { Validation } from '../../src/dream/schema.js';
 import type { Receipts } from '../../src/dream/evidence.js';
 import { ClaimStore } from '../../src/store/claims.js';
-import { candidate, reviewSummary } from '../dream/helpers.js';
+import { candidate } from '../dream/helpers.js';
 import { calibrationDraft, calibrationReviews, evidenceFixture, material } from '../dream/evidence-helpers.js';
 import { waitJob } from '../formation/helpers.js';
 import { ScriptAdapter, textResponse, toolResponse } from './adapter.js';
+import { finishDream, lastJson, readReceipt } from '../dream/autonomous-helpers.js';
+import { ValidationSchema } from '../../src/dream/schema.js';
 import { flowHarness } from './harness.js';
 
 function requestText(request: GenerateOptions): string { return request.messages.flatMap((message) => message.content).filter((block) => block.type === 'text').map((block) => block.text).join(''); }
@@ -24,30 +25,25 @@ describe('restricted evidence child in the host', () => {
   it('runs the full enabled plugin pipeline in the command session workspace', async () => {
     const workspace = await fs.realpath(await fs.mkdtemp(join(tmpdir(), 'acn-host-evidence-'))); await fs.writeFile(join(workspace, 'source.txt'), material);
     const adapter = new ScriptAdapter([
-      () => textResponse(JSON.stringify({ review: reviewSummary, candidates: input ? [candidate([input], 'evidence')] : [], sync_candidates: [] })),
+      () => toolResponse('register', 'dream_record_candidates', { candidates: input ? [candidate([input], 'evidence')] : [] }),
       (request) => {
-        expect(request.tools?.map((tool) => tool.name).sort()).toEqual(['claim', 'glob', 'grep', 'read']);
-        const schema = request.tools?.find((tool) => tool.name === 'claim')?.parameters;
-        expect({ properties: schema?.properties ?? {}, required: schema?.required ?? [] }).toMatchObject({
-          properties: { action: { type: 'string', enum: ['list', 'read'] }, id: { type: 'string' } },
-          required: ['action'],
-        });
-        expect(Object.keys(schema?.properties ?? {})).toEqual(['action', 'id']);
-        expect(schema?.oneOf).toHaveLength(2);
+        expect(request.tools?.map((tool) => tool.name)).toContain('dream_apply_group');
+        expect(request.tools?.map((tool) => tool.name)).not.toContain('bash');
         expect(requestText(request)).toContain(workspace);
-        return toolResponse('read-a', 'read', { path: 'source.txt', claim_ids: [input?.id] });
+        return toolResponse('read-a', 'file_read', { path: 'source.txt', claim_ids: [input?.id] });
       },
-      (request) => { expect(requestText(request)).toContain('file_version'); return textResponse('The file provides a direct read-only limitation.'); },
-      (request) => { const data = JSON.parse(requestText(request)) as { evidence: Receipts }; return textResponse(JSON.stringify({ action: 'stage', group: calibrationDraft(input ? [input] : [], data.evidence) })); },
-      (request) => { const data = JSON.parse(requestText(request)) as { validation: Validation }; return textResponse(JSON.stringify({ decision: 'apply', reason: 'Direct evidence supports this bounded correction.', reason_kind: 'useful_knowledge', ...calibrationReviews(data.validation) })); },
+      (request) => { const receipt = readReceipt(request); return toolResponse('stage', 'dream_stage_group', { group_id: 'group-a', group: calibrationDraft(input ? [input] : [], { [receipt.evidence_id]: receipt } as Receipts) }); },
+      toolResponse('validate', 'dream_validate', { group_id: 'group-a' }),
+      (request) => { const validation = ValidationSchema.parse(lastJson(request)); return toolResponse('apply', 'dream_apply_group', { group_id: 'group-a', validation_id: validation.validation_id, review: calibrationReviews(validation).semantic }); },
+      finishDream(),
     ]);
     const f = await flowHarness(adapter, { dream: true, formation: true, inbox: true, persistence: true, config: { llm: { provider: 'mock', model: 'mock' }, formation: { finalizeIdleMinutes: 0, finalizeOnDispose: false }, inbox: { pullOnSessionStart: false }, dream: { evidenceCalibration: true } } }); const input = f.claim;
     try {
       const handle = await f.ctx.agents.create({ sessionId: SessionId('foreground-evidence'), meta: { cwd: workspace }, agentOptions: { provider: 'mock', model: 'mock' } });
       const result = await f.ctx.commands.execute(handle.agent, '/dream', [], new AbortController().signal); expect(result?.result.kind).toBe('success'); const worker = f.knowledge.jobs; if (!worker) throw new Error('Missing worker.'); const job = (await worker.queue.list()).find((job) => job.kind === 'dream'); if (!job) throw new Error('Missing job.');
-      await waitJob(worker.queue, job.id); expect(adapter.requests).toHaveLength(5); expect((await new ClaimStore(f.knowledge.context()).list())[0]).toMatchObject({ confidence: 'high', statement: material });
+      await waitJob(worker.queue, job.id); expect(adapter.requests).toHaveLength(6); expect((await new ClaimStore(f.knowledge.context()).list())[0]).toMatchObject({ confidence: 'high', statement: material });
       for (const request of adapter.requests) expect(request.maxTokens).toBe(32_768);
-      const manifest = await new EvidenceStore(f.knowledge.context(), job.id, 'group-a').read(); expect(manifest).toMatchObject({ completed: true, calls: 1, model_steps: 2, workspace_root: workspace });
+      const manifest = await new EvidenceStore(f.knowledge.context(), job.id, 'group-a').read(); expect(manifest).toMatchObject({ completed: true, calls: 1, model_steps: 0, workspace_root: workspace });
       const jobs = await worker.queue.list(); expect(jobs.every((job) => job.kind === 'dream')).toBe(true); const sessions = await fs.readdir(f.knowledge.context().paths.sessions); expect(sessions.some((session) => session.startsWith('acn-evidence-'))).toBe(false);
     } finally { await f.close(); await fs.rm(workspace, { recursive: true, force: true }); }
   });
