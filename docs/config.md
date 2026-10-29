@@ -56,7 +56,7 @@
       timeoutMs: 600000
       structuredRetries: 5
     catalog:
-      maxClaims: 200
+      maxClaims: 20
       maxChars: 24000
     formation:
       recapOnCompaction: true
@@ -106,11 +106,11 @@
 | `agentId` | 空 | 当前知识 holder |
 | `home` | `~/.acn-dsh` | 独立数据根目录 |
 | `sessionEpoch` | 0 | 网页切换身份或目录时自动保存的会话时间边界，不应手动清零 |
-| `catalog.maxClaims` | 200 | 冻结目录条数上限 |
+| `catalog.maxClaims` | 20 | 冻结目录条数上限；显式设置更大值仍有效 |
 | `catalog.maxChars` | 24000 | 目录的 Unicode 字符上限 |
 | `llm.provider` / `llm.model` | 空 | 指定后台路由；为空时形成用本会话路由，Inbox / Dream 用持久的最近任意会话路由 |
 | `llm.maxOutputTokens` | 32768 | 后台模型输出 token 上限；显式配置优先于默认值 |
-| `llm.timeoutMs` | 600000 | 每次后台传输调用超时毫秒数 |
+| `llm.timeoutMs` | 600000 | 每次后台模型请求的超时毫秒数；Dream 每次尝试重新计时，不是整次整理总时限 |
 | `llm.structuredRetries` | 5 | 结构和引用校验的最大模型响应次数 |
 | `formation.recapOnCompaction` | true | 压缩后入队 Recap |
 | `formation.idleRecap` | true | 启用批量和尾部空闲 Recap；不影响手动、压缩及归档 |

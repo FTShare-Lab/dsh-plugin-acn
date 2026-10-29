@@ -27,6 +27,23 @@ async function ageOrphanLocks(directory: string): Promise<void> {
   }
 }
 describe('Inbox durable recovery', () => {
+  it.each([false, true])('recovers sync-only Policy retirement and preserves a concurrent newer version: %s', async (changed) => {
+    const fixture = await inboxFixture(undefined, { team: { routerEndpoint: 'http://127.0.0.1:1', maintainerEndpoint: 'http://127.0.0.1:1', retryCount: 0 } });
+    const context = fixture.knowledge.context(); const message = inboxMessage(); message.policy.status = 'deprecated';
+    const local = sampleClaim({ status: 'deprecated', source_claim_ids: [message.policy.id] });
+    try {
+      await new ClaimStore(context).write(local); await new InboxStore(context).acceptPulled(message);
+      const spy = vi.spyOn(UploadStore.prototype, 'enqueue').mockRejectedValueOnce(new Error('Stop before sync-only enqueue.'));
+      try { await expect(new InboxEffectStore(context).commit([message], [local], { claims: [], syncClaims: [local], disputes: [], usedClaimIds: [], warnings: [] }, control())).rejects.toThrow('sync-only'); }
+      finally { spy.mockRestore(); }
+      const current = changed ? { ...local, statement: 'A newer independent revision must remain private.' } : local;
+      if (changed) await new ClaimStore(context).write(current);
+      await fixture.knowledge.initialize(); await fixture.knowledge.initialize();
+      expect(await new ClaimStore(context).read(local.id)).toEqual(current);
+      expect((await new UploadStore(context).read()).claims).toEqual(changed ? [] : [local]);
+      expect(await new InboxStore(context).listPending()).toEqual([]); expect(await new TraceStore(context).list()).toEqual([]);
+    } finally { await fixture.close(); }
+  });
   it.each(['prepared', 'after-ref', 'after-claim', 'after-progress', 'after-trace', 'after-upload', 'after-applied', 'before-done', 'after-done'])('SIGKILL at %s restores exact effects, refs, upload queue and done without another model call', async (stage) => {
     const fixture = await inboxFixture(undefined, { team: { routerEndpoint: 'http://127.0.0.1:1', maintainerEndpoint: 'http://127.0.0.1:1', retryCount: 0 } });
     const context = fixture.knowledge.context(); await new ClaimStore(context).write(sampleClaim());

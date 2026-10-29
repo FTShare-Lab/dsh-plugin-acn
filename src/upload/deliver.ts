@@ -8,6 +8,7 @@ import { ensureKnowledgeReady, KnowledgeBusy, sameClaim } from '../knowledge/ali
 import { relatedIds, consolidationReady } from './consolidation.js';
 import { UploadStore } from '../store/uploads.js';
 import { ReportedSetStore, reportedClaimSetKey } from '../store/reported-sets.js';
+import { RejectedDisputeStore } from '../store/rejected-disputes.js';
 import { TeamError } from '../team/errors.js';
 import type { TeamFacade } from '../team/service.js';
 import { nowSeconds } from '../protocol/time.js';
@@ -50,12 +51,12 @@ export class UploadDelivery {
         }
         if (!progressed) break;
       }
-      const stillPending = await queue.read();
-      const pendingIds = new Set(stillPending.claims.map((claim) => claim.id));
       const ledger = new ReportedSetStore(this.context);
+      const rejected = new RejectedDisputeStore(this.context);
       for (const dispute of snapshot.disputes) {
         signal?.throwIfAborted(); lease.check();
-        if (dispute.claims.some((id) => pendingIds.has(id))) continue;
+        if (await rejected.contains(dispute)) { await queue.removeDeliveredDisputes([dispute]); continue; }
+        // Claim 更新失败不阻止已有团队版本的争议上报；缺失依赖由服务端判定并重试。
         try {
           const recorded = (await ledger.read()).reported_claim_sets[reportedClaimSetKey(dispute.claims)];
           if (recorded === undefined) {
@@ -63,7 +64,17 @@ export class UploadDelivery {
             lease.check(); await ledger.record(dispute.claims, dispute.id, nowSeconds()); report.deliveredDisputes += 1;
           }
           await queue.removeDeliveredDisputes([dispute]);
-        } catch (error) { if (!(error instanceof TeamError)) throw error; report.warnings.push(error.message); if (error.kind === 'auth' || error.kind === 'cancelled') break; }
+        } catch (error) {
+          if (!(error instanceof TeamError)) throw error;
+          if (error.kind === 'client' && error.status === 409) {
+            // 明确冲突（如直接 Claim 已废弃）不会因重试恢复；本地争议仍保留供检查。
+            lease.check(); await rejected.record(dispute);
+            const warning = `Dispute ${dispute.id} 被团队服务以 409 拒绝，已停止自动重试；本地记录保留，请核对当前 Claim。`;
+            report.warnings.push(warning); this.context.logger.warn(warning);
+            await queue.removeDeliveredDisputes([dispute]);
+          } else report.warnings.push(error.message);
+          if (error.kind === 'auth' || error.kind === 'cancelled') break;
+        }
       }
       const pending = await queue.read(); report.pendingClaims = pending.claims.length; report.pendingDisputes = pending.disputes.length;
       report.warnings = [...new Set(report.warnings)]; return report;

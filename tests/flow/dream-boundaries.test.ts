@@ -15,6 +15,35 @@ import { acquireFileLease } from '../../src/store/lock.js';
 import { ClaimStore } from '../../src/store/claims.js';
 
 describe('autonomous Dream host boundaries', () => {
+  it('repairs an early plain-text ending within the same context and charges every model request', async () => {
+    const adapter = new ScriptAdapter([textResponse('EARLY_DREAM_SUMMARY'), toolResponse('read', 'read_claim', { id: sampleClaim().id }), finishDream()]);
+    const f = await flowHarness(adapter, { dream: true, config: { llm: { provider: 'mock', model: 'mock' } } });
+    try {
+      const job = await f.ctx.acnDream.request(); const worker = f.knowledge.jobs; if (!worker) throw new Error('Missing worker.');
+      expect((await waitJob(worker.queue, job.id)).result).toMatchObject({ modelSteps: 3, wrapUpSteps: 0 });
+      expect(adapter.requests).toHaveLength(3); expect(JSON.stringify(adapter.requests[1]?.messages)).toContain('EARLY_DREAM_SUMMARY');
+      expect(JSON.stringify(adapter.requests[1]?.messages)).toContain('上一条总结没有完成 Dream');
+    } finally { await f.close(); }
+  });
+  it('limits ordinary text protocol repairs to two attempts before a visible failure', async () => {
+    const adapter = new ScriptAdapter([textResponse('notes 1'), textResponse('notes 2'), textResponse('notes 3')]);
+    const f = await flowHarness(adapter, { dream: true, config: { llm: { provider: 'mock', model: 'mock' } } });
+    try {
+      const job = await f.ctx.acnDream.request(); const worker = f.knowledge.jobs; if (!worker) throw new Error('Missing worker.');
+      expect((await waitJob(worker.queue, job.id, 'failed')).lastError).toContain('dream_finish');
+      expect(adapter.requests).toHaveLength(3); expect((await f.knowledge.dreamStore().progress(job.id))?.autonomy?.steps).toBe(3);
+    } finally { await f.close(); }
+  });
+  it('feeds the zero-exploration reminder back without demanding any Claim changes', async () => {
+    const adapter = new ScriptAdapter([finishDream(), finishDream()]);
+    const f = await flowHarness(adapter, { dream: true, config: { llm: { provider: 'mock', model: 'mock' } } });
+    try {
+      const job = await f.ctx.acnDream.request(); const worker = f.knowledge.jobs; if (!worker) throw new Error('Missing worker.');
+      await waitJob(worker.queue, job.id); expect(adapter.requests).toHaveLength(2);
+      expect(JSON.stringify(adapter.requests[1]?.messages)).toContain('confirmation_required');
+      expect(await new ClaimStore(f.knowledge.context()).list()).toEqual([f.claim]);
+    } finally { await f.close(); }
+  });
   it('identifies missing and extra draft fields without including Claim contents', () => {
     const group = { ...qualityDraft([sampleClaim()]), reason: undefined, private_test_field: 'PRIVATE_BODY_MARKER' };
     const feedback = dreamToolGuard('dream_stage_group', { group_id: 'a', group });
@@ -92,33 +121,56 @@ describe('autonomous Dream host boundaries', () => {
       expect(await new ClaimStore(f.knowledge.context()).list()).toEqual([f.claim]);
     } finally { await f.close(); }
   });
-  it.each(['cancel', 'timeout'] as const)('propagates child %s while apply waits for the knowledge lock', async (mode) => {
+  it('propagates child cancellation while apply waits for the knowledge lock', async () => {
     let lease: Awaited<ReturnType<typeof acquireFileLease>> | undefined; let child: Agent | undefined;
-    const timeoutMs = 10_001; const deadline = new AbortController(); const nativeTimeout = AbortSignal.timeout.bind(AbortSignal);
     const adapter = new ScriptAdapter([
       toolResponse('stage', 'dream_stage_group', { group_id: 'a', group: qualityDraft([sampleClaim()]) }),
       toolResponse('validate', 'dream_validate', { group_id: 'a' }),
       async (request) => {
         lease = await acquireFileLease(f.knowledge.context().paths.knowledgeLock);
-        setTimeout(() => { if (mode === 'cancel') child?.cancel({ kind: 'parent' }); else deadline.abort(new DOMException('Test deadline elapsed.', 'TimeoutError')); }, 100);
+        setTimeout(() => { child?.cancel({ kind: 'parent' }); }, 100);
         return applyValidated(request);
       },
     ]);
-    const f = await flowHarness(adapter, { dream: true, config: { llm: { provider: 'mock', model: 'mock', timeoutMs: mode === 'timeout' ? timeoutMs : 5000 } } });
-    // 到达持锁场景后才触发期限，避免机器负载使测试提前在准备阶段超时。
-    const timeoutSpy = mode === 'timeout' ? vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms) => ms === timeoutMs ? deadline.signal : nativeTimeout(ms)) : undefined;
+    const f = await flowHarness(adapter, { dream: true, config: { llm: { provider: 'mock', model: 'mock', timeoutMs: 5000 } } });
     try {
       f.ctx.on('agent/created', ({ agent }) => { if (agent.session.header.agentPreset === 'acn-dream') child = agent; });
       const job = await f.ctx.acnDream.request(); const worker = f.knowledge.jobs; if (!worker) throw new Error('Missing worker.');
       await until(async () => { const current = await worker.queue.read(job.id); return current?.state === 'failed' || current?.state === 'queued' && current.lastError !== undefined; });
       expect(lease).toBeDefined(); expect(await f.knowledge.dreamStore().records(job.id)).toEqual([]);
-      if (mode === 'timeout') { expect(timeoutSpy).toHaveBeenCalledWith(timeoutMs); expect((await worker.queue.read(job.id))?.lastError).toContain('Dream 超时'); }
       expect(await new ClaimStore(f.knowledge.context()).list()).toEqual([f.claim]);
       await f.ctx.acnDream.stop();
-    } finally { await lease?.release(); await f.close(); timeoutSpy?.mockRestore(); }
+    } finally { await lease?.release(); await f.close(); }
+  });
+  it('gives each model attempt a fresh deadline and ignores an expired deadline from an earlier completed request', async () => {
+    const timeoutMs = 10_001; const deadlines: AbortController[] = []; const nativeTimeout = AbortSignal.timeout.bind(AbortSignal);
+    const adapter = new ScriptAdapter([toolResponse('read', 'read_claim', { id: 'claim_00000001' }), () => {
+      expect(deadlines).toHaveLength(2); deadlines[0]?.abort(new DOMException('Earlier request deadline.', 'TimeoutError')); return finishDream();
+    }]);
+    const f = await flowHarness(adapter, { dream: true, config: { llm: { provider: 'mock', model: 'mock', timeoutMs } } });
+    const spy = vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms) => { if (ms !== timeoutMs) return nativeTimeout(ms); const deadline = new AbortController(); deadlines.push(deadline); return deadline.signal; });
+    try {
+      const job = await f.ctx.acnDream.request(); const worker = f.knowledge.jobs; if (!worker) throw new Error('Missing worker.');
+      await waitJob(worker.queue, job.id); expect(adapter.requests).toHaveLength(2); expect(await f.knowledge.dreamStore().final(job.id)).not.toBeNull();
+    } finally { await f.close(); spy.mockRestore(); }
+  });
+  it('aborts one overdue model request and preserves consumed budget without producing a successful Dream result', async () => {
+    const timeoutMs = 10_001; const deadline = new AbortController(); const nativeTimeout = AbortSignal.timeout.bind(AbortSignal);
+    const adapter = new ScriptAdapter([async (request) => {
+      const ended = new Promise<void>((resolve) => { request.signal?.addEventListener('abort', () => { resolve(); }, { once: true }); });
+      deadline.abort(new DOMException('Current request deadline.', 'TimeoutError')); await ended; return textResponse('Cancelled.');
+    }]);
+    const f = await flowHarness(adapter, { dream: true, config: { llm: { provider: 'mock', model: 'mock', timeoutMs } } });
+    const spy = vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms) => ms === timeoutMs ? deadline.signal : nativeTimeout(ms));
+    try {
+      const job = await f.ctx.acnDream.request(); const worker = f.knowledge.jobs; if (!worker) throw new Error('Missing worker.');
+      await until(async () => (await worker.queue.read(job.id))?.lastError?.includes('单次模型请求超时') === true); await f.ctx.acnDream.stop();
+      expect(adapter.requests).toHaveLength(1); expect((await f.knowledge.dreamStore().progress(job.id))?.autonomy?.steps).toBe(1);
+      expect(await f.knowledge.dreamStore().final(job.id)).toBeNull(); expect(await f.knowledge.dreamStore().records(job.id)).toEqual([]);
+    } finally { await f.close(); spy.mockRestore(); }
   });
   it.each(['native', 'ptc'] as const)('isolates tools and required private context in %s mode', async (toolMode) => {
-    const adapter = new ScriptAdapter([finishDream()]);
+    const adapter = new ScriptAdapter([finishDream(), finishDream()]);
     const f = await flowHarness(adapter, { dream: true, memory: true, toolMode, config: { llm: { provider: 'mock', model: 'mock' } } });
     let unsafeCalls = 0; const checks: Promise<unknown>[] = [];
     try {
@@ -141,9 +193,10 @@ describe('autonomous Dream host boundaries', () => {
     const adapter = new ScriptAdapter([
       toolResponse('bad', 'dream_stage_group', { group_id: 'a', group: { kind: 'quality', operations: [{ id: 'claim_00000001', action: 'deprecate', reason: 'One-time record.' }] } }),
       (request) => { expect(JSON.stringify(request.messages)).toContain('group.reason: invalid_type'); return finishDream(); },
+      finishDream(),
     ]);
     const f = await flowHarness(adapter, { dream: true, config: { llm: { provider: 'mock', model: 'mock' } } });
-    try { const job = await f.ctx.acnDream.request(); const worker = f.knowledge.jobs; if (!worker) throw new Error('Missing worker.'); await waitJob(worker.queue, job.id); expect(adapter.requests).toHaveLength(2); }
+    try { const job = await f.ctx.acnDream.request(); const worker = f.knowledge.jobs; if (!worker) throw new Error('Missing worker.'); await waitJob(worker.queue, job.id); expect(adapter.requests).toHaveLength(3); }
     finally { await f.close(); }
   });
 });

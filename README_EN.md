@@ -14,8 +14,8 @@ This repository contains the TypeScript plugin, its web configuration page, mode
 | --- | --- |
 | Claims and Traces | Store scoped, referenceable knowledge with evidence, confidence and provenance; read and revise it when relevant |
 | Recap and Finalize | Form knowledge through `/recap`, batch or tail idle periods, host compaction, and archive finalization; process increments and pause automatic work after archival |
-| Private Memory | Maintain `MEMORY.md` and `USER.md`, with frozen snapshots for sessions and no direct team upload |
-| Dream | Clean up and consolidate knowledge; optionally check workspace files while preserving prior evidence and limits |
+| Private Memory | Maintain `MEMORY.md` and `USER.md`, with frozen session snapshots, periodic reviews that prioritize dialogue, and no direct team upload |
+| Dream | Clean up and consolidate knowledge, trace its local provenance, and optionally check workspace files while preserving valid conditions and evidence limits |
 | Team collaboration | Discover claims through ACN Router, deliver knowledge to Maintainer and internalize its suggestions locally |
 | Recovery and import | Resume interrupted background work and import existing ACN knowledge without overwriting targets |
 

@@ -10,6 +10,7 @@ import { MemoryReview } from '../../src/memory/review.js';
 import { loadPromptRenderer } from '../../src/prompt/render.js';
 import { UploadStore } from '../../src/store/uploads.js';
 import { TraceStore } from '../../src/store/traces.js';
+import { boundReviewWindow } from '../../src/memory/review-window.js';
 
 const active: Awaited<ReturnType<typeof memoryFixture>>[] = [];
 async function setup(config: Parameters<typeof memoryFixture>[0] = {}, backend?: Parameters<typeof memoryFixture>[1]) { const f = await memoryFixture(config, backend); active.push(f); return f; }
@@ -18,6 +19,29 @@ const output = (entry = 'The user prefers short explanations.') => ({ text: JSON
 async function task(f: Awaited<ReturnType<typeof setup>>) { const job = (await f.worker.queue.list()).find((job) => job.kind === 'memory_review'); if (!job) throw new Error('Missing private review task.'); return job; }
 
 describe('durable private Memory review', () => {
+  it('retains dialogue anchors and reviews ten completed coding turns despite long tool output', async () => {
+    const f = await setup({}, () => Promise.resolve(output('The user prefers concise explanations with reproducible checks.')));
+    let seq = 0;
+    for (let turn = 0; turn < 10; turn += 1) {
+      f.review.capture('session-a', { seq: ++seq, user: true, projection: { entry: { seq, type: 'user', text: 'The stable preference is concise explanations with reproducible checks.' } } });
+      for (let index = 0; index < 9; index += 1) f.review.capture('session-a', { seq: ++seq, projection: { entry: { seq, type: 'tool_result', text: 'x'.repeat(4000) } } });
+      f.review.capture('session-a', { seq: ++seq, projection: { entry: { seq, type: 'assistant', text: 'The checked implementation is complete.' } } });
+      f.review.capture('session-a', { seq: ++seq, ended: true, completed: true }); await f.review.flush('session-a');
+    }
+    expect(await f.worker.queue.list()).toHaveLength(1); const job = await task(f);
+    const request = z.object({ omitted: z.boolean(), entries: z.array(z.object({ type: z.string(), text: z.string() })) }).parse(parse(await fs.readFile(f.knowledge.context().paths.memoryRequest(z.string().parse(job.payload['request_id'])), 'utf8')));
+    expect(request.omitted).toBe(true); expect(request.entries.filter((entry) => entry.type === 'user')).toHaveLength(10);
+    expect(request.entries.filter((entry) => entry.type === 'assistant')).toHaveLength(10);
+    expect(request.entries.reduce((size, entry) => size + Array.from(entry.text).length, 0)).toBeLessThanOrEqual(32_000);
+    await f.worker.start(); await waitJob(f.worker.queue, job.id); expect((await f.memory.snapshot()).user_entries).toEqual(['The user prefers concise explanations with reproducible checks.']);
+  });
+  it('keeps bounded Unicode fragments of both latest dialogue anchors when either exceeds the whole window', () => {
+    const original = [{ type: 'user', text: '😀'.repeat(100), truncated: false }, { type: 'tool_result', text: 'discard'.repeat(100), truncated: false }, { type: 'assistant', text: '答'.repeat(100), truncated: false }];
+    const bounded = boundReviewWindow(original, 60);
+    expect(bounded.omitted).toBe(true); expect(bounded.entries.map((entry) => entry.type)).toEqual(['user', 'assistant']);
+    expect(bounded.entries.map((entry) => Array.from(entry.text).length)).toEqual([30, 30]);
+    expect(bounded.entries.every((entry) => entry.truncated)).toBe(true); expect(original[0]?.text).toBe('😀'.repeat(100));
+  });
   it('reviews exactly N completed human turns using a fresh private snapshot and no data lock across the model', async () => {
     let input = '';
     const f = await setup({ memory: { review: { intervalTurns: 2 } } }, async (_route, _system, text) => { input = text; await f.memory.apply({ ops: [{ op: 'add', target: 'memory', entry: 'concurrent tool edit' }] }); return output(); });

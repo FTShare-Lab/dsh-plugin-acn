@@ -13,6 +13,7 @@ import { readYamlOr, writeYamlAtomic } from '../store/yaml.js';
 import { hasCode } from '../store/errors.js';
 import { JobError, type Job } from '../worker/types.js';
 import type { JobControl } from '../worker/worker.js';
+import { boundReviewWindow } from './review-window.js';
 
 const Key = z.string().regex(/^[a-zA-Z0-9_-]+$/);
 const Entry = TranscriptEntrySchema.extend({ turn: z.number().int().nonnegative(), truncated: z.boolean().default(false) });
@@ -58,16 +59,10 @@ export class MemoryReview {
           else state.entries = state.entries.filter((entry) => entry.turn <= state.turns);
           state.user = false; state.assistant = false;
         }
-        state.entries = state.entries.filter((entry) => entry.turn > state.turns - config.intervalTurns); let chars = state.entries.reduce((total, entry) => total + Array.from(entry.text).length, 0);
-        while (chars > config.maxTranscriptChars && state.entries.length > 0) {
-          const first = state.entries[0]; if (first === undefined) break;
-          const text = Array.from(first.text); const excess = chars - config.maxTranscriptChars;
-          if (excess >= text.length) { state.entries.shift(); chars -= text.length; }
-          else { first.text = text.slice(excess).join(''); first.truncated = true; chars -= excess; }
-          state.omitted = true;
-        }
+        const window = boundReviewWindow(state.entries.filter((entry) => entry.turn > state.turns - config.intervalTurns), config.maxTranscriptChars);
+        state.entries = window.entries; state.omitted ||= window.omitted;
         state.last_seq = event.seq;
-        if (completedUserTurn && state.turns % config.intervalTurns === 0 && state.entries.some((entry) => entry.type === 'user') && state.entries.some((entry) => entry.type === 'assistant')) {
+        if (completedUserTurn && state.turns % config.intervalTurns === 0) {
           const key = createHash('sha256').update(`${id}:${state.epoch}:${state.turns}`).digest('hex');
           if (!state.outbox.some((request) => request.id === key)) state.outbox.push({ schemaVersion: 1, id: key, session_id: id, epoch: state.epoch, through_turn: state.turns, entries: state.entries, omitted: state.omitted || state.entries.some((entry) => entry.truncated), ...state.route === undefined ? {} : { route: state.route } });
         }

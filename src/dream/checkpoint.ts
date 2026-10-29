@@ -91,7 +91,7 @@ export class DreamStore {
       for (const item of semantic.claims) if (item.factual_correction || group.kind === 'evidence') requireDream(origin.claims.some((claim) => claim.id === item.claim_id && claim.confidence !== 'high'), '本轮原始 high Claim 不得先降级再进行事实校准。');
       await evidence.authorize(validation.input.evidence, origin.workspace_root, prepared.before);
       const snapshot_at = nowSeconds();
-      const checkpoint = CheckpointSchema.parse({ snapshot_at, input_versions: {}, coverage: origin.coverage, plan: { review: { quality: '逐组复核', evidence: '独立文件版本、逐 Claim 依据与引用校验；不保证语义正确', consolidation: '逐输入核对信息去向' }, groups: [group] }, receipts: validation.input.evidence, exploration_receipts: Object.keys(receipts).length, groups: [prepared], safety_reviews: [], self_reviews: selfReview === null ? [] : [{ validation, review: selfReview }], trace_id: deriveTraceId(snapshot_at, 'dream_claim_review', prepared.before.map((claim) => claim.id), prepared.after.map((claim) => claim.id)), applied: false, success_at: null, self_versions: {}, operation: { job_id: jobId, group_id: groupId, validation_id: validation.validation_id, review: semantic, hard_validation_passed: true } });
+      const checkpoint = CheckpointSchema.parse({ team_authorized: this.context.mode === 'team', snapshot_at, input_versions: {}, coverage: origin.coverage, plan: { review: { quality: '逐组复核', evidence: '独立文件版本、逐 Claim 依据与引用校验；不保证语义正确', consolidation: '逐输入核对信息去向' }, groups: [group] }, receipts: validation.input.evidence, exploration_receipts: Object.keys(receipts).length, groups: [prepared], safety_reviews: [], self_reviews: selfReview === null ? [] : [{ validation, review: selfReview }], trace_id: deriveTraceId(snapshot_at, 'dream_claim_review', prepared.before.map((claim) => claim.id), prepared.after.map((claim) => claim.id)), applied: false, success_at: null, self_versions: {}, operation: { job_id: jobId, group_id: groupId, validation_id: validation.validation_id, review: semantic, hard_validation_passed: true } });
       control.signal.throwIfAborted(); control.prepared();
       await writeYamlAtomic(path, checkpoint, CheckpointSchema, this.context.logger);
       return this.applyLocked(path);
@@ -104,7 +104,7 @@ export class DreamStore {
       const path = this.context.paths.dreamFinal(jobId); const saved = await readYamlOr(path, CheckpointSchema, () => null); if (saved !== null) return this.applyLocked(path);
       const origin = await this.origin(jobId); requireDream(origin !== null, '缺少 Dream 原始快照。');
       const records = (await this.records(jobId)).map((record) => record.checkpoint); requireDream(records.every((record) => record.applied), '整理组仍待恢复。');
-      const checkpoint = CheckpointSchema.parse({ snapshot_at: origin.snapshot_at, input_versions: versions(origin.claims), coverage: origin.coverage, plan: { review: progress.discovery.review, groups: records.flatMap((record) => record.plan.groups) }, receipts: Object.fromEntries(records.flatMap((record) => Object.entries(record.receipts))), exploration_receipts: records.reduce((count, record) => count + (record.exploration_receipts ?? 0), 0), groups: records.flatMap((record) => record.groups), safety_reviews: [], self_reviews: records.flatMap((record) => record.self_reviews), trace_id: deriveTraceId(nowSeconds(), 'dream_claim_review', [], []), applied: false, success_at: null, self_versions: Object.fromEntries(records.flatMap((record) => Object.entries(record.self_versions))), operation: null });
+      const checkpoint = CheckpointSchema.parse({ team_authorized: this.context.mode === 'team', snapshot_at: origin.snapshot_at, input_versions: versions(origin.claims), coverage: origin.coverage, plan: { review: progress.discovery.review, groups: records.flatMap((record) => record.plan.groups) }, receipts: Object.fromEntries(records.flatMap((record) => Object.entries(record.receipts))), exploration_receipts: records.reduce((count, record) => count + (record.exploration_receipts ?? 0), 0), groups: records.flatMap((record) => record.groups), safety_reviews: [], self_reviews: records.flatMap((record) => record.self_reviews), trace_id: deriveTraceId(nowSeconds(), 'dream_claim_review', [], []), applied: false, success_at: null, self_versions: Object.fromEntries(records.flatMap((record) => Object.entries(record.self_versions))), operation: null });
       control.signal.throwIfAborted(); control.prepared(); await writeYamlAtomic(path, checkpoint, CheckpointSchema, this.context.logger); return this.applyLocked(path);
     }, { timeoutMs: this.context.lockTimeoutMs, signal: control.signal });
   }
@@ -119,6 +119,7 @@ export class DreamStore {
     for (const group of checkpoint.groups) requireDream(group.before.length === group.after.length && group.before.every((claim, index) => claim.id === group.after[index]?.id && claim.holder === this.context.agentId && group.after[index]?.holder === this.context.agentId), '整理提交的 before/after 或 holder 不一致。');
     await executionAudit(this.context, jobId, checkpoint);
     if (!checkpoint.applied) {
+      if (checkpoint.team_authorized === undefined && this.context.mode === 'team') this.context.logger.warn('旧 Dream 事务缺少团队共享授权，仅恢复本地效果。');
       await writeYamlAtomic(this.context.paths.dreamPending, path, z.string(), this.context.logger);
       for (const [index, group] of checkpoint.groups.entries()) {
         if (group.completed) continue;
@@ -136,7 +137,7 @@ export class DreamStore {
           const ids = plan.coverage.find((item) => item.input_id === retired.id)?.output_ids ?? [];
           return { before, retired, carriers: group.after.filter((claim) => ids.includes(claim.id) && claim.status !== 'deprecated') };
         }) : [];
-        await new UploadStore(this.context).enqueue(staged, [], true, dependencies);
+        if (checkpoint.team_authorized === true) await new UploadStore(this.context).enqueue(staged, [], true, dependencies);
         for (const claim of staged) if (!group.before.some((before) => sameClaim(before, claim))) checkpoint.self_versions[claim.id] = contentHash(claim);
         group.skipped = conflict; group.completed = true;
         await writeYamlAtomic(path, checkpoint, CheckpointSchema, this.context.logger); await executionAudit(this.context, jobId, checkpoint);

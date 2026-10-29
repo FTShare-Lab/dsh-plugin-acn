@@ -47,7 +47,11 @@ export class AcnInbox {
   private async prepare(messages: InboxMessage[], analysisClaims: Awaited<ReturnType<AcnKnowledge['snapshot']>>['claims'], job: Job, control: JobControl) {
     const first = messages[0];
     if (first === undefined) throw new JobError('validation', 'Inbox 批次为空。');
-    if (first.message_type === 'policy_update' && first.policy.status === 'deprecated') return { claims: deprecatePolicyClaims(first.policy.id, analysisClaims), disputes: [], usedClaimIds: [], warnings: [] };
+    if (first.message_type === 'policy_update' && first.policy.status === 'deprecated') {
+      const syncClaims = deprecatePolicyClaims(first.policy.id, analysisClaims);
+      // 已废弃条目只补传；不伪造一次新的本地修订或任务产出。
+      return { claims: syncClaims.filter((target) => analysisClaims.some((before) => before.id === target.id && before.status !== 'deprecated')), syncClaims, disputes: [], usedClaimIds: [], warnings: [] };
+    }
     const context = inboxContext(this.knowledge.context().agentId, messages, analysisClaims);
     const route = await resolveRoute(this.knowledge.config.llm, this.knowledge.context());
     return structuredCall({ backend: this.backend, context: this.knowledge.context(), config: this.knowledge.config.llm, route, jobId: job.id,

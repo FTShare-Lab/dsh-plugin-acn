@@ -6,5 +6,5 @@ import { nextClaimUpdateAt } from '../knowledge/timestamps.js';
 import { nowSeconds } from '../protocol/time.js';
 
 export function deprecatePolicyClaims(policyId: PolicyId, local: readonly Claim[], now = nowSeconds()): Claim[] {
-  return local.filter((claim) => claim.status !== 'deprecated' && claim.source_claim_ids.includes(policyId)).map((claim) => ({ ...claim, status: 'deprecated', updated_at: nextClaimUpdateAt(now, effectiveUpdatedAt(claim)) }));
+  return local.filter((claim) => claim.source_claim_ids.includes(policyId)).map((claim) => claim.status === 'deprecated' ? claim : ({ ...claim, status: 'deprecated', updated_at: nextClaimUpdateAt(now, effectiveUpdatedAt(claim)) }));
 }

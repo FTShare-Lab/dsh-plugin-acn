@@ -23,7 +23,7 @@ describe('private Memory in the real host', () => {
       expect(await f.ctx.acnMemory.snapshot()).toEqual(before);
       const reply = adapter.requests[1]?.messages.filter((message) => message.role === 'tool').flatMap((message) => message.content).find((block) => block.type === 'text');
       if (reply?.type !== 'text') throw new Error('Missing Memory tool response.');
-      expect(JSON.parse(reply.text)).toMatchObject({ success: false, applied: false, current: before.memory_usage.chars, proposed: 190, current_entries: before.memory_entries, cap: 100, need_free: 90 });
+      expect(JSON.parse(reply.text)).toMatchObject({ success: false, applied: false, current: before.memory_usage.chars, proposed: 188, current_entries: before.memory_entries, cap: 100, need_free: 88 });
       expect(reply.text).not.toContain('UNCOMMITTED_');
     } finally { await f.close(); }
   });

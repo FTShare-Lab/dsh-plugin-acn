@@ -56,17 +56,23 @@ Inbox 同步先逐条持久化，再 ACK 成功保存的前缀；ACK 只确认 r
 
 批次 `inbox/effects/<canonical-id>.yaml` 保存成员快照/hash、分析 Claim、固定目标/Trace/Dispute、已执行结果和状态，其他成员文件指向 canonical。恢复先整体校验成员及引用，补齐缺失 refs，再补本地效果；applied 后补 done。新批次开始前先恢复已 prepared 的前缀。这个 journal 是插件私有格式，协议实体仍与 Rust 相同。
 
-上传在独立 `delivery.lock` 生命周期租约下单飞执行，HTTP 期间不持知识锁或 pending 锁。成功后用 id + revision 移除 Claim，避免删去并发新版本；每轮每 ID 只发送一次，新版本留待下一轮。Dispute 等待其待上传依赖，并在服务确认后记集合台账。确认与本地记账之间崩溃时，以相同实体 ID 重送。知识应用、会话创建、手动 Inbox 及每十分钟补传触发投递；失败保留队列。
+上传在独立 `delivery.lock` 生命周期租约下单飞执行，HTTP 期间不持知识锁或 pending 锁。成功后用 id + revision 移除 Claim，避免删去并发新版本；每轮每 ID 只发送一次，新版本留待下一轮。尝试 Claim 后独立投递 Dispute，不因关联 Claim 更新失败或暂停而阻断已有团队版本的争议；缺失依赖由服务端判定，失败保留重试。服务确认后记集合台账，确认与本地记账之间崩溃时以相同实体 ID 重送。知识应用、会话创建、手动 Inbox 及每十分钟补传触发投递；网络、鉴权等故障保留队列，明确拒绝的 Dispute 409 则移出自动重试并告警。
+
+形成与 Inbox 的团队去重只查看待投递和成功上报台账，本地单人争议不会阻断新的团队上报。读取时先 pending 后台账，避免交付确认与移除 pending 之间的并发空隙。
+
+Policy 撤回区分本地状态变更与补传集合。所有直接依赖都进入 `syncClaims`，已废弃条目保留精确版本、不计作新 Trace 输出；该集合与 effect 一同持久化。恢复仍检查分析快照和团队授权，第三版本使尚未执行的补传失效，不借撤回覆盖并发修订。
 
 投递前在短知识锁内确认存储已恢复，并核对所有待传 Claim 的当前精确版本。版本漂移或缺失时暂停该项；投递层不自动替换正文，尤其不能把单人期间的后续整合当作已有依赖。团队编辑正常入队或显式 `sync_review` 重绑后才能发布新版本。
 
-## Dream 的结构化整理与恢复
+## Dream 的自主整理与恢复
 
 `acn-dream` 激活、agent/created 及每四小时检查资格；上次成功满 24 小时、至少五条不同的自有 Claim 版本变化才自动排队。手动运行跳过两个门槛，仍须有自有非废弃 Claim。失败、停止和部分提交不更新成功冷却，未完成候选沿原任务恢复。单 worker 按 Finalize、Recap、Inbox、Memory review、Dream 的优先级处理，Dream 在 prepared 前让位，prepared 后完成当前组再响应停止或卸载。
 
 队列领取、入队时抢占、跨进程监控和 Dream 阶段边界共用 runnableJob 条件：queued、未暂停、已注册处理器、nextRunAt 已到期。处理器禁用或退避中的高优先级任务仍持久保留，但不会导致 Dream 反复让位重领；重新启用或到期后才参与调度。
 
 自主整理运行在 DSH 的 AgentLoop 子会话中，插件不另建通用执行循环。初始 Claim 按 effective_updated_at、created_at 降序、ID 升序装入，保守预算 64000；超长或较旧条目可能遗漏，目录仅用于发现，须经 read_claim 完整读取后才能登记。模型自行决定探索顺序与深度，通过 dream_record_candidates、dream_stage_group、dream_validate、dream_apply_group、dream_keep_candidate 和 dream_finish 推进。允许继续发现候选、逐组立即执行、明确保留和零修改。
+
+候选登记先在副本上校验整批，全部通过才替换持久进度。当前候选允许扩展及调整类型，不能移除已有目标或与其他未处理组重叠；调整会撤销旧验证而保留草稿供模型继续修订。恢复用 group_id 与 validation_id 共同关联执行回执，避免同名后续组误用旧结果。首次无探索结束会给一次持久提醒，普通文本收尾有最多两次同上下文协议修复，所有请求仍受探索与收尾总额度约束。
 
 `dream/autonomous.ts` 持有领域工具事务、候选、已读 ID 与持久模型轮数。复核采用当前原版的逐 Claim SemanticReview：解释信息去向、事实纠正、证据 ID、最终名称与确定性；不要求旧的双向全文引用或原摘要逐字复印。结构、来源、直接证据、权限和 CAS 仍由宿主独立校验；原始 high 资格固定，不能通过前一组降级绕过。旧格式的 prepared 记录及旧结构化适配入口保留兼容，不重新解释已经固定的提交。
 
@@ -78,7 +84,7 @@ Inbox 同步先逐条持久化，再 ACK 成功保存的前缀；ACK 只确认 r
 
 ## 受限证据校准
 
-任务 payload 和 origin 冻结可信会话 cwd 的 canonical 工作区；模型不能指定新根。`EvidenceStore` 持久化候选 Claim revision、工作区、额度和真实读取回执。读取预算在执行前预占，回执在响应工具前同步落盘。当前候选在校验错误后可以继续读，但不能换根或版本；提交前关闭清单并重检实际证据。证据锁只覆盖本地短 I/O，子会话和结构化模型均在领域数据锁外。
+任务 payload 和 origin 冻结可信会话 cwd 的 canonical 工作区；模型不能指定新根。`EvidenceStore` 持久化候选 Claim revision、工作区、额度和真实读取回执。读取预算在执行前预占，回执在响应工具前同步落盘。当前候选在校验错误后可以继续读；扩展目标时只追加合格的冻结版本，保留原回执和已用额度，不允许删除原目标、换根或替换旧版本。提交前关闭清单并重检实际证据。证据锁只覆盖本地短 I/O，子会话和结构化模型均在领域数据锁外。
 
 `dsh-adapter/dream-agent.ts` 通过 agents.create 的 setup 在发布前清除继承能力、强制 native 模式、注册领域工具与受限只读工具并安装最终执行 guard。完整系统段落不插值，关闭可选 context，并用同名空 scoped contribution 阻止 required context 在准入刷新时回流。知识目录和变化通知跳过这种查证会话；形成、Inbox 和 Dream 的普通会话触发也忽略子会话。子会话结束、取消和超时后必须 dispose 并排空循环，不能留下后台工具继续工作。
 
@@ -105,3 +111,5 @@ review 自有私有窗口，不从可能被 Recap/Finalize 回收的 transcript 
 `commands/import.ts` 在目标写入之前验证源路径、UTF-8、DTO、归属和私有安全/容量，再持知识锁逐文件发布。`writeTextAtomicIfAbsent` 复用原子写的临时文件与 fsync，以独占硬链接发布完整目标，已有路径不覆盖；源目录从不加锁或写入。Memory 沿知识锁到双文件锁的顺序，复用 `MemoryFileStore` 的 pending / receipt 恢复边界。导入没有独立后台任务或网络调用；进程中断后用户重试补齐缺失文件，不承诺整批原子可见。
 
 草稿协议中，`operation.reason` 只作为无 changes、无独立 change_basis 的质量废弃简写，不是通用备注；所有其他依据使用 change_basis。JSON schema 字段说明与错误反馈给出具体操作 ID / 类别。整合时保留指向将废弃输入的既有来源，仅免除合回存续 ID 自身的自引用。
+
+Recap、Inbox 和 Dream 的 prepared 日志固定记录创建时的团队共享授权。单人事务恢复后仍只应用本地效果，不因恢复时切到团队模式而补传；旧日志缺少授权时告警并仅恢复本地效果。明确被 Maintainer 以 409 拒绝的 Dispute 按精确版本保存终止记录，先记录再出队，恢复不会重新投递该版本；这不等于成功上报，也不阻止新争议。

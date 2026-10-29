@@ -1,6 +1,6 @@
 // 引用和占位符为纯批次校验；任何非法来源都不能产生部分 I/O。
 import { describe, expect, it } from 'vitest';
-import { prepareFormation } from '../../src/formation/prepare.js';
+import { prepareFormation, recapClaimIds } from '../../src/formation/prepare.js';
 import { RecapOutputSchema } from '../../src/formation/schema.js';
 import { AgentIdSchema, ClaimIdSchema, PolicyIdSchema } from '../../src/protocol/ids.js';
 import { sampleClaim } from '../knowledge-fixtures.js';
@@ -24,9 +24,14 @@ describe('formation preparation', () => {
   it.each(['$new_claim_19$', '$new_dispute_1$'])('rejects undeclared placeholders in any string: %s', (statement) => {
     expect(() => prepareFormation({ ...emptyOutput(), new_claims: [{ ...newDraft(), statement }] }, agent, [], [])).toThrow('未声明');
   });
-  it('drops fabricated used IDs, deduplicates known IDs and emits a safe warning', () => {
-    const result = prepareFormation({ ...emptyOutput(), used_claim_ids: [local.id, local.id, 'claim_deadbeef', 'invalid'] }, agent, [local], []);
-    expect(result.usedClaimIds).toEqual([local.id]); expect(result.warnings).toEqual(['已丢弃 2 个不在本次可见上下文中的 used_claim_ids。']);
+  it('rejects the entire output for fabricated used IDs and deduplicates valid attribution', () => {
+    for (const id of ['claim_deadbeef', 'invalid']) expect(() => prepareFormation({ ...emptyOutput(), used_claim_ids: [local.id, id] }, agent, [local], [])).toThrow('used_claim_ids');
+    expect(prepareFormation({ ...emptyOutput(), used_claim_ids: [local.id, local.id] }, agent, [local], []).usedClaimIds).toEqual([local.id]);
+  });
+  it('authorizes complete Claim tokens in the current public projection, including inherited Router sources', () => {
+    const visible = recapClaimIds(['(claim_11223344), claim_aabbccdd', 'claim_11223344 claim_123456789 xclaim_11223344 claim_AABBCCDD claim_11223344_tail']);
+    expect(visible).toEqual(['claim_11223344', 'claim_aabbccdd']);
+    expect(prepareFormation({ ...emptyOutput(), used_claim_ids: visible, new_claims: [{ ...newDraft(), source_claim_ids: visible }] }, agent, [], visible).usedClaimIds).toEqual(visible);
   });
   it('uses explicit policy and historical provenance, replaces the complete update sources and advances time', () => {
     const policy = PolicyIdSchema.parse('policy_11111111'); const historical = ClaimIdSchema.parse('claim_22222222');
@@ -53,7 +58,7 @@ describe('formation preparation', () => {
   });
   it('historical provenance alone does not allow dispute or usage attribution', () => {
     const historical = ClaimIdSchema.parse('claim_22222222'); const before = { ...local, source_claim_ids: [historical] };
-    expect(prepareFormation({ ...emptyOutput(), used_claim_ids: [historical] }, agent, [before], []).usedClaimIds).toEqual([]);
+    expect(() => prepareFormation({ ...emptyOutput(), used_claim_ids: [historical] }, agent, [before], [])).toThrow('used_claim_ids');
     expect(() => prepareFormation({ ...emptyOutput(), new_disputes: [{ id: '$new_dispute_0$', name: 'conflict', summary: 'Example conflict.', claims: [local.id, historical] }] }, agent, [before], [])).toThrow('不可见');
     expect(() => prepareFormation({ ...emptyOutput(), new_claims: [{ ...newDraft(), source_claim_ids: [historical] }] }, agent, [{ ...before, status: 'deprecated' }], [])).toThrow('不可见');
   });

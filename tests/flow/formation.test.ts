@@ -55,7 +55,7 @@ describe('formation in the production host', () => {
   });
   it('compaction forms a valid Claim and Trace; later idle and disposal do not repeat the range', async () => {
     const output = { ...emptyOutput(), new_claims: [newDraft()], used_claim_ids: ['claim_00000001', 'claim_deadbeef'] };
-    const adapter = new ScriptAdapter([textResponse('The example contract confirms the retry boundary.'), textResponse(JSON.stringify(output))]);
+    const adapter = new ScriptAdapter([textResponse('The example contract confirms the retry boundary.'), textResponse(JSON.stringify(output)), textResponse(JSON.stringify({ ...output, used_claim_ids: ['claim_00000001'] }))]);
     const flow = await flowHarness(adapter, { formation: true, config: { formation: { finalizeIdleMinutes: 1, finalizeOnDispose: true } } });
     try {
       const handle = await flow.ctx.agents.create({ sessionId: SessionId('session-a'), agentOptions: { provider: 'mock', model: 'mock' } });
@@ -70,12 +70,12 @@ describe('formation in the production host', () => {
       expect(await new ClaimStore(flow.knowledge.context()).list()).toHaveLength(2);
       const traces = await new TraceStore(flow.knowledge.context()).list(); expect(traces).toHaveLength(1);
       expect(traces[0]?.input_claims).toEqual([flow.claim.id]); expect(traces[0]?.output_claims).toHaveLength(1);
-      expect((await new FormationStore(flow.knowledge.context()).read('session-a'))?.warnings).toEqual(['已丢弃 1 个不在本次可见上下文中的 used_claim_ids。']);
+      expect((await new FormationStore(flow.knowledge.context()).read('session-a'))?.warnings).toEqual([]);
       vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
       flow.ctx.emit('agent/status', { agent: handle.agent, status: 'idle' }); await vi.advanceTimersByTimeAsync(60_000); vi.useRealTimers();
       await formation.flush(); await handle.dispose(); await formation.flush();
       await vi.waitFor(async () => { expect((await formation.worker.queue.list()).every((job) => job.state === 'succeeded')).toBe(true); });
-      expect(adapter.requests).toHaveLength(2); expect(await new TraceStore(flow.knowledge.context()).list()).toHaveLength(1);
+      expect(adapter.requests).toHaveLength(3); expect(await new TraceStore(flow.knowledge.context()).list()).toHaveLength(1);
       await expect(fs.access(flow.knowledge.context().paths.uploads)).rejects.toMatchObject({ code: 'ENOENT' });
     } finally { vi.useRealTimers(); await flow.close(); }
   });

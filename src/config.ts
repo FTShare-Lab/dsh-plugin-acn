@@ -25,7 +25,7 @@ export const ConfigSchema = z.strictObject({
     maxOutputTokens: positive().default(32_768), timeoutMs: positive().default(600_000),
     structuredRetries: positive().default(5),
   }).prefault({}),
-  catalog: z.strictObject({ maxClaims: positive().default(200), maxChars: positive().default(24_000) }).prefault({}),
+  catalog: z.strictObject({ maxClaims: positive().default(20), maxChars: positive().default(24_000) }).prefault({}),
   formation: z.strictObject({
     recapOnCompaction: z.boolean().default(true), idleRecap: z.boolean().default(true),
     recapMinTurns: positive().default(10), recapMinTokens: positive().default(100_000),

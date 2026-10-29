@@ -9,9 +9,13 @@ import { nextClaimUpdateAt } from '../knowledge/timestamps.js';
 import { validateClaimText } from '../knowledge/safety.js';
 import { FormationValidationError, RecapOutputSchema } from './schema.js';
 
-export interface PreparedFormation { claims: Claim[]; disputes: Dispute[]; usedClaimIds: ClaimId[]; warnings: string[] }
+export interface PreparedFormation { claims: Claim[]; disputes: Dispute[]; usedClaimIds: ClaimId[]; warnings: string[]; syncClaims?: Claim[] }
 export interface PreparationVisibility { directClaims?: readonly Claim[]; editableDeprecatedIds?: ReadonlySet<ClaimId> }
 function requireValid(condition: boolean, message: string): asserts condition { if (!condition) throw new FormationValidationError(message); }
+// 只从本次已过滤投影提取完整合法 ID；不继承已消费区间或私有工具的引用权限。
+export function recapClaimIds(texts: readonly string[]): ClaimId[] {
+  return [...new Set(texts.flatMap((text) => [...text.matchAll(/(?<![A-Za-z0-9_])claim_[0-9a-f]{8}(?![A-Za-z0-9_])/g)].map((match) => ClaimIdSchema.parse(match[0]))))];
+}
 export function prepareFormation(raw: unknown, agentId: AgentId, local: readonly Claim[], seenSourceIds: readonly string[], now = nowSeconds(), visibility: PreparationVisibility = {}): PreparedFormation {
   const output = RecapOutputSchema.parse(raw);
   const placeholders = new Map<string, string>();
@@ -44,13 +48,11 @@ export function prepareFormation(raw: unknown, agentId: AgentId, local: readonly
   for (const claim of resolved.new_claims) { sourceClaims.add(claim.id); disputeClaims.add(claim.id); }
   const warnings: string[] = [];
   const usedClaimIds: ClaimId[] = [];
-  let discarded = 0;
   for (const raw of resolved.used_claim_ids) {
     const id = ClaimIdSchema.safeParse(raw);
-    if (!id.success || !visibleClaims.has(id.data)) { discarded += 1; continue; }
+    requireValid(id.success && visibleClaims.has(id.data), 'used_claim_ids 包含不在本次上下文中的合法 Claim ID；请核对来源后重试整批。');
     if (!usedClaimIds.includes(id.data)) usedClaimIds.push(id.data);
   }
-  if (discarded > 0) warnings.push(`已丢弃 ${discarded} 个不在本次可见上下文中的 used_claim_ids。`);
   function sources(values: string[], self: string): SourceId[] {
     return [...new Set(values.map((value) => {
       const parsed = SourceIdSchema.safeParse(value);

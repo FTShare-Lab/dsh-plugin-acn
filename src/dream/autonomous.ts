@@ -28,7 +28,8 @@ export const DreamTools = {
   dream_review_sync: z.strictObject({ source_id: ClaimIdSchema, carrier_ids: z.array(ClaimIdSchema).min(1), validation_id: HashSchema.optional(), review: SemanticReviewSchema.optional() }),
   dream_finish: z.strictObject({ review: ReviewSummarySchema }),
   read_claim: z.strictObject({ id: ClaimIdSchema }),
-  read_trace: z.strictObject({ id: TraceIdSchema, offset: z.number().int().nonnegative().default(0), limit: z.number().int().min(1).max(8000).default(4000) }),
+  read_trace: z.strictObject({ claim_id: ClaimIdSchema.optional(), trace_id: TraceIdSchema.optional(), id: TraceIdSchema.optional(), offset: z.number().int().nonnegative().default(0), limit: z.number().int().min(1).max(8000).optional() })
+    .refine((value) => value.id === undefined ? value.claim_id !== undefined : value.claim_id === undefined && value.trace_id === undefined, '提供 claim_id，按需提供 trace_id；旧 id 入口不能混用其它 ID 字段。'),
   file_read: ReadArgs,
   file_glob: GlobArgs,
   file_grep: GrepArgs,
@@ -37,7 +38,7 @@ export type DreamTool = keyof typeof DreamTools;
 export const isDreamTool = (name: string): name is DreamTool => Object.hasOwn(DreamTools, name);
 export class DreamSession {
   private pending: Promise<unknown> = Promise.resolve();
-  private constructor(readonly knowledge: AcnKnowledge, readonly job: Job, readonly control: JobControl, readonly progress: Progress, private readonly claims: Claim[], readonly workspace: string, private readonly boundary: () => Promise<void>) {}
+  private constructor(readonly knowledge: AcnKnowledge, readonly job: Job, readonly control: JobControl, readonly progress: Progress, private readonly claims: Claim[], private readonly originalHigh: ReadonlySet<string>, readonly workspace: string, private readonly boundary: () => Promise<void>) {}
   static async create(knowledge: AcnKnowledge, job: Job, control: JobControl, boundary: () => Promise<void>): Promise<DreamSession> {
     const store = knowledge.dreamStore(); const origin = await store.origin(job.id);
     requireDream(origin?.workspace_root !== undefined, '缺少 Dream 工作区快照。');
@@ -52,12 +53,12 @@ export class DreamSession {
       if (index >= 0 && previous !== undefined && Date.parse(after.updated_at ?? after.created_at) >= Date.parse(previous.updated_at ?? previous.created_at)) claims[index] = after;
     }
     for (const entry of progress.entries.filter((item) => item.status === 'pending')) {
-      const record = (await store.records(job.id)).find(({ checkpoint }) => checkpoint.operation?.group_id === entry.candidate.group_id && checkpoint.applied);
+      const record = (await store.records(job.id)).find(({ checkpoint }) => entry.validation !== null && checkpoint.operation?.group_id === entry.candidate.group_id && checkpoint.operation.validation_id === entry.validation.validation_id && checkpoint.applied);
       if (record !== undefined) { entry.status = record.checkpoint.groups.some((group) => group.skipped) ? 'skipped' : 'executed'; entry.reason = '从持久执行回执恢复。'; }
     }
     if ((await store.final(job.id))?.applied) progress.finished = true;
     await store.saveProgress(job.id, progress);
-    return new DreamSession(knowledge, job, control, progress, claims, origin.workspace_root, boundary);
+    return new DreamSession(knowledge, job, control, progress, claims, new Set(origin.claims.filter((claim) => claim.confidence === 'high').map((claim) => claim.id)), origin.workspace_root, boundary);
   }
   get finished(): boolean { return this.progress.finished; }
   get exhausted(): boolean { const budget = this.progress.autonomy; return budget !== undefined && budget.steps >= budget.limit; }
@@ -95,6 +96,10 @@ export class DreamSession {
       entry.status = 'skipped'; entry.reason = '本次额度已用尽，收尾时仍未完成；丢弃未提交草稿，不代表知识无效。'; entry.draft = null; entry.validation = null; entry.review = null;
     }
     requireDream(this.progress.entries.every((entry) => entry.status !== 'pending'), '仍有候选待处理。');
+    if (!this.exhausted && this.readable().length > 0 && !this.progress.finish_reminder_sent && !this.progress.proposal_attempted && this.progress.entries.length === 0 && this.progress.exploration_receipts === 0 && (await this.knowledge.dreamStore().records(this.job.id)).length === 0) {
+      this.progress.finish_reminder_sent = true; await this.save();
+      return { accepted: false, finished: false, confirmation_required: true, activity: { exploration_receipts: 0, proposal_attempted: false, executed_groups: 0 }, note: '本轮尚无探索回执或修改提案。这是一次结束前提醒，不要求增加工具调用或修改数量。请检查：A 判断记忆层级，high 也可清理纯工作记录；B 才受 medium/low 门槛限制；C 可以保留分开的知识。尚未暂存/受理不是不能提出候选的理由。可以继续探索或暂存草稿；若仍决定全部保留，请在 ABC 总结中简述代表 Claim 的保留依据、B 未选候选的原因（未探索不等于查证后缺证据），再调用 dream_finish 即可结束，不会重复此提醒。' };
+    }
     this.progress.discovery.review = review; await this.save();
     const checkpoint = await this.knowledge.dreamStore().finish(this.job.id, this.progress, control); control.committed?.(); this.progress.finished = true; await this.save();
     return { finished: true, updatedClaimIds: Object.keys(checkpoint.self_versions), budget_limited: this.exhausted };
@@ -115,30 +120,54 @@ export class DreamSession {
       budget: this.progress.autonomy, authoritative_state: { candidate_progress: this.candidateProgress(), drafts: this.progress.entries.filter((entry) => entry.status === 'pending'), executions: (await store.records(this.job.id)).map(({ checkpoint }) => ({ operation: checkpoint.operation, groups: checkpoint.groups })), evidence: await this.evidenceState() } };
   }
   private async evidenceState(): Promise<object> { return Object.fromEntries(await Promise.all(this.progress.entries.filter((entry) => entry.status === 'pending').map(async (entry) => [entry.candidate.group_id, await new EvidenceStore(this.knowledge.context(), this.job.id, entry.candidate.group_id).read()] as const))); }
-  private register(candidate: Candidate): void {
-    requireDream(candidate.group_id !== '_discovery', '该组名为宿主只读探索保留，请使用其他 group_id。');
-    const prior = this.progress.entries.find((entry) => entry.candidate.group_id === candidate.group_id);
-    if (prior !== undefined) { requireDream(prior.status === 'pending' && sameIds(prior.candidate.claim_ids, candidate.claim_ids) && prior.candidate.kind === candidate.kind, '不能更换已登记组的目标或种类。'); return; }
-    validateCandidates([candidate], this.readable(), this.knowledge.context().agentId, this.knowledge.config.dream.evidenceCalibration);
-    requireDream(!this.progress.entries.some((entry) => entry.status === 'pending' && entry.candidate.claim_ids.some((id) => candidate.claim_ids.includes(id))), '待处理候选不能重叠；先处理已有组。');
-    this.progress.discovery.candidates.push(candidate); this.progress.entries.push({ candidate, status: 'pending', reason: '', draft: null, validation: null, review: null });
+  private register(candidates: readonly Candidate[]): void {
+    const next = structuredClone(this.progress.entries); const groups = new Set<string>();
+    for (const candidate of candidates) {
+      requireDream(candidate.group_id !== '_discovery', '该组名为宿主只读探索保留，请使用其他 group_id。');
+      requireDream(!groups.has(candidate.group_id), '同一批不能重复登记 group_id。'); groups.add(candidate.group_id);
+      validateCandidates([candidate], this.readable(), this.knowledge.context().agentId, this.knowledge.config.dream.evidenceCalibration);
+      requireDream(candidate.kind !== 'evidence' || candidate.claim_ids.every((id) => !this.originalHigh.has(id)), 'high Claim 不进入证据校准；资格以本轮原始版本为准。');
+      const prior = next.find((entry) => entry.status === 'pending' && entry.candidate.group_id === candidate.group_id);
+      for (const entry of next.filter((item) => item.status === 'pending')) {
+        if (entry === prior) requireDream(entry.candidate.claim_ids.every((id) => candidate.claim_ids.includes(id)), '不能静默删除当前候选的 Claim；先处理或明确保留。');
+        else requireDream(!entry.candidate.claim_ids.some((id) => candidate.claim_ids.includes(id)), '待处理候选不能重叠；请在已有组内细化。');
+      }
+      if (prior !== undefined) {
+        if (prior.candidate.kind !== candidate.kind || !sameIds(prior.candidate.claim_ids, candidate.claim_ids)) { prior.validation = null; prior.review = null; }
+        prior.candidate = candidate;
+      } else next.push({ candidate, status: 'pending', reason: '', draft: null, validation: null, review: null });
+    }
+    // 完整验证后才替换，失败不能留下半批候选或撤销已接受草稿。
+    this.progress.entries = next; this.progress.discovery.candidates = next.map((entry) => entry.candidate);
   }
   execute(name: DreamTool, args: unknown, signal?: AbortSignal): Promise<unknown> {
     const control = { ...this.control, signal: signal === undefined ? this.control.signal : AbortSignal.any([this.control.signal, signal]) };
-    const result = this.pending.then(async () => { control.signal.throwIfAborted(); await this.boundary(); control.signal.throwIfAborted(); requireDream(!this.finished, 'Dream 已结束。'); return this.dispatch(name, args, control); });
+    const result = this.pending.then(async () => {
+      control.signal.throwIfAborted(); await this.boundary(); control.signal.throwIfAborted(); requireDream(!this.finished, 'Dream 已结束。');
+      const value = await this.dispatch(name, args, control);
+      if (['read_claim', 'read_trace', 'file_read', 'file_glob', 'file_grep'].includes(name)) { this.progress.exploration_receipts += 1; await this.save(); }
+      return value;
+    });
     this.pending = result.catch(() => {}); return result;
   }
   private async dispatch(name: DreamTool, args: unknown, control: JobControl): Promise<unknown> {
     if (this.wrappingUp) requireDream(!['dream_record_candidates', 'file_read', 'file_glob', 'file_grep', 'read_trace', 'dream_review_sync'].includes(name), '已进入有限收尾；不能展开新探索，请处理已有候选或调用 dream_finish。');
-    if (name === 'dream_record_candidates') { const input = DreamTools[name].parse(args); for (const candidate of input.candidates) this.register(candidate); await this.save(); }
+    if (name === 'dream_record_candidates') { const input = DreamTools[name].parse(args); this.register(input.candidates); await this.save(); }
     else if (name === 'read_claim') {
       const { id } = DreamTools[name].parse(args); const claim = this.claims.find((claim) => claim.id === id); requireDream(claim !== undefined, '只可读取本轮冻结的自有 Claim。');
       const current = (await this.knowledge.snapshot()).claims.find((value) => value.id === id); requireDream(current !== undefined && sameClaim(current, claim), 'Claim 已被外部修改，本轮请保留该项。');
       if (!this.progress.autonomy?.read_ids.includes(id)) this.progress.autonomy?.read_ids.push(id); await this.save(); return claim;
     } else if (name === 'read_trace') {
-      const input = DreamTools[name].parse(args); const trace = await new TraceStore(this.knowledge.context()).read(input.id);
-      requireDream(trace !== null && trace.agent === this.knowledge.agentId && [...trace.input_claims, ...trace.output_claims].some((id) => this.readable().some((claim) => claim.id === id)), '只可读取本轮已读 Claim 关联的本地自身 Trace。');
-      const chars = Array.from(JSON.stringify(trace)); return { content: chars.slice(input.offset, input.offset + input.limit).join(''), total_chars: chars.length, truncated: input.offset > 0 || input.offset + input.limit < chars.length, independent_evidence: false };
+      const input = DreamTools[name].parse(args);
+      if (input.claim_id !== undefined) requireDream(this.readable().some((claim) => claim.id === input.claim_id), '请先 read_claim 读取本轮自有 Claim，再查询其 Trace。');
+      if (input.claim_id !== undefined && input.trace_id === undefined) {
+        return { ...await this.knowledge.listTraces({ claimId: input.claim_id, offset: input.offset, limit: Math.min(input.limit ?? 20, 100) }), independent_evidence: false };
+      }
+      const id = input.trace_id ?? input.id; requireDream(id !== undefined, '读取 Trace 正文需要 trace_id。');
+      const trace = await new TraceStore(this.knowledge.context()).read(id);
+      requireDream(trace !== null && trace.agent === this.knowledge.agentId && [...trace.input_claims, ...trace.output_claims].some((id) => input.claim_id === undefined ? this.readable().some((claim) => claim.id === id) : id === input.claim_id), '只可读取本轮已读 Claim 关联的本地自身 Trace。');
+      const limit = input.limit ?? 4000; const chars = Array.from(JSON.stringify(trace)); const end = Math.min(chars.length, input.offset + limit);
+      return { content: chars.slice(input.offset, end).join(''), total_chars: chars.length, truncated: input.offset > 0 || end < chars.length, next_offset: end < chars.length ? end : null, independent_evidence: false };
     } else if (name === 'file_read' || name === 'file_glob' || name === 'file_grep') {
       // 发现候选前也可定位文件；真正的证据读取仍绑定已登记的当前候选。
       const entry = name === 'file_read' ? this.current() : undefined;
@@ -151,21 +180,23 @@ export class DreamSession {
       return evidence.execute(name === 'file_read' ? 'read' : name === 'file_glob' ? 'glob' : 'grep', DreamTools[name].parse(args), eligible, control.signal);
     } else if (name === 'dream_stage_group') {
       const input = DreamTools[name].parse(args);
-      if (input.group !== null && !this.progress.entries.some((entry) => entry.candidate.group_id === input.group_id)) {
-        requireDream(!this.wrappingUp, '收尾阶段不能新增候选。');
-        requireDream(!this.progress.entries.some((entry) => entry.status === 'pending'), '先处理当前候选。');
-        this.register({ group_id: input.group_id, claim_ids: input.group.operations.map((op) => op.id), kind: input.group.kind, reason: input.group.reason });
-      }
-      const entry = this.current(input.group_id);
-      if (input.group === null) { entry.draft = null; entry.validation = null; entry.review = null; await this.save(); }
+      if (input.group !== null) { this.progress.proposal_attempted = true; await this.save(); }
+      if (input.group === null) { const entry = this.current(input.group_id); entry.draft = null; entry.validation = null; entry.review = null; await this.save(); }
       else {
-        requireDream(input.group.kind === entry.candidate.kind && sameIds(input.group.operations.map((op) => op.id), entry.candidate.claim_ids), '草稿必须包含当前候选全部且仅这些 ID 与 kind。');
         const group = expandDraft(input.group, this.readable()); const receipts = z.record(z.string(), z.json()).parse((await new EvidenceStore(this.knowledge.context(), this.job.id, input.group_id).read())?.receipts ?? {});
         prepareGroup(group, this.readable(), this.knowledge.context().agentId, undefined, { enabled: this.knowledge.config.dream.evidenceCalibration, receipts, semanticReview: true });
+        if (!this.progress.entries.some((entry) => entry.status === 'pending' && entry.candidate.group_id === input.group_id)) {
+          requireDream(!this.wrappingUp, '收尾阶段不能新增候选。');
+          requireDream(!this.progress.entries.some((entry) => entry.status === 'pending'), '先处理当前候选。');
+          this.register([{ group_id: input.group_id, claim_ids: input.group.operations.map((op) => op.id), kind: input.group.kind, reason: input.group.reason }]);
+        }
+        const entry = this.current(input.group_id);
+        requireDream(input.group.kind === entry.candidate.kind && sameIds(input.group.operations.map((op) => op.id), entry.candidate.claim_ids), '草稿必须包含当前候选全部且仅这些 ID 与 kind。');
         entry.draft = group; entry.validation = null; entry.review = null; await this.save();
       }
     } else if (name === 'dream_validate') {
       const input = DreamTools[name].parse(args); const entry = this.current(input.group_id); requireDream(entry.draft !== null, '请先暂存完整草稿。');
+      requireDream(entry.draft.kind === entry.candidate.kind && sameIds(entry.draft.updates.map((claim) => claim.id), entry.candidate.claim_ids), '候选已细化，请保留原编辑并补齐当前候选的完整草稿后再 validate。');
       const receipts = z.record(z.string(), z.json()).parse((await new EvidenceStore(this.knowledge.context(), this.job.id, input.group_id).read())?.receipts ?? {});
       prepareGroup(entry.draft, this.readable(), this.knowledge.context().agentId, undefined, { enabled: this.knowledge.config.dream.evidenceCalibration, receipts, semanticReview: true });
       entry.validation = reviewInput(input.group_id, entry.draft, this.readable(), receipts); await this.save(); return entry.validation;

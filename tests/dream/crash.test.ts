@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { ClaimStore } from '../../src/store/claims.js';
 import { TraceStore } from '../../src/store/traces.js';
 import { UploadStore } from '../../src/store/uploads.js';
+import { DreamStore } from '../../src/dream/checkpoint.js';
 import { DreamSync } from '../../src/dream/sync.js';
 import { DreamSession } from '../../src/dream/autonomous.js';
 import { waitJob } from '../formation/helpers.js';
@@ -14,13 +15,26 @@ import { dreamFixture } from './helpers.js';
 
 async function expireOrphans(root: string): Promise<void> { const old = new Date(Date.now() - 60_000); for (const entry of await fs.readdir(root, { withFileTypes: true })) if (entry.isDirectory()) { const path = join(root, entry.name); if (entry.name.endsWith('.lock')) await fs.utimes(path, old, old); else await expireOrphans(path); } }
 function kill(child: ChildProcess) { const exit = once(child, 'exit'); child.kill('SIGKILL'); return exit; }
-async function crash(root: string, job: string, stage: string, reviewMode = 'legacy') {
-  const child = fork(new URL('./fixtures/worker.mjs', import.meta.url), [root, job, stage, reviewMode], { silent: true }); let stderr = ''; child.stderr?.on('data', (data: Buffer) => { stderr += data.toString(); });
+async function crash(root: string, job: string, stage: string, reviewMode = 'legacy', mode = 'team') {
+  const child = fork(new URL('./fixtures/worker.mjs', import.meta.url), [root, job, stage, reviewMode, mode], { silent: true }); let stderr = ''; child.stderr?.on('data', (data: Buffer) => { stderr += data.toString(); });
   try { await new Promise<void>((resolve, reject) => { child.once('message', () => { resolve(); }); child.once('error', reject); child.once('exit', (code) => { reject(new Error(`Crash worker exited ${code}: ${stderr}`)); }); }); }
   catch (error) { if (child.exitCode === null && child.signalCode === null) await kill(child); throw error; }
   await kill(child); await expireOrphans(root);
 }
 describe('Dream real process crash recovery', () => {
+  it('keeps a solo prepared Dream local when restarted with team configuration', async () => {
+    const f = await dreamFixture(() => { throw new Error('Recovery cannot use a model.'); });
+    try {
+      const ctx = f.knowledge.context(); await crash(ctx.paths.root, 'solo-recovery', 'prepared', 'semantic', 'solo');
+      const team = { ...ctx, mode: 'team' as const }; const store = new DreamStore(team);
+      await store.recover(); await store.recover();
+      expect((await store.records('solo-recovery'))[0]?.checkpoint).toMatchObject({ applied: true, team_authorized: false });
+      expect((await new ClaimStore(team).list()).filter((claim) => claim.status === 'deprecated')).toHaveLength(1);
+      expect((await new UploadStore(team).read()).claims).toEqual([]);
+      await expect(fs.access(ctx.paths.uploads)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally { await f.close(); }
+  });
+
   it.each(['final-prepared', 'final-state', 'final-applied'])('terminates an exhausted Dream after SIGKILL at %s without a new model allowance', async (stage) => {
     const f = await dreamFixture(() => { throw new Error('Budget recovery cannot call a model.'); });
     try {

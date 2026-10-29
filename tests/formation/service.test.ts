@@ -13,6 +13,24 @@ import { sampleClaim } from '../knowledge-fixtures.js';
 import { emptyOutput, formationFixture, newDraft, waitJob } from './helpers.js';
 
 describe('durable knowledge formation', () => {
+  it('retains tail evidence and long Trace tasks, and never authorizes an already-consumed source in the next range', async () => {
+    const foreign = 'claim_11223344'; const inputs: string[] = [];
+    const longTask = `${'task context '.repeat(1500)}USER_TASK_TAIL`; const result = `${'log '.repeat(1500)}FINAL_VERSION_LIMIT ${foreign}`;
+    const fixture = await formationFixture((_route, _system, input) => {
+      inputs.push(input);
+      return Promise.resolve({ text: JSON.stringify(inputs.length === 1 ? { ...emptyOutput(), new_claims: [{ ...newDraft(), source_claim_ids: [foreign] }], used_claim_ids: [foreign] } : inputs.length === 2 ? { ...emptyOutput(), used_claim_ids: [foreign] } : emptyOutput()) });
+    });
+    try {
+      await fixture.formation.start();
+      fixture.formation.capture('session-a', { route: { provider: 'mock', model: 'mock' }, entry: { seq: 0, type: 'user', text: longTask } });
+      fixture.formation.capture('session-a', { seenSourceIds: [foreign], entry: { seq: 1, type: 'tool_result', text: result } });
+      await waitJob(fixture.formation.worker.queue, (await fixture.formation.finalize('session-a')).id);
+      expect(inputs[0]).toContain('FINAL_VERSION_LIMIT'); expect((await new TraceStore(fixture.knowledge.context()).list())[0]?.task).toBe(longTask);
+      fixture.formation.capture('session-a', { entry: { seq: 2, type: 'user', text: 'A separate task without the earlier source.' } });
+      await waitJob(fixture.formation.worker.queue, (await fixture.formation.finalize('session-a')).id);
+      expect(inputs).toHaveLength(3); expect(inputs[1]).not.toContain(result);
+    } finally { await fixture.close(); }
+  });
   it('invalid JSON twice then a third valid result produces one Claim and Trace, with safe audit metadata', async () => {
     const responses = ['broken', JSON.stringify({ ...emptyOutput(), new_claims: [{ ...newDraft(), extra: true }] }), `\n\x60\x60\x60json\n${JSON.stringify({ ...emptyOutput(), new_claims: [newDraft()] })}\n\x60\x60\x60\n`];
     const systems: string[] = []; const inputs: string[] = [];
@@ -24,7 +42,7 @@ describe('durable knowledge formation', () => {
       await fixture.formation.start();
       fixture.formation.capture('session-a', { route: { provider: 'mock', model: 'mock' }, entry: { seq: 1, type: 'user', text: 'Check the retry invariant using the current service contract.' } });
       const job = await fixture.formation.finalize('session-a'); await waitJob(fixture.formation.worker.queue, job.id);
-      expect(JSON.parse(inputs[0] ?? '{}')).toMatchObject({ transcript_projection: { complete_history: false, from_seq_exclusive: -1, until_seq_inclusive: 1, tool_result_max_chars: 4000, legacy_tool_result_completeness: 'unknown' } });
+      expect(JSON.parse(inputs[0] ?? '{}')).toMatchObject({ transcript_projection: { complete_history: false, from_seq_exclusive: -1, until_seq_inclusive: 1, tool_results: 'complete_public_results', legacy_tool_result_completeness: 'unknown' } });
       expect(systems[0]).toContain('并非完整历史');
       expect(systems).toHaveLength(3); expect(systems[1]).toContain('上次响应未通过'); expect(systems[2]).toContain('unrecognized_keys');
       const context = fixture.knowledge.context();
@@ -61,7 +79,7 @@ describe('durable knowledge formation', () => {
     } finally { await fixture.close(); }
   });
   it('explicit route works before the first ordinary request; local disputes persist while solo has no upload queue', async () => {
-    const local = sampleClaim(); const output = { ...emptyOutput(), new_claims: [newDraft()], used_claim_ids: [local.id, 'claim_deadbeef'], new_disputes: [{ id: '$new_dispute_0$', name: 'retry_conflict', summary: 'Incompatible bounds in the example contracts.', claims: [local.id, '$new_claim_0$'] }] };
+    const local = sampleClaim(); const output = { ...emptyOutput(), new_claims: [newDraft()], used_claim_ids: [local.id], new_disputes: [{ id: '$new_dispute_0$', name: 'retry_conflict', summary: 'Incompatible bounds in the example contracts.', claims: [local.id, '$new_claim_0$'] }] };
     const route = vi.fn((route: object) => { expect(route).toEqual({ provider: 'configured', model: 'example-model' }); return Promise.resolve({ text: JSON.stringify(output) }); });
     const fixture = await formationFixture(route, { llm: { provider: 'configured', model: 'example-model' } });
     try {
@@ -69,7 +87,7 @@ describe('durable knowledge formation', () => {
       fixture.formation.capture('session-a', { entry: { seq: 0, type: 'user', text: 'Compare the conflicting retry bounds.' } });
       await waitJob(fixture.formation.worker.queue, (await fixture.formation.finalize('session-a')).id);
       expect(route.mock.calls[0]?.[0]).toEqual({ provider: 'configured', model: 'example-model' });
-      expect(fixture.warnings.some((warning) => warning.includes('used_claim_ids'))).toBe(true);
+      expect(fixture.warnings).toEqual([]);
       expect(await new DisputeStore(fixture.knowledge.context()).list()).toHaveLength(1);
       expect((await new TraceStore(fixture.knowledge.context()).list())[0]?.input_claims).toEqual([local.id]);
       expect(await new UploadStore(fixture.knowledge.context()).read()).toEqual({ claims: [], disputes: [] });

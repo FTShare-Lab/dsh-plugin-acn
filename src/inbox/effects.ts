@@ -14,7 +14,7 @@ import { TraceStore } from '../store/traces.js';
 import { DisputeStore } from '../store/disputes.js';
 import { UploadStore } from '../store/uploads.js';
 import { InboxStore } from '../store/inbox.js';
-import { reportedClaimSetKey } from '../store/reported-sets.js';
+import { newDisputes } from '../knowledge/disputes.js';
 import { ClaimSchema, type Claim } from '../protocol/claim.js';
 import { DisputeSchema } from '../protocol/dispute.js';
 import { InboxMessageSchema, inboxEventAt, type InboxMessage } from '../protocol/inbox.js';
@@ -32,7 +32,7 @@ export const InboxEffectSchema = z.strictObject({
   schemaVersion: z.literal(1), type: z.literal('effect'), canonicalId: InboxIdSchema, batchHash: HashSchema,
   members: z.array(MemberSchema).min(1), status: z.enum(['prepared', 'applied']),
   analysisClaims: z.array(ClaimSchema).nullable(), preparedClaims: z.array(ClaimSchema), appliedClaims: z.array(ClaimSchema),
-  disputes: z.array(DisputeSchema), trace: TraceSchema.nullable(), warnings: z.array(z.string()), retiredPolicies: z.array(PolicyIdSchema),
+  teamAuthorized: z.boolean().optional(), syncClaims: z.array(ClaimSchema).optional(), disputes: z.array(DisputeSchema), trace: TraceSchema.nullable(), warnings: z.array(z.string()), retiredPolicies: z.array(PolicyIdSchema),
 });
 const RefSchema = z.strictObject({ schemaVersion: z.literal(1), type: z.literal('ref'), id: InboxIdSchema, canonicalId: InboxIdSchema, batchHash: HashSchema, messageHash: HashSchema });
 const JournalSchema = z.discriminatedUnion('type', [InboxEffectSchema, RefSchema]);
@@ -67,6 +67,7 @@ export class InboxEffectStore {
         integrity(journal.members[0]?.id === journal.canonicalId && new Set(journal.members.map((member) => member.id)).size === journal.members.length && batchHash(journal.members) === journal.batchHash);
         integrity(journal.members.every((member) => member.id === member.message.id && member.hash === inboxMessageHash(member.message)));
         integrity([...journal.preparedClaims, ...journal.appliedClaims].every((claim) => claim.holder === this.context.agentId));
+        integrity((journal.syncClaims ?? []).every((claim) => claim.holder === this.context.agentId && claim.status === 'deprecated' && journal.retiredPolicies.some((id) => claim.source_claim_ids.includes(id))));
         integrity(journal.trace === null || journal.trace.agent === this.context.agentId);
         integrity(journal.disputes.every((dispute) => dispute.reporter_agent_id === this.context.agentId));
         for (const member of journal.members.slice(1)) {
@@ -135,10 +136,9 @@ export class InboxEffectStore {
       }
       const trace = prepared.claims.length === 0 && prepared.disputes.length === 0 ? null : TraceSchema.parse({ id: traceId, name, task: `Inbox ${messages.map((message) => message.id).join(', ')}`, agent: this.context.agentId, input_claims: traceInputs, output_claims: prepared.claims.map((claim) => claim.id), created_at: createdAt });
       const existingDisputes = await new DisputeStore(this.context).list();
-      const sets = new Set(existingDisputes.map((dispute) => reportedClaimSetKey(dispute.claims)));
-      const disputes = prepared.disputes.filter((dispute) => { const key = reportedClaimSetKey(dispute.claims); if (sets.has(key)) return false; sets.add(key); return true; });
+      const disputes = await newDisputes(this.context, prepared.disputes, existingDisputes);
       if (disputes.some((dispute) => existingDisputes.some((existing) => existing.id === dispute.id))) throw new StoreError('conflict', 'Inbox Dispute ID collision; retry the task.');
-      const effect = InboxEffectSchema.parse({ schemaVersion: 1, type: 'effect', canonicalId: first.id, batchHash: batchHash(members), members, status: 'prepared', analysisClaims, preparedClaims: prepared.claims, appliedClaims: [], disputes, trace, warnings: prepared.warnings, retiredPolicies: messages.filter((message) => message.message_type === 'policy_update' && message.policy.status === 'deprecated').map((message) => message.policy.id) });
+      const effect = InboxEffectSchema.parse({ schemaVersion: 1, type: 'effect', canonicalId: first.id, batchHash: batchHash(members), members, status: 'prepared', teamAuthorized: this.context.mode === 'team', syncClaims: prepared.syncClaims ?? [], analysisClaims, preparedClaims: prepared.claims, appliedClaims: [], disputes, trace, warnings: prepared.warnings, retiredPolicies: messages.filter((message) => message.message_type === 'policy_update' && message.policy.status === 'deprecated').map((message) => message.policy.id) });
       control.signal.throwIfAborted(); control.prepared();
       await this.write(effect); await this.references(effect); await this.applyLocked(effect);
       return { applied: effect.appliedClaims.length, warnings: effect.warnings };
@@ -150,7 +150,7 @@ export class InboxEffectStore {
     observeApplied(effect.preparedClaims, current, effect.appliedClaims);
     if (analysisIsStale(effect.analysisClaims, claimChanges(effect.analysisClaims, effect.preparedClaims, effect.appliedClaims, current))) {
       effect.warnings.push(STALE_PLAN_WARNING); this.context.logger.warn(STALE_PLAN_WARNING);
-      effect.preparedClaims = []; effect.disputes = []; effect.analysisClaims = current;
+      effect.preparedClaims = []; effect.syncClaims = []; effect.disputes = []; effect.analysisClaims = current;
       await this.write(effect);
     }
     for (const target of [...effect.preparedClaims].sort((a, b) => Number(a.status === 'deprecated') - Number(b.status === 'deprecated'))) {
@@ -159,11 +159,15 @@ export class InboxEffectStore {
     }
     if (effect.trace !== null) { effect.trace.output_claims = effect.appliedClaims.map((claim) => claim.id); await new TraceStore(this.context).write(effect.trace); }
     for (const dispute of effect.disputes) await new DisputeStore(this.context).write(dispute);
-    if (this.context.mode === 'team') {
+    if (effect.teamAuthorized === undefined && this.context.mode === 'team') {
+      const warning = '旧 Inbox 事务缺少团队共享授权，仅恢复本地效果。'; effect.warnings.push(warning); this.context.logger.warn(warning);
+    }
+    if (effect.teamAuthorized === true && this.context.mode === 'team') {
       const uploads = new UploadStore(this.context);
       for (const policy of effect.retiredPolicies) await uploads.withdrawPolicy(policy);
       const actual = await new ClaimStore(this.context).list();
-      await uploads.enqueue(effect.appliedClaims.filter((claim) => actual.some((value) => sameClaim(value, claim))), effect.disputes, true);
+      const staged = [...new Map([...effect.appliedClaims, ...effect.syncClaims ?? []].map((claim) => [claim.id, claim])).values()];
+      await uploads.enqueue(staged.filter((claim) => actual.some((value) => sameClaim(value, claim))), effect.disputes, true);
     }
     effect.status = 'applied'; await this.write(effect);
     for (const member of effect.members) await new InboxStore(this.context).completeSnapshotLocked(member.message);

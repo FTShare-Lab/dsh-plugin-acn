@@ -6,10 +6,10 @@ const config = { memoryCharLimit: 200, userCharLimit: 100, safetyScan: true };
 describe('private Memory operations', () => {
   it('adds delimited, trimmed entries and counts Unicode scalars and separator characters', () => {
     const result = applyMemoryOps({ memory: '  first  ', user: '' }, config, [{ op: 'add', target: 'memory', entry: '  中文😀  ' }]);
-    expect(result.next.memory).toBe('first\n\n§\n\n中文😀'); expect(result.result.memory_chars).toBe(13); expect(result.result.target_entries).toEqual(['first', '中文😀']);
+    expect(result.next.memory).toBe('first\n§\n中文😀'); expect(result.result.memory_chars).toBe(11); expect(result.result.target_entries).toEqual(['first', '中文😀']);
   });
   it('deduplicates a snapshot without writing the raw document', () => {
-    const raw = { memory: ' a\n§\na § b § ', user: ' u § u' }; const snapshot = snapshotTexts(raw, config); expect(snapshot.memory_entries).toEqual(['a', 'b']); expect(snapshot.memory_text).toBe('a\n\n§\n\nb'); expect(raw.memory).toContain('a § b');
+    const raw = { memory: ' a\n§\na § b § ', user: ' u § u' }; const snapshot = snapshotTexts(raw, config); expect(snapshot.memory_entries).toEqual(['a', 'b']); expect(snapshot.memory_text).toBe('a\n§\nb'); expect(raw.memory).toContain('a § b');
   });
   it('uses Unicode White_Space trimming without treating a format marker as whitespace', () => {
     expect(snapshotTexts({ memory: '\u0085first\u0085 § \u3000second\u3000', user: '' }, config).memory_entries).toEqual(['first', 'second']);
@@ -30,7 +30,13 @@ describe('private Memory operations', () => {
   });
   it.each(['memory', 'user'] as const)('capacity failure distinguishes stored %s entries from the uncommitted batch', (target) => {
     try { applyMemoryOps({ memory: 'first', user: 'first' }, { ...config, memoryCharLimit: 6, userCharLimit: 6 }, [{ op: 'replace', target, old_text: 'first', new_text: 'edited' }, { op: 'add', target, entry: 'second' }]); throw new Error('Expected capacity failure.'); }
-    catch (error) { expect(error).toBeInstanceOf(MemoryError); expect(String(error)).toContain('no operations were applied'); expect((error as MemoryError).details).toEqual({ target, applied: false, current: 5, proposed: 17, cap: 6, need_free: 11, current_entries: ['first'], usage: '5/6' }); }
+    catch (error) { expect(error).toBeInstanceOf(MemoryError); expect(String(error)).toContain('no operations were applied'); expect((error as MemoryError).details).toEqual({ target, applied: false, current: 5, proposed: 15, cap: 6, need_free: 9, current_entries: ['first'], usage: '5/6' }); }
+  });
+  it('keeps a full-size two-entry document valid when updating USER or applying no operations', () => {
+    const memory = `${'a'.repeat(798)}\n§\n${'b'.repeat(799)}`; const limits = { ...config, memoryCharLimit: 1600 };
+    expect(applyMemoryOps({ memory, user: '' }, limits, []).result).toMatchObject({ memory_chars: 1600, no_op: true });
+    const result = applyMemoryOps({ memory, user: '' }, limits, [{ op: 'add', target: 'user', entry: 'Prefer concise answers.' }]);
+    expect(result.next.memory).toBe(memory); expect(result.result.memory_chars).toBe(1600);
   });
   it('renders capacity, entry counts, separators and empty prompt blocks', () => { expect(renderMemoryBlock('memory', [], 8000)).toBe(''); expect(renderMemoryBlock('user', ['用户偏好简洁'], 4000)).toContain('USER PROFILE (who the user is) [0% — 6/4,000 chars]'); });
   it.each([

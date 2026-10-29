@@ -22,7 +22,7 @@ export const MemoryReportSchema = z.strictObject({ memory_chars: z.number().int(
 export class MemoryError extends KnowledgeError {
   constructor(kind: 'validation' | 'safety' | 'conflict', message: string, readonly details: Record<string, z.infer<ReturnType<typeof z.json>>> = {}) { super(kind, message); this.name = 'MemoryError'; }
 }
-export const MEMORY_SEPARATOR = '\n\n§\n\n';
+export const MEMORY_SEPARATOR = '\n§\n';
 const trim = (text: string): string => text.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, '');
 export const entries = (text: string): string[] => [...new Set(text.split('§').map(trim).filter(Boolean))];
 export const renderEntries = (values: readonly string[]): string => values.join(MEMORY_SEPARATOR);

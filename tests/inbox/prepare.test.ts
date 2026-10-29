@@ -62,6 +62,6 @@ describe('Inbox preparation', () => {
   it('withdrawal changes direct dependents only and preserves monotonically increasing timestamps', () => {
     const policy = PolicyIdSchema.parse('policy_00000001'); const direct = sampleClaim({ source_claim_ids: [policy], updated_at: '2027-01-01T00:00:00Z' }); const already = sampleClaim({ id: ClaimIdSchema.parse('claim_00000002'), status: 'deprecated', source_claim_ids: [policy] }); const indirect = sampleClaim({ id: ClaimIdSchema.parse('claim_00000003'), source_claim_ids: [direct.id] });
     const retired = deprecatePolicyClaims(policy, [direct, already, indirect], '2026-01-01T00:00:00Z');
-    expect(retired).toHaveLength(1); expect(retired[0]).toMatchObject({ id: direct.id, status: 'deprecated', updated_at: '2027-01-01T00:00:01Z' });
+    expect(retired).toHaveLength(2); expect(retired[0]).toMatchObject({ id: direct.id, status: 'deprecated', updated_at: '2027-01-01T00:00:01Z' }); expect(retired[1]).toEqual(already);
   });
 });

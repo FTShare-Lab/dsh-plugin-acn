@@ -52,15 +52,15 @@ describe('transcript persistence', () => {
       expect(await fs.readdir(store.context.paths.transcriptPending('session-a'))).toEqual([]);
     } finally { await fs.rm(root, { recursive: true, force: true }); }
   });
-  it('excludes notices and replacement summaries; truncates tool text and replaces attachments', () => {
+  it('excludes notices and replacement summaries; keeps full public tool text and replaces attachments', () => {
     const message = createUserMessage({ content: [{ type: 'text', text: 'notice' }], source: { kind: 'acn-claim-changes' } });
     const user = { seq: SessionSeq(1), time: 1, type: 'user/message' as const, surfaceOp: 'append' as const, data: message };
     expect(projectEvent(user)).toEqual({});
     expect(projectEvent({ ...user, surfaceOp: { op: 'replace', startSeq: SessionSeq(0), endSeq: SessionSeq(0) } })).toEqual({});
     const result = createToolResultMessage({ content: [{ type: 'text', text: '😀'.repeat(4500) }], callId: ToolCallId('call-a'), isError: false });
     const projected = projectEvent({ seq: SessionSeq(2), time: 2, type: 'tool/result', surfaceOp: 'append', data: { turn: 0, step: 0, message: result } });
-    expect(Array.from(projected.entry?.text ?? '')).toHaveLength(4000);
-    expect(projected.entry?.projection).toEqual({ truncated: true, original_chars: 4500, retained_chars: 4000 });
+    expect(Array.from(projected.entry?.text ?? '')).toHaveLength(4500);
+    expect(projected.entry?.projection).toEqual({ truncated: false, original_chars: 4500, retained_chars: 4500 });
     expect(compactionEnd({ type: 'compaction/summary', data: { shadowedRange: { start: 10, end: 3 }, shadowedSeqs: [10, 3] } })).toBe(10);
   });
   it('only complete tool bodies grant source visibility; private memory call results never enter transcript', async () => {

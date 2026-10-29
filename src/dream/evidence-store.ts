@@ -40,7 +40,12 @@ export class EvidenceStore {
       requireDream(config.evidenceCalibration, '证据校准未启用。');
       const prior = await this.read(); const versions = Object.fromEntries(claims.map((claim) => [claim.id, claimRevision(claim)]));
       requireDream(claims.length > 0 && claims.every((claim) => claim.holder === this.context.agentId && claim.confidence !== 'high' && claim.status !== 'deprecated'), '受限查证仅接受自身 medium/low 候选。');
-      if (prior !== null) { requireDream(prior.workspace_root === workspace && valueHash(prior.claim_versions) === valueHash(versions), '查证权限不能换工作区或 Claim 版本。'); return prior; }
+      if (prior !== null) {
+        requireDream(prior.workspace_root === workspace && Object.entries(prior.claim_versions).every(([id, revision]) => versions[id] === revision), '查证权限不能换工作区、删除原目标或更换 Claim 版本。');
+        // 候选可扩展原目标；保留既有回执和预算，只追加同一冻结范围的新授权。
+        if (valueHash(prior.claim_versions) !== valueHash(versions)) { prior.claim_versions = versions; await this.save(prior); }
+        return prior;
+      }
       const manifest: EvidenceManifest = { schemaVersion: 1, job_id: this.jobId, group_id: this.groupId, workspace_root: workspace, claim_versions: versions, receipts: {}, calls: 0, model_steps: 0, bytes_read: 0, files_examined: 0, limits: { calls: config.evidenceMaxCalls, steps: config.evidenceMaxSteps, bytes: config.evidenceMaxBytes, chars: config.evidenceMaxChars, files: config.evidenceMaxFiles }, completed: false };
       await this.save(manifest); return manifest;
     }, { signal });

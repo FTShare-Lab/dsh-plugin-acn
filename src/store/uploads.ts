@@ -14,6 +14,7 @@ import type { StoreContext } from './context.js';
 import { withFileLock } from './lock.js';
 import { removeFile } from './atomic.js';
 import { readYamlOr, writeYamlAtomic } from './yaml.js';
+import { RejectedDisputeStore, disputeVersion } from './rejected-disputes.js';
 
 export const ConsolidationDeliverySchema = z.object({ before: ClaimSchema, retired: ClaimSchema, carriers: z.array(ClaimSchema) });
 export const PendingUploadsSchema = z.object({
@@ -39,13 +40,14 @@ export class UploadStore {
     if (value.claims.length === 0 && value.disputes.length === 0 && !value.consolidations?.length && !value.acknowledgements?.length) await removeFile(this.context.paths.pendingUploads, this.context.logger);
     else await writeYamlAtomic(this.context.paths.pendingUploads, value, PendingUploadsSchema, this.context.logger);
   }
-  async modify(update: (current: PendingUploads) => PendingUploads): Promise<void> {
+  async modify(update: (current: PendingUploads) => PendingUploads | Promise<PendingUploads>): Promise<void> {
     if (this.context.mode === 'solo') return;
-    await withFileLock(this.context.paths.pendingUploadsLock, async () => { await this.persist(PendingUploadsSchema.parse(update(await this.read()))); }, { timeoutMs: this.context.lockTimeoutMs });
+    await withFileLock(this.context.paths.pendingUploadsLock, async () => { await this.persist(PendingUploadsSchema.parse(await update(await this.read()))); }, { timeoutMs: this.context.lockTimeoutMs });
   }
   async enqueue(claims: readonly Claim[], disputes: readonly Dispute[], durable = false, dependencies: readonly ConsolidationDelivery[] = []): Promise<void> {
     if (this.context.mode === 'solo') return;
-    await this.modify((pending) => {
+    await this.modify(async (pending) => {
+      const rejected = await new RejectedDisputeStore(this.context).read();
       const byClaim = new Map(pending.claims.map((claim) => [claim.id, claim]));
       let consolidations = pending.consolidations ?? [];
       for (const value of claims) {
@@ -61,6 +63,7 @@ export class UploadStore {
       const byDispute = new Map(pending.disputes.map((dispute) => [dispute.id, dispute]));
       for (const value of disputes) {
         const dispute = DisputeSchema.parse(value);
+        if (Object.hasOwn(rejected, disputeVersion(dispute))) continue;
         const existing = byDispute.get(dispute.id);
         if (existing === undefined || timestampNanos(dispute.created_at) >= timestampNanos(existing.created_at)) byDispute.set(dispute.id, dispute);
       }

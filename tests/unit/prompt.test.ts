@@ -10,7 +10,7 @@ import { flowHarness } from '../flow/harness.js';
 describe('knowledge templates', () => {
   it('restores scoped team retrieval and applicability discipline without adding host harness instructions', async () => {
     const render = await loadPromptRenderer(); const team = render('knowledge.j2', { agent_id: 'agent-a', team: true });
-    expect(team).not.toContain('团队传输接入前');
+    expect(team).not.toContain('团队传输接入前'); expect(team).not.toContain('插件不在 session 启动时注入'); expect(team).toContain('session 启动时 router 记录的团队 claim 范围快照');
     for (const phrase of ['mode="overview"', 'mode="query"', 'semantic_query', 'disputes', '异常路径', '版本快照', '不能盲目重试', '作为 `expected_revision`', '不改来源链、不写 dispute', '主路径成立不代表方案已经完整']) expect(team).toContain(phrase);
     expect(team).not.toContain('policy 是 maintainer');
     const solo = render('knowledge.j2', { agent_id: 'agent-a', team: false }); expect(solo).not.toContain('consult_router'); expect(solo).toContain('适用条件');

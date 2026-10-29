@@ -8,6 +8,7 @@ import { ClaimStore } from '../../src/store/claims.js';
 import { AcnKnowledge } from '../../src/knowledge/service.js';
 import { resolveConfig } from '../../src/config.js';
 import { ReportedSetStore } from '../../src/store/reported-sets.js';
+import { RejectedDisputeStore } from '../../src/store/rejected-disputes.js';
 import { withFileLock } from '../../src/store/lock.js';
 import { ClaimIdSchema, PolicyIdSchema } from '../../src/protocol/ids.js';
 import { DisputeSchema } from '../../src/protocol/dispute.js';
@@ -17,7 +18,54 @@ import { inboxFixture, teamServer } from './helpers.js';
 const claim = sampleClaim(); const other = sampleClaim({ id: ClaimIdSchema.parse('claim_00000002') });
 const dispute = (id = 'dispute_00000001') => DisputeSchema.parse({ id, name: 'retry_conflict', claims: [claim.id, other.id], summary: 'Different service evidence.', reporter_agent_id: 'agent-a', status: 'open', created_at: '2026-01-02T00:00:00Z' });
 describe('upload delivery', () => {
-  it('blocks stale team versions after solo edits without uploading private changes or losing pending disputes', async () => {
+  it('reports an existing-mirror Dispute even while its Claim update endpoint is failing', async () => {
+    const server = await teamServer((request) => ({ status: request.path === '/claims/upload' ? 503 : 200 }));
+    const fixture = await inboxFixture(undefined, { team: { routerEndpoint: server.endpoint, maintainerEndpoint: server.endpoint, retryCount: 0 } });
+    try {
+      const context = fixture.knowledge.context(); for (const value of [claim, other]) await new ClaimStore(context).write(value);
+      const queue = new UploadStore(context); await queue.enqueue([claim], [dispute()], true);
+      expect(await new UploadDelivery(context, fixture.knowledge.team).deliver()).toMatchObject({ deliveredClaims: 0, deliveredDisputes: 1, pendingClaims: 1, pendingDisputes: 0 });
+      expect(server.requests.map((request) => request.path)).toEqual(['/claims/upload', '/disputes/report']);
+      expect(await new ReportedSetStore(context).contains(dispute().claims)).toBe(true);
+    } finally { await fixture.close(); await server.close(); }
+  });
+  it('persists a 409 before queue removal and leaves a different report eligible', async () => {
+    const server = await teamServer(() => ({ status: 409 }));
+    const f = await inboxFixture(undefined, { team: { routerEndpoint: server.endpoint, maintainerEndpoint: server.endpoint, retryCount: 0 } });
+    try {
+      const context = f.knowledge.context(); const queue = new UploadStore(context); const rejected = dispute();
+      await queue.enqueue([], [rejected]);
+      const spy = vi.spyOn(UploadStore.prototype, 'removeDeliveredDisputes').mockRejectedValueOnce(new Error('Interrupted after rejection.'));
+      try { await expect(new UploadDelivery(context, f.knowledge.team).deliver()).rejects.toThrow('Interrupted'); } finally { spy.mockRestore(); }
+      expect(await new RejectedDisputeStore(context).contains(rejected)).toBe(true);
+      await new UploadDelivery(context, f.knowledge.team).deliver(); expect((await queue.read()).disputes).toEqual([]); expect(server.requests).toHaveLength(1);
+      await queue.enqueue([], [rejected]); expect((await queue.read()).disputes).toEqual([]);
+      const fresh = dispute('dispute_00000002'); await queue.enqueue([], [fresh]); expect((await queue.read()).disputes).toEqual([fresh]);
+      const revised = { ...rejected, summary: 'New independently confirmed conflict.' }; expect(await new RejectedDisputeStore(context).contains(revised)).toBe(false);
+    } finally { await f.close(); await server.close(); }
+  });
+  it('logs the Dispute identity when automatic delivery terminates a 409', async () => {
+    const server = await teamServer(() => ({ status: 409 }));
+    const f = await inboxFixture(undefined, { team: { routerEndpoint: server.endpoint, maintainerEndpoint: server.endpoint, retryCount: 0 } });
+    const scheduler = new UploadScheduler(f.knowledge);
+    try {
+      await new UploadStore(f.knowledge.context()).enqueue([], [dispute()]); scheduler.start(); await scheduler.flush();
+      expect(f.warnings.some((warning) => warning.includes(dispute().id) && warning.includes('已停止自动重试'))).toBe(true);
+    } finally { await scheduler.close(); await f.close(); await server.close(); }
+  });
+  it('stops retrying a terminal Dispute 409 without blocking other disputes or marking it delivered', async () => {
+    const rejected = dispute(); const accepted = { ...dispute('dispute_00000002'), claims: [ClaimIdSchema.parse('claim_00000003'), ClaimIdSchema.parse('claim_00000004')] };
+    const server = await teamServer((request) => ({ status: request.path === '/disputes/report' && JSON.stringify(request.body).includes(rejected.id) ? 409 : 200 }));
+    const f = await inboxFixture(undefined, { team: { routerEndpoint: server.endpoint, maintainerEndpoint: server.endpoint, retryCount: 0 } });
+    try {
+      const context = f.knowledge.context(); const queue = new UploadStore(context); const delivery = new UploadDelivery(context, f.knowledge.team);
+      await queue.enqueue([], [rejected, accepted], true);
+      const result = await delivery.deliver(); expect(result).toMatchObject({ deliveredDisputes: 1, pendingDisputes: 0 }); expect(result.warnings.join('')).toContain('已停止自动重试');
+      expect(await new ReportedSetStore(context).contains(rejected.claims)).toBe(false); expect(await new ReportedSetStore(context).contains(accepted.claims)).toBe(true);
+      await delivery.deliver(); expect(server.requests).toHaveLength(2);
+    } finally { await f.close(); await server.close(); }
+  });
+  it('blocks stale team versions after solo edits but reports disputes without uploading private changes', async () => {
     const server = await teamServer(() => ({}));
     const fixture = await inboxFixture(undefined, { team: { routerEndpoint: server.endpoint, maintainerEndpoint: server.endpoint, retryCount: 0 } });
     try {
@@ -30,13 +78,13 @@ describe('upload delivery', () => {
       expect((await new UploadStore(solo.context()).read()).claims).toEqual([]);
       expect((await queue.read()).claims).toEqual([claim]); expect(server.requests).toEqual([]);
       const result = await new UploadDelivery(context, fixture.knowledge.team).deliver();
-      expect(result).toMatchObject({ deliveredClaims: 0, deliveredDisputes: 0, pendingClaims: 1, pendingDisputes: 1 });
-      expect(result.warnings.join(' ')).toContain(claim.id); expect(server.requests).toEqual([]);
+      expect(result).toMatchObject({ deliveredClaims: 0, deliveredDisputes: 1, pendingClaims: 1, pendingDisputes: 0 });
+      expect(result.warnings.join(' ')).toContain(claim.id); expect(server.requests.map((request) => request.path)).toEqual(['/disputes/report']);
       expect((await queue.read()).claims).toEqual([claim]);
       const current = await fixture.knowledge.readClaim(claim.id);
       const confirmed = await fixture.knowledge.updateClaim({ id: claim.id, expected_revision: current.revision, evidence_summary: 'Team review confirms this claim should be retired.' });
       expect((await new UploadDelivery(context, fixture.knowledge.team).deliver()).deliveredClaims).toBe(1);
-      expect(server.requests[0]?.body).toMatchObject({ data: confirmed.claim });
+      expect(server.requests[1]?.body).toMatchObject({ data: confirmed.claim });
       expect((await queue.read()).claims).toEqual([]);
     } finally { await fixture.close(); await server.close(); }
   });
@@ -48,7 +96,7 @@ describe('upload delivery', () => {
       for (const value of [claim, other]) await new ClaimStore(context).write(value);
       await store.enqueue([claim, other], [dispute()], true); expect((await delivery.deliver()).pendingClaims).toBe(2); expect((await store.read()).disputes).toHaveLength(1); expect(await new ReportedSetStore(context).contains(dispute().claims)).toBe(false);
       available = true; const result = await delivery.deliver(); expect(result).toMatchObject({ deliveredClaims: 2, deliveredDisputes: 1, pendingClaims: 0, pendingDisputes: 0 }); await expect(fs.access(context.paths.pendingUploads)).rejects.toMatchObject({ code: 'ENOENT' });
-      expect(server.requests.filter((item) => item.path === '/disputes/report')).toHaveLength(1);
+      expect(server.requests.filter((item) => item.path === '/disputes/report')).toHaveLength(2);
     } finally { await fixture.close(); await server.close(); }
   });
   it('a service recovers during the idle timer and the existing durable queue is delivered automatically', async () => {

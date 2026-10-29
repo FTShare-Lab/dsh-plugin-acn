@@ -6,8 +6,8 @@ import { AgentIdSchema } from '../../../lib/protocol.js';
 import { AgentPaths, ClaimStore, UploadStore } from '../../../lib/store.js';
 import { DreamStore, DreamSync, DraftGroupSchema, expandDraft, reviewInput, ProgressSchema, CheckpointSchema } from '../../../lib/dream.js';
 
-const [root, jobId, stage, reviewMode] = process.argv.slice(2);
-const context = { paths: new AgentPaths(root), agentId: AgentIdSchema.parse('agent-a'), mode: 'team', logger: { warn() {}, debug() {} } };
+const [root, jobId, stage, reviewMode, mode] = process.argv.slice(2);
+const context = { paths: new AgentPaths(root), agentId: AgentIdSchema.parse('agent-a'), mode: mode ?? 'team', logger: { warn() {}, debug() {} } };
 const store = new DreamStore(context); const input = await new ClaimStore(context).list(); const [first, second] = input;
 if (!first || !second) throw new Error('Missing crash inputs.');
 process.on('message', () => {});

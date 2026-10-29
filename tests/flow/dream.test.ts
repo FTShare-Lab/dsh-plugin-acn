@@ -40,9 +40,9 @@ describe('Dream in production host', () => {
   });
   it('checks eligibility on agent creation, then honors disabled configuration', async () => {
     for (const enabled of [true, false]) {
-      const adapter = new ScriptAdapter([finishDream()]);
+      const adapter = new ScriptAdapter([finishDream(), finishDream()]);
       const f = await flowHarness(adapter, { dream: true, config: { llm: { provider: 'mock', model: 'mock' }, dream: { enabled, minChangedClaims: 1 } } });
-      try { const agent = await f.ctx.agents.create({ sessionId: SessionId('auto-session'), agentOptions: { provider: 'mock', model: 'mock' } }); const worker = f.knowledge.jobs; if (!worker) throw new Error('Missing worker.'); if (enabled) { await until(async () => (await worker.queue.list()).some((job) => job.kind === 'dream')); const job = (await worker.queue.list())[0]; if (!job) throw new Error('Missing job.'); await waitJob(worker.queue, job.id); expect(adapter.requests).toHaveLength(1); } else { expect((await f.ctx.commands.execute(agent.agent, '/dream', [], new AbortController().signal))?.result.kind).toBe('error'); expect(await worker.queue.list()).toEqual([]); } }
+      try { const agent = await f.ctx.agents.create({ sessionId: SessionId('auto-session'), agentOptions: { provider: 'mock', model: 'mock' } }); const worker = f.knowledge.jobs; if (!worker) throw new Error('Missing worker.'); if (enabled) { await until(async () => (await worker.queue.list()).some((job) => job.kind === 'dream')); const job = (await worker.queue.list())[0]; if (!job) throw new Error('Missing job.'); await waitJob(worker.queue, job.id); expect(adapter.requests).toHaveLength(2); } else { expect((await f.ctx.commands.execute(agent.agent, '/dream', [], new AbortController().signal))?.result.kind).toBe('error'); expect(await worker.queue.list()).toEqual([]); } }
       finally { await f.close(); }
     }
   });

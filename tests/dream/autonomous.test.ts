@@ -8,6 +8,8 @@ import { EvidenceStore } from '../../src/dream/evidence-store.js';
 import { DraftGroupSchema, ValidationSchema } from '../../src/dream/schema.js';
 import { nowSeconds } from '../../src/protocol/time.js';
 import { ClaimStore } from '../../src/store/claims.js';
+import { TraceStore } from '../../src/store/traces.js';
+import { TraceSchema } from '../../src/protocol/trace.js';
 import { candidate, claims, consolidationDraft, dreamFixture, qualityDraft, reviews, reviewSummary } from './helpers.js';
 import { calibrationDraft, calibrationReviews, material } from './evidence-helpers.js';
 import { z } from 'zod';
@@ -26,6 +28,93 @@ async function apply(session: DreamSession, groupId: string) {
   return session.execute('dream_apply_group', { group_id: groupId, validation_id: validation.validation_id, review: reviews(validation).semantic });
 }
 describe('autonomous Dream transactions', () => {
+  it('rejects a bad candidate batch atomically in memory and after the next admitted request', async () => {
+    const f = await fixture();
+    try {
+      const before = structuredClone(f.session.progress.entries);
+      await expect(f.session.execute('dream_record_candidates', { candidates: [candidate(f.initial.slice(0, 1)), { group_id: 'bad', claim_ids: ['claim_99999999'], kind: 'quality', reason: 'Unread candidate.' }] })).rejects.toThrow('完整展示');
+      expect(f.session.progress.entries).toEqual(before); expect(f.session.progress.discovery.candidates).toEqual([]);
+      await f.session.admitStep(); expect((await f.restore()).progress.entries).toEqual(before);
+      await expect(f.session.execute('dream_record_candidates', { candidates: [candidate(f.initial.slice(0, 1)), candidate(f.initial.slice(1, 2))] })).rejects.toThrow('重复');
+      expect(f.session.progress.entries).toEqual(before);
+    } finally { await f.close(); }
+  });
+  it('refines a current quality candidate into consolidation without dropping targets or reusing old validation', async () => {
+    const f = await fixture();
+    try {
+      await f.session.execute('dream_record_candidates', { candidates: [candidate(f.initial.slice(0, 1))] });
+      await f.session.execute('dream_stage_group', { group_id: 'group-a', group: qualityDraft(f.initial.slice(0, 1)) });
+      await f.session.execute('dream_validate', { group_id: 'group-a' });
+      await f.session.execute('dream_record_candidates', { candidates: [candidate(f.initial.slice(0, 2), 'consolidation')] });
+      expect(f.session.progress.entries[0]).toMatchObject({ validation: null, candidate: { kind: 'consolidation', claim_ids: f.initial.slice(0, 2).map((claim) => claim.id) } });
+      await expect(f.session.execute('dream_validate', { group_id: 'group-a' })).rejects.toThrow('候选已细化');
+      await expect(f.session.execute('dream_record_candidates', { candidates: [candidate(f.initial.slice(1, 2), 'consolidation')] })).rejects.toThrow('静默删除');
+      await f.session.execute('dream_stage_group', { group_id: 'group-a', group: consolidationDraft(f.initial.slice(0, 2)) });
+      expect(await apply(f.session, 'group-a')).toMatchObject({ executed: true });
+      await f.session.execute('dream_record_candidates', { candidates: [candidate(f.initial.slice(2), 'quality')] });
+      const resumed = await f.restore(); expect(resumed.progress.entries.filter((entry) => entry.status === 'pending')).toHaveLength(1);
+      expect(resumed.progress.entries[1]?.candidate.claim_ids).toEqual(f.initial.slice(2).map((claim) => claim.id));
+    } finally { await f.close(); }
+  });
+  it('reminds once before zero-exploration finish and preserves that reminder across recovery', async () => {
+    const f = await fixture();
+    try {
+      expect(await f.session.execute('dream_finish', { review: reviewSummary })).toMatchObject({ finished: false, confirmation_required: true });
+      expect(await f.knowledge.dreamStore().final(f.job.id)).toBeNull();
+      const resumed = await f.restore(); expect(resumed.progress.finish_reminder_sent).toBe(true);
+      expect(await resumed.execute('dream_finish', { review: reviewSummary })).toMatchObject({ finished: true });
+      expect(await new ClaimStore(f.knowledge.context()).list()).toEqual(f.initial);
+    } finally { await f.close(); }
+  });
+  it('extends evidence targets after a read without resetting receipts, limits or original versions', async () => {
+    const f = await fixture();
+    try {
+      const first = f.initial[0]; const second = f.initial[1]; if (first === undefined || second === undefined) throw new Error('Missing Claims.');
+      await f.session.execute('dream_record_candidates', { candidates: [candidate([first], 'evidence')] });
+      await f.session.execute('file_read', { path: 'source.txt', claim_ids: [first.id] });
+      const store = new EvidenceStore(f.knowledge.context(), f.job.id, 'group-a'); const before = await store.read(); if (before === null) throw new Error('Missing evidence manifest.');
+      await f.session.execute('dream_record_candidates', { candidates: [candidate([first, second], 'evidence')] });
+      const restored = await f.restore();
+      await restored.execute('file_read', { path: 'source.txt', claim_ids: [second.id] });
+      const after = await store.read(); if (after === null) throw new Error('Missing extended manifest.');
+      expect(after.calls).toBe(before.calls + 1); expect(after.bytes_read).toBeGreaterThan(before.bytes_read); expect(after.limits).toEqual(before.limits);
+      expect(after.receipts).toMatchObject(before.receipts); expect(Object.keys(after.claim_versions)).toEqual([first.id, second.id]);
+      await expect(store.initialize(f.workspace, [{ ...first, statement: 'Changed version.' }, second], f.knowledge.config.dream)).rejects.toThrow('Claim 版本');
+      await expect(store.initialize(f.workspace, [second], f.knowledge.config.dream)).rejects.toThrow('删除原目标');
+      expect(await store.read()).toEqual(after);
+      await restored.execute('dream_stage_group', { group_id: 'group-a', group: calibrationDraft([first, second], z.record(z.string(), z.json()).parse(after.receipts)) });
+      const validation = ValidationSchema.parse(await restored.execute('dream_validate', { group_id: 'group-a' }));
+      expect(await restored.execute('dream_apply_group', { group_id: 'group-a', validation_id: validation.validation_id, review: calibrationReviews(validation).semantic })).toMatchObject({ executed: true });
+    } finally { await f.close(); }
+  });
+  it('does not require a redundant finish confirmation after explicit exploration', async () => {
+    const f = await fixture();
+    try {
+      await f.session.execute('read_claim', { id: f.initial[0]?.id });
+      expect(await f.session.execute('dream_finish', { review: reviewSummary })).toMatchObject({ finished: true });
+    } finally { await f.close(); }
+  });
+  it('discovers related own Traces by Claim, pages the index and content, and rejects unrelated/private-agent history', async () => {
+    const f = await fixture();
+    try {
+      const claim = f.initial[0]; const unrelated = f.initial[1]; if (claim === undefined || unrelated === undefined) throw new Error('Missing Claims.');
+      const store = new TraceStore(f.knowledge.context());
+      for (const [id, agent, output] of [['trace_00000001', 'agent-a', claim.id], ['trace_00000002', 'agent-a', claim.id], ['trace_00000003', 'agent-a', unrelated.id], ['trace_00000004', 'agent-b', claim.id]]) {
+        await store.write(TraceSchema.parse({ id, name: 'checked_retry_boundary', task: 'TRACE_BODY_MARKER'.repeat(30), agent, input_claims: [], output_claims: [output], created_at: '2026-01-02T00:00:00Z' }));
+      }
+      await expect(f.session.execute('read_trace', { claim_id: 'claim_99999999' })).rejects.toThrow('先 read_claim');
+      await f.session.execute('read_claim', { id: claim.id });
+      const page = await f.session.execute('read_trace', { claim_id: claim.id, limit: 1 });
+      expect(page).toMatchObject({ next_offset: 1, omitted: 1, items: [{ id: 'trace_00000001' }], independent_evidence: false }); expect(JSON.stringify(page)).not.toContain('TRACE_BODY_MARKER');
+      expect(await f.session.execute('read_trace', { claim_id: claim.id, offset: 1, limit: 1 })).toMatchObject({ items: [{ id: 'trace_00000002' }] });
+      const content = await f.session.execute('read_trace', { claim_id: claim.id, trace_id: 'trace_00000001', limit: 20 });
+      expect(content).toMatchObject({ truncated: true, next_offset: 20, independent_evidence: false });
+      await expect(f.session.execute('read_trace', { claim_id: claim.id, trace_id: 'trace_00000003' })).rejects.toThrow('关联');
+      await expect(f.session.execute('read_trace', { claim_id: claim.id, trace_id: 'trace_00000004' })).rejects.toThrow('自身');
+      expect(await f.session.execute('read_trace', { id: 'trace_00000001' })).toMatchObject({ independent_evidence: false });
+      const restored = await f.restore(); expect(await restored.execute('read_trace', { claim_id: claim.id })).toMatchObject({ items: [{ id: 'trace_00000001' }, { id: 'trace_00000002' }], next_offset: null });
+    } finally { await f.close(); }
+  });
   it.each(['file_read', 'file_glob', 'file_grep'] as const)('revokes %s access when restoring with evidence calibration disabled', async (tool) => {
     const f = await fixture();
     try {
@@ -135,7 +224,7 @@ describe('autonomous Dream transactions', () => {
       const first = f.initial[0]; if (!first) throw new Error('Missing Claim.');
       const group = DraftGroupSchema.parse({ kind: 'quality', reason: 'Keep the same rule with a conservative rating.', operations: [{ id: first.id, action: 'update', changes: { confidence: 'medium' } }], change_basis: [{ claim_id: first.id, removed_or_changed: 'Rating only.', added: '', justification: 'Preserve the same facts.', evidence_ids: [] }] });
       await f.session.execute('dream_stage_group', { group_id: 'a', group }); await apply(f.session, 'a');
-      await f.session.execute('dream_record_candidates', { candidates: [candidate([first], 'evidence', 'b')] });
+      await expect(f.session.execute('dream_record_candidates', { candidates: [candidate([first], 'evidence', 'b')] })).rejects.toThrow('原始版本');
       await expect(f.session.execute('file_read', { path: 'source.txt', claim_ids: [first.id] })).rejects.toThrow();
     } finally { await f.close(); }
   });

@@ -23,6 +23,20 @@ import { newDraft, waitJob } from '../formation/helpers.js';
 import { inboxFixture, inboxMessage, arbitrationMessage, emptyInternalize, teamServer } from '../team/helpers.js';
 
 describe('Inbox sync and worker', () => {
+  it('reuploads an already-deprecated Policy dependent without a model call, new revision or Trace', async () => {
+    const server = await teamServer(() => ({}));
+    const fixture = await inboxFixture(() => Promise.reject(new Error('Policy withdrawal must be deterministic.')), { team: { routerEndpoint: server.endpoint, maintainerEndpoint: server.endpoint, retryCount: 0 } });
+    try {
+      const context = fixture.knowledge.context(); const message = inboxMessage(); message.policy.status = 'deprecated';
+      const local = sampleClaim({ status: 'deprecated', source_claim_ids: [message.policy.id] });
+      await new ClaimStore(context).write(local); await new InboxStore(context).acceptPulled(message);
+      const jobs = fixture.knowledge.jobs; if (!jobs) throw new Error('Missing worker.'); await jobs.start();
+      const result = await waitJob(jobs.queue, (await fixture.inbox.enqueue(false)).id);
+      expect(result.result).toMatchObject({ handled: 1, applied: 0, uploadedClaims: 1 });
+      expect(server.requests.filter((request) => request.path === '/claims/upload').map((request) => request.body)).toMatchObject([{ data: local }]);
+      expect(await new ClaimStore(context).read(local.id)).toEqual(local); expect(await new TraceStore(context).list()).toEqual([]);
+    } finally { await fixture.close(); await server.close(); }
+  });
   it('reanalyses the original inbox batch after a concurrent edit before any effect or done marker', async () => {
     const local = sampleClaim(); let calls = 0; let release: (() => void) | undefined;
     const gate = new Promise<void>((resolve) => { release = resolve; });

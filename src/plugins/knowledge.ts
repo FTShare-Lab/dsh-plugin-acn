@@ -26,7 +26,7 @@ export const Config = Schema.object({
     timeoutMs: number(15_000), retryCount: number(3), retryBaseDelayMs: number(500), retryMaxDelayMs: number(8000),
   }),
   llm: Schema.object({ provider: Schema.string().default(''), model: Schema.string().default(''), maxOutputTokens: number(32_768), timeoutMs: number(600_000), structuredRetries: number(5) }),
-  catalog: Schema.object({ maxClaims: number(200), maxChars: number(24_000) }),
+  catalog: Schema.object({ maxClaims: number(20), maxChars: number(24_000) }),
   formation: Schema.object({ recapOnCompaction: boolean(true), idleRecap: boolean(true), recapMinTurns: number(10), recapMinTokens: number(100_000), recapBatchIdleMinutes: number(5), recapTailIdleMinutes: number(60), recapScanSeconds: number(30), finalizeIdleMinutes: number(0), finalizeOnDispose: boolean(false) }),
   inbox: Schema.object({ pullOnSessionStart: boolean(true), processingStaleAfterSecs: number(600) }),
   dream: Schema.object({ enabled: boolean(true), minIntervalHours: number(24), minChangedClaims: number(5), checkIntervalHours: number(4), evidenceCalibration: boolean(false), maxModelSteps: number(24), maxWrapUpSteps: number(3), evidenceMaxCalls: number(32), evidenceMaxSteps: number(24), evidenceMaxBytes: number(1_048_576), evidenceMaxChars: number(16_000), evidenceMaxFiles: number(256) }),

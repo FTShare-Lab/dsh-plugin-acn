@@ -17,6 +17,10 @@ describe('background model output budget', () => {
 });
 
 describe('Recap trigger defaults', () => {
+  it('defaults to a twenty-entry catalog without overriding an explicit larger catalog', () => {
+    expect(resolveConfig({}).catalog.maxClaims).toBe(20); expect(resolveConfig(HostConfig({})).catalog.maxClaims).toBe(20);
+    expect(resolveConfig({ catalog: { maxClaims: 200 } }).catalog.maxClaims).toBe(200);
+  });
   it('keeps domain and host defaults aligned, with legacy Finalize triggers opt-in', () => {
     const expected = { recapOnCompaction: true, idleRecap: true, recapMinTurns: 10, recapMinTokens: 100_000, recapBatchIdleMinutes: 5, recapTailIdleMinutes: 60, recapScanSeconds: 30, finalizeIdleMinutes: 0, finalizeOnDispose: false };
     expect(resolveConfig({}).formation).toEqual(expected);

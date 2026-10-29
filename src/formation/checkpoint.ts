@@ -15,7 +15,7 @@ import { TraceSchema } from '../protocol/trace.js';
 import { deriveTraceId } from '../protocol/ids.js';
 import { nowSeconds } from '../protocol/time.js';
 import { STALE_PLAN_WARNING, AnalysisChanged, analysisIsStale, claimChanges, observeApplied, sameClaim, ensureKnowledgeReady } from '../knowledge/alignment.js';
-import { reportedClaimSetKey } from '../store/reported-sets.js';
+import { newDisputes } from '../knowledge/disputes.js';
 import { StoreError } from '../store/errors.js';
 import { JobError } from '../worker/types.js';
 import type { Claim } from '../protocol/claim.js';
@@ -27,7 +27,7 @@ export const CheckpointSchema = z.strictObject({
   schemaVersion: z.literal(1), sessionId: z.string().regex(/^[a-zA-Z0-9_-]+$/), jobId: z.string().regex(/^[a-zA-Z0-9_-]+$/), kind: z.enum(['recap', 'finalize']),
   fromSeq: z.number().int().min(-1), untilSeq: z.number().int().nonnegative(), status: z.enum(['prepared', 'applied']),
   analysisClaims: z.array(ClaimSchema).nullable(), preparedClaims: z.array(ClaimSchema), appliedClaims: z.array(ClaimSchema),
-  disputes: z.array(DisputeSchema), trace: TraceSchema.nullable(), warnings: z.array(z.string()),
+  teamAuthorized: z.boolean().optional(), disputes: z.array(DisputeSchema), trace: TraceSchema.nullable(), warnings: z.array(z.string()),
 });
 export type FormationCheckpoint = z.infer<typeof CheckpointSchema>;
 export class FormationStore {
@@ -80,10 +80,9 @@ export class FormationStore {
       }
       const trace = claims.length === 0 && usedClaimIds.length === 0 ? null : TraceSchema.parse({ id: traceId, name: traceName, task: input.task, agent: this.context.agentId, input_claims: usedClaimIds, output_claims: claims.map((claim) => claim.id), created_at: createdAt });
       const existingDisputes = await new DisputeStore(this.context).list();
-      const sets = new Set(existingDisputes.map((dispute) => reportedClaimSetKey(dispute.claims)));
-      const uniqueDisputes = disputes.filter((dispute) => { const key = reportedClaimSetKey(dispute.claims); if (sets.has(key)) return false; sets.add(key); return true; });
+      const uniqueDisputes = await newDisputes(this.context, disputes, existingDisputes);
       if (uniqueDisputes.some((dispute) => existingDisputes.some((value) => value.id === dispute.id))) throw new JobError('id_collision', 'Dispute ID 冲突；请重试本次形成任务。');
-      const checkpoint = CheckpointSchema.parse({ schemaVersion: 1, sessionId: input.sessionId, jobId: input.jobId, kind: input.kind, fromSeq: input.fromSeq, untilSeq: input.untilSeq, status: 'prepared', analysisClaims: input.analysisClaims, preparedClaims: claims, appliedClaims: [], disputes: uniqueDisputes, trace, warnings });
+      const checkpoint = CheckpointSchema.parse({ schemaVersion: 1, sessionId: input.sessionId, jobId: input.jobId, kind: input.kind, fromSeq: input.fromSeq, untilSeq: input.untilSeq, status: 'prepared', teamAuthorized: this.context.mode === 'team', analysisClaims: input.analysisClaims, preparedClaims: claims, appliedClaims: [], disputes: uniqueDisputes, trace, warnings });
       // JS 同步边界先声明 prepared 所有权，取消与持久化开始只能一方获胜。
       control.signal.throwIfAborted(); control.prepared();
       await this.write(checkpoint);
@@ -114,7 +113,8 @@ export class FormationStore {
     }
     for (const dispute of checkpoint.disputes) await new DisputeStore(this.context).write(dispute);
     // 队列也属于可恢复本地效果：先知识锁再上传锁，prepared 到 applied 之间不留补传缺口。
-    if (this.context.mode === 'team') {
+    if (checkpoint.teamAuthorized === undefined && this.context.mode === 'team') checkpoint.warnings.push('旧形成事务缺少团队共享授权，仅恢复本地效果。');
+    if (checkpoint.teamAuthorized === true && this.context.mode === 'team') {
       const actual = await new ClaimStore(this.context).list();
       await new UploadStore(this.context).enqueue(checkpoint.appliedClaims.filter((claim) => actual.some((value) => sameClaim(value, claim))), checkpoint.disputes, true);
     }

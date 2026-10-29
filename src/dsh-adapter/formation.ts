@@ -11,7 +11,7 @@ function text(blocks: readonly ContentBlock[]): string {
 }
 function projectedResult(seq: number, content: string): NonNullable<Projection['entry']> {
   const chars = Array.from(content);
-  return { seq, type: 'tool_result', text: chars.slice(0, 4000).join(''), projection: { truncated: chars.length > 4000, original_chars: chars.length, retained_chars: Math.min(4000, chars.length) } };
+  return { seq, type: 'tool_result', text: content, projection: { truncated: false, original_chars: chars.length, retained_chars: chars.length } };
 }
 function bodySources(value: unknown): string[] {
   if (Array.isArray(value)) return value.flatMap((item: unknown) => bodySources(item));

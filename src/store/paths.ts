@@ -21,6 +21,7 @@ export class AgentPaths {
   get uploads(): string { return join(this.root, 'maintainer_uploads'); }
   get pendingUploads(): string { return join(this.uploads, 'pending.yaml'); }
   get pendingUploadsLock(): string { return join(this.uploads, 'pending.lock'); }
+  get rejectedDisputes(): string { return join(this.uploads, 'rejected_disputes.yaml'); }
   get deliveryLock(): string { return join(this.uploads, 'delivery.lock'); }
   get knowledgeLock(): string { return join(this.root, 'knowledge_apply.lock'); }
   get claimEditPending(): string { return join(this.root, 'claim_edit_pending.yaml'); }
