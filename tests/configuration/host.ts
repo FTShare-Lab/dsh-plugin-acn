@@ -61,6 +61,7 @@ try {
   assert.equal(entry.fiber.ctx.acnKnowledge.config.agentId, 'agent-a');
   assert.equal(entry.fiber.ctx.acnKnowledge.config.catalog.maxClaims, 37);
   assert.equal(entry.fiber.ctx.acnKnowledge.config.dream.evidenceCalibration, true);
+  assert.equal((await service.interact({ action: 'probe', provider: 'example', model: 'example-model' })).ok, true, 'The configuration service reaches the isolated runtime through the actual loader entry.');
   assert.match(await readFile(patch, 'utf8'), /Keep the profile comment/);
   assert.deepEqual(await service.save(request), { ok: false, code: 'conflict', fields: [] });
 

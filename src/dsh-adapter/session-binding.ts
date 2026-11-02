@@ -1,6 +1,6 @@
 // 身份切换后拒绝旧会话及其派生会话，防止旧上下文访问新身份的数据。
 import type { Context } from '@deepseek-ai/cordis';
-import type { SessionHeader } from '@deepseek-ai/dsh-session';
+import type { SessionHeader, SessionEvent } from '@deepseek-ai/dsh-session';
 import { appendPluginRecord, pluginRecordOf } from '@deepseek-ai/dsh-session';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
@@ -8,12 +8,37 @@ import type { ResolvedConfig } from '../config.js';
 import { agentHomePath } from '../store/paths.js';
 
 const BindingSchema = z.strictObject({ schemaVersion: z.literal(1), identity: z.string().regex(/^[0-9a-f]{64}$/) });
+export const SelectionSchema = z.strictObject({ schemaVersion: z.literal(1), key: z.string(), identity: z.string().regex(/^[0-9a-f]{64}$/), prepared: z.boolean().optional() });
+export type SessionSelection = z.infer<typeof SelectionSchema>;
 declare module '@deepseek-ai/dsh-session' {
-  interface PluginRecordMap { 'plugin:acn/session-binding': z.infer<typeof BindingSchema> }
+  interface PluginRecordMap { 'plugin:acn/session-binding': z.infer<typeof BindingSchema>; 'plugin:acn/team-selection': SessionSelection }
 }
 // 身份随宿主会话日志持久化和继承；缓存只避免每次门禁重新扫描历史。
 const bindings = new WeakMap<SessionHeader, string | null>();
-const identityOf = (config: ResolvedConfig): string => createHash('sha256').update(config.agentId === '' ? '' : agentHomePath(config.home, config.agentId)).digest('hex');
+export const identityOf = (config: ResolvedConfig): string => createHash('sha256').update(config.agentId === '' ? '' : agentHomePath(config.home, config.agentId)).digest('hex');
+const selections = new WeakMap<SessionHeader, SessionSelection | undefined>();
+function decodeSelection(value: unknown): SessionSelection {
+  const parsed = SelectionSchema.safeParse(value);
+  return parsed.success ? parsed.data : { schemaVersion: 1, key: 'invalid', identity: '0'.repeat(64) };
+}
+export function observeSelection(header: SessionHeader, event: SessionEvent): void {
+  const record = pluginRecordOf(event);
+  if (record?.type === 'plugin:acn/team-selection') selections.set(header, decodeSelection(record.data));
+}
+export function restoreSessionBinding(header: SessionHeader, events: readonly SessionEvent[]): void {
+  const records = events.map(pluginRecordOf);
+  const values = records.filter((record) => record?.type === 'plugin:acn/session-binding').map((record) => BindingSchema.safeParse(record?.data));
+  const first = values[0]; bindings.set(header, first?.success && values.every((value) => value.success && value.data.identity === first.data.identity) ? first.data.identity : null);
+  const selected = records.filter((record) => record?.type === 'plugin:acn/team-selection').at(-1);
+  selections.set(header, selected === undefined ? undefined : decodeSelection(selected.data));
+}
+export function sessionSelection(ctx: Context, header: SessionHeader): SessionSelection | undefined {
+  if (selections.has(header)) return selections.get(header);
+  const records = ctx.sessions.get(header.id)?.snapshotEvents().map(pluginRecordOf).filter((record) => record?.type === 'plugin:acn/team-selection') ?? [];
+  const last = records.at(-1);
+  const value = last === undefined ? undefined : decodeSelection(last.data);
+  selections.set(header, value); return value;
+}
 
 export function bindSession(ctx: Context, config: ResolvedConfig, header: SessionHeader): void {
   if (bindings.has(header)) return;
@@ -26,8 +51,11 @@ export function bindSession(ctx: Context, config: ResolvedConfig, header: Sessio
     bindings.set(header, first?.success && values.every((value) => value.success && value.data.identity === first.data.identity) ? first.data.identity : null);
     return;
   }
-  // 没有持久身份的旧日志无法证明归属；不能因重启后配置不同而自动改绑。
+  // 全新无 seed 的派生会话继承父会话选择，不能回退到基础身份。历史日志仍须自带记录。
   const parent = header.parentSession === undefined ? undefined : ctx.sessions.get(header.parentSession);
+  const parentSelection = parent === undefined ? undefined : sessionSelection(ctx, parent.header);
+  if (session.firstLiveSeq === 0 && sessionSelection(ctx, header) === undefined && parentSelection !== undefined) appendPluginRecord(session, 'plugin:acn/team-selection', parentSelection);
+  // 没有持久身份的旧日志无法证明归属；不能因重启后配置不同而自动改绑。
   // 全新子会话未必继承日志；只允许从当前已验证身份的父会话建立绑定。
   const verifiedParent = parent !== undefined && sessionAllowed(ctx, config, parent.header);
   if (session.firstLiveSeq > 0 || (header.parentSession !== undefined || header.isSeeded) && !verifiedParent) { bindings.set(header, null); return; }
@@ -42,7 +70,10 @@ export const configurationBusy = 'ACN 配置正在应用，请稍后重试。';
 export function sessionAllowed(ctx: Context, config: ResolvedConfig, header: SessionHeader): boolean {
   // 未配置时没有可暴露的 ACN 数据，不干预宿主原有会话。
   if (config.agentId === '') return true;
+  if (config.team.routerEndpoint && !config.legacyEnabled) return false;
   const identity = identityOf(config);
+  const selected = sessionSelection(ctx, header);
+  if (selected !== undefined && selected.identity !== identity) return false;
   const bound = bindings.get(header);
   if (bound !== identity) return false;
   if (config.sessionEpoch === 0) return true;

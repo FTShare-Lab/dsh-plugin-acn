@@ -10,10 +10,20 @@ const endpoint = z.string().refine((value) => {
   catch { return false; }
 });
 
+export const ConnectionSchema = z.strictObject({
+  id: z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/).refine((id) => !['personal', 'legacy'].includes(id)),
+  name: z.string().trim().min(1).max(80), enabled: z.boolean().default(true), agentId: AgentIdSchema,
+  routerEndpoint: endpoint.refine(Boolean), maintainerEndpoint: endpoint.refine(Boolean),
+  keyEnv: z.string().regex(/^(?:[A-Za-z_][A-Za-z0-9_]*)?$/).default(''), timeoutMs: positive().default(15_000),
+});
+export type Connection = z.infer<typeof ConnectionSchema>;
+
 export const ConfigSchema = z.strictObject({
   agentId: z.union([z.literal(''), AgentIdSchema]).default(''),
   home: z.string().trim().min(1).default('~/.acn-dsh'),
   sessionEpoch: nonnegative().default(0),
+  connections: z.array(ConnectionSchema).max(50).default([]),
+  defaultConnection: z.string().default(''), legacyEnabled: z.boolean().default(true), showCompletion: z.boolean().default(true),
   team: z.strictObject({
     routerEndpoint: endpoint.default(''), maintainerEndpoint: endpoint.default(''),
     keyEnv: z.string().regex(/^(?:[A-Za-z_][A-Za-z0-9_]*)?$/).default(''),
@@ -47,6 +57,8 @@ export const ConfigSchema = z.strictObject({
     review: z.strictObject({ enabled: z.boolean().default(true), intervalTurns: positive().default(10), maxTranscriptChars: positive().max(128_000).default(32_000) }).prefault({}),
   }).prefault({}),
 }).superRefine((config, ctx) => {
+  if (new Set(config.connections.map((item) => item.id)).size !== config.connections.length) ctx.addIssue({ code: 'custom', path: ['connections'], message: 'Connection identifiers must be unique.' });
+  if (config.defaultConnection !== '' && config.defaultConnection !== 'legacy' && !config.connections.some((item) => item.id === config.defaultConnection && item.enabled)) ctx.addIssue({ code: 'custom', path: ['defaultConnection'], message: 'Default connection must be enabled.' });
   if (Boolean(config.team.routerEndpoint) !== Boolean(config.team.maintainerEndpoint)) ctx.addIssue({ code: 'custom', path: ['team'], message: 'Configure both team endpoints or neither.' });
   if (Boolean(config.llm.provider.trim()) !== Boolean(config.llm.model.trim())) ctx.addIssue({ code: 'custom', path: ['llm'], message: 'Configure both provider and model or neither.' });
   if (config.team.retryMaxDelayMs < config.team.retryBaseDelayMs) ctx.addIssue({ code: 'custom', path: ['team', 'retryMaxDelayMs'], message: 'Maximum retry delay must not be smaller than the base delay.' });

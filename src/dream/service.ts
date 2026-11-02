@@ -62,13 +62,13 @@ export class AcnDream {
     if (dreamEligible(this.knowledge.config.dream, await this.knowledge.dreamStore().state(), (await this.knowledge.snapshot()).claims, this.knowledge.context().agentId, false)) await worker.enqueue('dream', { manual: false, workspace_root: await this.workspace() });
   }
   private async workspace(input?: string): Promise<string> { return fs.realpath(input ?? await this.options.workspace?.() ?? process.cwd()); }
-  async request(workspace?: string): Promise<Job> {
+  async request(workspace?: string, sessionId?: string): Promise<Job> {
     if (!this.knowledge.config.dream.enabled) throw new JobError('disabled', 'Dream 已关闭，请先启用 dream.enabled。');
     const worker = this.knowledge.jobs; if (worker === null) throw new JobError('unconfigured', '请先配置 agentId。');
     this.stopped = false; const pending = await worker.queue.pauseDream(false); worker.wake(true);
     if (pending[0] !== undefined) return pending[0];
     if (!dreamEligible(this.knowledge.config.dream, await this.knowledge.dreamStore().state(), (await this.knowledge.snapshot()).claims, this.knowledge.context().agentId, true)) throw new JobError('empty', '没有可整理的自身 active/stale Claim。');
-    return worker.enqueue('dream', { manual: true, workspace_root: await this.workspace(workspace) });
+    return worker.enqueue('dream', { manual: true, workspace_root: await this.workspace(workspace) }, sessionId);
   }
   async stop(): Promise<number> { this.stopped = true; const worker = this.knowledge.jobs; if (worker === null) return 0; const jobs = await worker.queue.pauseDream(true); worker.cancelDream(new DreamStopped()); return jobs.length; }
   private async boundary(job: Job, control: JobControl): Promise<void> {

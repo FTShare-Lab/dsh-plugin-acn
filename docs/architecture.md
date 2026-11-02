@@ -1,11 +1,13 @@
 # 当前架构
 
-`acn-knowledge` 是唯一配置承载行，发布 `acnKnowledge` 领域服务。八个领域组件隔离 `acnKnowledge` / `acnFormation` / `acnInbox` / `acnDream` / `acnMemory`，其他七行注册工具、提示词、后台处理器和命令。未配置身份时只提供状态命令。第九行 `acn-configuration` 使用包根入口，独立承载网页配置 Remote，避免知识重载中断保存请求。
+`acn-knowledge` 是唯一配置承载行，发布 `acnKnowledge` 领域服务和 `acnRuntime` 连接池。八个领域组件隔离 `acnRuntime` / `acnKnowledge` / `acnFormation` / `acnInbox` / `acnDream` / `acnMemory`，其他七行注册工具、提示词、后台处理器和命令。未配置身份时只提供状态命令。第九行 `acn-configuration` 使用包根入口，独立承载网页配置 Remote，避免知识重载中断保存请求。
 
 | 模块 | 当前职责 |
 | --- | --- |
-| `configuration.ts`、`client/` | 常用字段投影、保留高级参数、双语配置表单与并发冲突提示 |
+| `configuration.ts`、`interaction.ts`、`client/` | 常用字段与具名连接、ACN 插件设置、会话工具栏、知识及活动、结果展示 |
 | `dsh-adapter/configuration-*` | 严格 Remote 协议与宿主 profile 编辑器，保存前及文件锁内检查配置版本 |
+| `dsh-adapter/runtime-pool.ts` | 按会话持久归属分配领域服务，首次同步门禁、组件生命周期、独立存储与冻结快照 |
+| `dsh-adapter/interaction-service.ts`、`store/presentation.ts` | 只读知识/活动、显式连接检查及重试、终态版本展示回执 |
 | `protocol/` | 规范 DTO、ID、时间、revision |
 | `store/` | 实体文件、原子写、跨进程锁、租约、队列、编辑恢复和私有文档 |
 | `knowledge/service.ts` | Claim / Trace 浏览、修订、形成批次提交、知识版本与变化事件 |
@@ -24,6 +26,12 @@
 | `llm/structured.ts` | schema 提示、结构 / 传输重试、取消与无正文审计 |
 | `llm/response.ts` | 识别显式推理结束边界后的完整 JSON 对象，之后仍执行全部结构与领域校验 |
 | `plugins/`、`dsh-adapter/` | 宿主生命周期、严格模型 schema、工具策略与注册 |
+
+网页设置注册在宿主 `settings.section`，会话工具栏使用 `conversation.input.left`。`plugin:acn/team-selection` 记录连接 ID、身份摘要及首次同步完成标记。输入框阻塞只是交互反馈，后端请求准入仍独立检查身份与首次准备。历史只读使用 `sessionController.inspect`，显式操作才恢复 Agent；恢复历史不会因此拉取收件。新建无 seed 的派生会话继承已记录的父选择，不能回落到个人空间；子代理继续只读 Claim，不能访问私有 Memory。
+
+连接池按需为每个连接创建独立领域对象、worker 和上传调度器。所有组件遵循各自行启用状态；禁用、重载时取消未固定任务并等待本地固定提交结束。个人存储和旧版全局团队目录不搬迁。普通文件工具保护整个配置数据根，包括尚未启动、停用及删除配置后仍保留的连接数据。
+
+知识和活动只读台账，不启动连接运行时；首次使用连接才初始化恢复和调度。结果展示回执只保存任务 ID、终态版本和升级基线，不保存正文；后台完成与用户看到结果分别记账。界面按来源、焦点和可见性过滤，真正绘制后才确认已展示。
 
 修订在 `knowledge_apply.lock` 内恢复旧编辑及已有 journal、重读正文、校验 holder 和 revision、验证新文本、推进更新时间，然后原子写正文。团队配置下依次写 pending edit、正文、持久队列，再删除 pending；锁外触发 HTTP 投递。单人模式跳过全部团队文件操作。
 

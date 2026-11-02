@@ -12,9 +12,10 @@ import { connectArchives } from '../dsh-adapter/formation-archive.js';
 
 declare module '@deepseek-ai/cordis' { interface Context { acnFormation: AcnFormation } }
 export const name = 'acn-formation';
-export const inject = ['acnKnowledge', 'agents', 'sessions', 'llm'];
+export const inject = ['acnKnowledge', 'acnRuntime', 'agents', 'sessions', 'llm'];
 export async function apply(ctx: Context): Promise<void> {
   if (!ctx.acnKnowledge.configured) return;
+  ctx.effect(() => ctx.acnRuntime.component('formation'));
   const knowledge = ctx.acnKnowledge;
   const worker = knowledge.jobs;
   if (worker === null) return;
@@ -22,6 +23,7 @@ export async function apply(ctx: Context): Promise<void> {
     try { await ctx.llm.prepareCall(route, AbortSignal.timeout(15_000)); return true; } catch { return false; }
   });
   ctx.provide('acnFormation', service);
+  if (!knowledge.active) { ctx.effect(() => () => service.close()); return; }
   ctx.on('session/event', (session, event) => {
     if (sessionAllowed(ctx, knowledge.config, session.header) && !isSubagent(session.header)) {
       const projection = projectEvent(event); const until = compactionEnd(event);

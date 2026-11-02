@@ -23,6 +23,14 @@ async function setup(disabled = false) {
 afterEach(async () => { vi.restoreAllMocks(); await Promise.all(active.splice(0).map((f) => f.close())); });
 
 describe('private filesystem permissions', () => {
+  it('protects stored private files of a connection before its runtime has ever been activated', async () => {
+    const { call, f } = await setup();
+    const path = join(f.knowledge.config.home, 'connections', 'unused-team', 'agents', 'member-b', 'memories', 'USER.md');
+    await fs.mkdir(dirname(path), { recursive: true }); await fs.writeFile(path, 'UNUSED_TEAM_PRIVATE_MARKER');
+    expect(await call('read', { file_path: path })).toMatchObject({ isError: true });
+    expect(await call('glob', { path: join(f.knowledge.config.home, 'connections'), pattern: '**/*' })).toMatchObject({ isError: true });
+    expect(await fs.readFile(path, 'utf8')).toBe('UNUSED_TEAM_PRIVATE_MARKER');
+  });
   it.each([false, true])('protects read/write/edit/search with Memory disabled=%s and permits normal workspace tools', async (disabled) => {
     const { call, paths, workspace } = await setup(disabled);
     const read = await call('read', { file_path: 'notes.txt' }); expect(read, JSON.stringify(read)).toMatchObject({ isError: false });

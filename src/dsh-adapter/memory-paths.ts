@@ -7,6 +7,7 @@ import type {} from '@deepseek-ai/dsh-working-directory';
 import type { ToolExecution } from '@deepseek-ai/dsh-tools';
 import { createHash } from 'node:crypto';
 import type { AcnKnowledge } from '../knowledge/service.js';
+import { agentHomePath } from '../store/paths.js';
 import { hasCode } from '../store/errors.js';
 
 const fileTools = new Set(['read', 'read_image', 'write', 'edit', 'grep', 'glob', 'str_replace_editor']);
@@ -29,7 +30,7 @@ async function searchHasAliases(root: string, signal: AbortSignal): Promise<bool
 export function protectMemoryPaths(ctx: Context, knowledge: AcnKnowledge): void {
   const validated = new WeakMap<object, { fingerprint: string; cwd: string }>();
   const targetAllowed = async (target: FsTarget, recursive: boolean, signal?: AbortSignal): Promise<boolean> => {
-    const mapped = ctx.fs.processPathFromHostPath(dirname(knowledge.context().paths.root)); if (mapped === undefined) return true;
+    const mapped = ctx.fs.processPathFromHostPath(dirname(dirname(agentHomePath(knowledge.config.home, 'private-root')))); if (mapped === undefined) return true;
     const root = await ctx.fs.resolve(mapped, signal === undefined ? {} : { signal });
     return !ctx.fs.contains(root, target) && !(recursive && ctx.fs.contains(target, root));
   };

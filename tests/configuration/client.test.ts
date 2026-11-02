@@ -3,9 +3,10 @@ import { Context } from '@deepseek-ai/cordis';
 import * as Gateway from '@deepseek-ai/dsh-api-gateway/client';
 import TypertRegistry from '@deepseek-ai/dsh-typert-registry';
 import type { ReactElement } from 'react';
+import { createElement } from 'react';
 import { expect, it, vi } from 'vitest';
 import * as Client from '../../src/plugins/client.js';
-import type { ConfigurationPageProps } from '../../src/client/ConfigurationPage.js';
+import type { TeamSettingsProps } from '../../src/client/TeamSettingsPage.js';
 import { configurationValues } from '../../src/configuration.js';
 import type { ConfigurationSnapshot } from '../../src/configuration.js';
 import { zh } from '../../src/client/locales.js';
@@ -13,7 +14,7 @@ import type { ConfigurationText } from '../../src/client/locales.js';
 
 it('mounts and injects its namespace before the page calls the real client Remote', async () => {
   const ctx = new Context();
-  let component: (() => ReactElement<ConfigurationPageProps>) | undefined;
+  let component: (() => ReactElement) | undefined;
   const snapshot: ConfigurationSnapshot = { revision: 'current', values: configurationValues({}), models: [], active: true, dataDirectory: '' };
   const call = vi.fn().mockResolvedValue({ ok: true, value: snapshot });
   // 仅替换网络和界面宿主；服务注册、命名空间授权与参数编码由真实 Gateway 执行。
@@ -21,7 +22,7 @@ it('mounts and injects its namespace before the page calls the real client Remot
   ctx.provide('locale', { register: () => () => {}, bind: () => (key: ConfigurationText) => zh[key] } as unknown as Context['locale']);
   ctx.provide('slots', {
     inject: (_name: string, apply: () => () => void) => apply(),
-    register: (_declaration: unknown, render: () => ReactElement<ConfigurationPageProps>) => { component = render; return () => { component = undefined; }; },
+    register: (_declaration: unknown, render: () => ReactElement) => { component = render; return () => { component = undefined; }; },
   } as unknown as Context['slots']);
   try {
     await ctx.plugin(TypertRegistry);
@@ -29,7 +30,14 @@ it('mounts and injects its namespace before the page calls the real client Remot
     const fiber = ctx.plugin(Client); await fiber;
     await expect.poll(() => component).toBeDefined();
     if (component === undefined) throw new Error('Expected a configuration page.');
-    const api = component().props.api;
+    // 真实渲染由 React 拥有 hooks；只截获注册时的元素，验证其宿主 API 编码。
+    let captured: TeamSettingsProps | undefined;
+    const react = await import('react-dom/server');
+    const original = await import('../../src/client/TeamSettingsPage.js');
+    const spy = vi.spyOn(original, 'TeamSettingsPage').mockImplementation((props) => { captured = props; return createElement('div'); });
+    try { react.renderToString(createElement(component)); } finally { spy.mockRestore(); }
+    if (captured === undefined) throw new Error('Expected team settings.');
+    const api = captured.api;
     expect(await api.read()).toEqual(snapshot);
     expect(call).toHaveBeenCalledWith('/api', 'acnConfiguration/read', { args: {} }, expect.any(AbortSignal));
     call.mockResolvedValueOnce({ ok: true, value: { ok: true, snapshot } });

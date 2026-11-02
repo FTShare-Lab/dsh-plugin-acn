@@ -58,14 +58,14 @@ export class FormationStore {
       }
     }
   }
-  async commit(input: { sessionId: string; jobId: string; kind: 'recap' | 'finalize'; fromSeq: number; untilSeq: number; analysisClaims: Claim[]; prepared: PreparedFormation; task: string }, control: JobControl): Promise<{ applied: boolean; warnings: string[] }> {
+  async commit(input: { sessionId: string; jobId: string; kind: 'recap' | 'finalize'; fromSeq: number; untilSeq: number; analysisClaims: Claim[]; prepared: PreparedFormation; task: string }, control: JobControl): Promise<{ applied: boolean; warnings: string[]; claimCount: number; disputeCount: number; traceCount: number }> {
     return withFileLock(this.context.paths.knowledgeLock, async () => {
       await new DreamStore(this.context).recoverLocked();
       await ensureKnowledgeReady(this.context.paths.root);
       await new ClaimEditStore(this.context).recoverLocked();
       await this.recoverLocked();
       const state = await this.transcript.state(input.sessionId);
-      if (processedThrough(state) >= input.untilSeq) return { applied: false, warnings: [] };
+      if (processedThrough(state) >= input.untilSeq) return { applied: false, warnings: [], claimCount: 0, disputeCount: 0, traceCount: 0 };
       control.signal.throwIfAborted();
       const { claims, disputes, usedClaimIds, warnings } = input.prepared;
       // 尚未 prepared 时可以安全重新分析，不能消耗原对话区间来掩盖并发失效。
@@ -87,7 +87,7 @@ export class FormationStore {
       control.signal.throwIfAborted(); control.prepared();
       await this.write(checkpoint);
       await this.applyLocked(checkpoint);
-      return { applied: true, warnings: checkpoint.warnings };
+      return { applied: true, warnings: checkpoint.warnings, claimCount: checkpoint.appliedClaims.length, disputeCount: checkpoint.disputes.length, traceCount: checkpoint.trace === null ? 0 : 1 };
     }, { timeoutMs: this.context.lockTimeoutMs });
   }
   private async applyLocked(checkpoint: FormationCheckpoint): Promise<void> {

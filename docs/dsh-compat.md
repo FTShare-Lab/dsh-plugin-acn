@@ -14,7 +14,9 @@
 | tools DSL、renderer、最终 guard | 原生 / 程序桥工具结果、权限与路径门禁 |
 | `llm.prepareCall`、stream、BlockAssembler | 宿主模型路由、结构化后台调用及取消 |
 | `agents.create` setup / dispose | 隔离只读证据子会话、专属系统上下文与预算 |
-| `dsh.client`、`plugins.bundle.config`、ModuleLoader | 网页入口、插件详情表单、宿主共享 React |
+| `dsh.client`、`plugins.bundle.config`、`settings.section`、ModuleLoader | 配置入口与ACN 插件设置，宿主共享 React |
+| `conversation.input.left`、conversation blocks、`uiWorkspace.openSession` | 会话团队选择、首次准备反馈、知识活动与返回来源 |
+| `sessionController.inspect` / `resolveAgent` | 只读历史与显式恢复分离，不因浏览启动同步 |
 | Typert Remote / Gateway、`configEditor.edit` | 宿主认证、严格入参、profile 文件锁、原子写和普通字段重载 |
 | `workspaceRegistry.archiveSession`、`archivedSessionIds` | 归档前冻结范围，归档后暂停；包裹公开方法，卸载时恢复。宿主升级需重验普通及停止归档 |
 | `commands.register` | 命令不进入普通模型历史，贡献随依赖卸载撤销 |

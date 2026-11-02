@@ -14,12 +14,14 @@ import { RouteSchema } from '../formation/transcript.js';
 
 declare module '@deepseek-ai/cordis' { interface Context { acnInbox: AcnInbox } }
 export const name = 'acn-inbox';
-export const inject = ['acnKnowledge', 'agents', 'sessions', 'llm'];
+export const inject = ['acnKnowledge', 'acnRuntime', 'agents', 'sessions', 'llm'];
 export async function apply(ctx: Context): Promise<void> {
   const knowledge = ctx.acnKnowledge;
   if (!knowledge.configured) return;
+  ctx.effect(() => ctx.acnRuntime.component('inbox'));
   const service = new AcnInbox(knowledge, structuredBackend(ctx), await loadPromptRenderer());
   ctx.provide('acnInbox', service);
+  if (!knowledge.active) { ctx.effect(() => () => service.close()); return; }
   let pending = Promise.resolve();
   const schedule = (action: () => Promise<unknown>) => {
     pending = pending.then(action).then(() => undefined).catch(() => { ctx.logger.warn('Could not persist an Inbox trigger or background model route.'); });
@@ -30,7 +32,7 @@ export async function apply(ctx: Context): Promise<void> {
     if (route !== undefined) schedule(() => withFileLock(`${knowledge.context().paths.lastRoute}.lock`, () => writeYamlAtomic(knowledge.context().paths.lastRoute, route, RouteSchema, knowledge.logger)));
   });
   ctx.on('agent/created', ({ agent, source }) => {
-    if (sessionAllowed(ctx, knowledge.config, agent.session.header) && !isSubagent(agent.session.header) && knowledge.config.inbox.pullOnSessionStart && (source === 'startup' || source === 'resume')) schedule(() => service.enqueue());
+    if (sessionAllowed(ctx, knowledge.config, agent.session.header) && !isSubagent(agent.session.header) && knowledge.config.inbox.pullOnSessionStart && (source === 'startup' || source === 'resume')) schedule(() => service.enqueue(true, agent.session.id));
   });
   ctx.effect(() => async () => { await service.close(); await pending; });
   await service.start();

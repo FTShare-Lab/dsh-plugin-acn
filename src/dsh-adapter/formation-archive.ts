@@ -3,7 +3,7 @@ import type { Context } from '@deepseek-ai/cordis';
 import type {} from '@deepseek-ai/dsh-workspace';
 import type { AcnFormation } from '../formation/service.js';
 
-export async function connectArchives(ctx: Context, formation: AcnFormation): Promise<void> {
+export async function connectArchives(ctx: Context, formation: Pick<AcnFormation, 'beginArchive' | 'cancelArchive' | 'archived' | 'reconcileArchives'>): Promise<void> {
   const registry = ctx.workspaceRegistry;
   const original = registry.archiveSession.bind(registry);
   const own = Object.getOwnPropertyDescriptor(registry, 'archiveSession');

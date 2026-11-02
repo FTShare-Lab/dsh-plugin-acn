@@ -2,11 +2,17 @@
 import { z } from 'zod';
 import { createTypertRemoteInfo } from '@deepseek-ai/dsh-typert-protocol/remote-info';
 import { ConfigurationResultSchema, ConfigurationSnapshotSchema, SaveConfigurationSchema } from '../configuration.js';
+import { InteractionRequestSchema, InteractionResultSchema } from '../interaction.js';
 
 const request = { mode: 'strict' as const, typeSymbol: 'dsh-plugin-acn#SaveConfiguration', create: () => SaveConfigurationSchema };
 export const configurationRemote = createTypertRemoteInfo({
   package: 'dsh-plugin-acn',
   methods: {
+    'acnConfiguration/interact': {
+      service: 'acnConfiguration', invocation: { kind: 'direct' },
+      parameters: [{ name: 'request', source: 'json', codec: { mode: 'strict', typeSymbol: 'dsh-plugin-acn#InteractionRequest', create: () => InteractionRequestSchema }, strictCodec: { mode: 'strict', typeSymbol: 'dsh-plugin-acn#InteractionRequest', create: () => InteractionRequestSchema } }],
+      result: { mode: 'strict', typeSymbol: 'dsh-plugin-acn#InteractionResult', create: () => InteractionResultSchema },
+    },
     'acnConfiguration/read': {
       service: 'acnConfiguration', invocation: { kind: 'direct' }, parameters: [],
       result: { mode: 'strict', typeSymbol: 'dsh-plugin-acn#ConfigurationSnapshot', create: () => ConfigurationSnapshotSchema },

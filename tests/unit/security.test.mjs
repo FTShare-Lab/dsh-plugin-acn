@@ -61,8 +61,10 @@ describe('repository security scan', () => {
     try {
       await execute('git', ['init', '--quiet'], options);
       await writeFile(join(directory, 'README.md'), '# Example\n');
-      await execute('git', ['add', 'README.md'], options);
+      await writeFile(join(directory, 'obsolete.md'), '# Obsolete example\n');
+      await execute('git', ['add', 'README.md', 'obsolete.md'], options);
       await execute('git', ['-c', 'core.hooksPath=/dev/null', 'commit', '--no-gpg-sign', '--quiet', '-m', 'initial fixture'], options);
+      await rm(join(directory, 'obsolete.md'));
       const result = await execute(process.execPath, [script], options);
       expect(result.stdout).toContain('Repository security scan passed.');
       await writeFile(join(directory, 'README.md'), `${address}\n`);

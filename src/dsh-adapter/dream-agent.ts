@@ -4,7 +4,7 @@ import type { Context } from '@deepseek-ai/cordis';
 import type {} from '@deepseek-ai/dsh-agent';
 import type {} from '@deepseek-ai/dsh-system-prompt';
 import { createUserMessage } from '@deepseek-ai/dsh-llm';
-import { SessionId } from '@deepseek-ai/dsh-session';
+import { SessionId, appendPluginRecord } from '@deepseek-ai/dsh-session';
 import { defineTool } from '@deepseek-ai/dsh-tools';
 import { z } from 'zod';
 import { DreamTools, isDreamTool } from '../dream/autonomous.js';
@@ -41,7 +41,9 @@ export function autonomousDreamRunner(ctx: Context): AutonomousDreamRunner {
   return async ({ session, route, config, system, signal }) => {
     const requestDeadline = new AbortController(); const bounded = AbortSignal.any([signal, requestDeadline.signal]); let stepError: Error | undefined; let completed = false;
     let clearRequestTimeout = () => {};
-    const handle = await ctx.agents.create({ sessionId: SessionId(`acn-dream-${randomUUID()}`), meta: { cwd: session.workspace, origin: 'subagent', delegationDepth: 1, agentPreset: 'acn-dream' }, agentOptions: { ...route, maxTokens: config.maxOutputTokens }, signal: bounded, setup: (child) => {
+    const binding = ctx.get('acnRuntime')?.backgroundSelection(session.knowledge.config);
+    const handle = await ctx.agents.create({ sessionId: SessionId(`acn-dream-${randomUUID()}`), meta: { cwd: session.workspace, origin: 'subagent', delegationDepth: 1, agentPreset: 'acn-dream' }, agentOptions: { ...route, maxTokens: config.maxOutputTokens }, signal: bounded, setup: (child, agent) => {
+      if (binding !== undefined) appendPluginRecord(agent.session, 'plugin:acn/team-selection', binding);
       child.tools.restrict({ allow: [] }); child.tools.presentAs('native');
       child.tools.guard((execution) => dreamToolGuard(execution.name, execution.arguments));
       for (const name of Object.keys(DreamTools).filter(isDreamTool)) {

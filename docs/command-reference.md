@@ -81,7 +81,7 @@ Recap 和 Finalize 共用处理游标，已成功形成的区间不会再次调�
 
 配置两个团队 endpoint 后，模型可使用 `consult_router`：`{"mode":"overview"}` 发现 scope，再以 `{"mode":"query","scope":"service / retries","semantic_query":"bounded retry"}` 获取完整候选及关联 Dispute。query 的 scope 必填；overview 不能带 query 字段。概览是发现入口，候选正文才可作为来源引用。会话创建时冻结团队概览，resume/compact 沿用，clear 重建。
 
-启动与恢复会话时，Inbox 默认后台同步并排队内化，不向普通对话插入命令。用户也可执行 `/inbox`：显示拉取、持久化、ACK 和待内化数量以及任务 ID。通过 `/acn-status` 查看结果，失败后用 `/acn-status retry <job_id>` 重试。Inbox 没有自身会话路由，默认使用最近任意会话的请求路由；首次请求之前，可显式配置后台 provider/model。
+在网页中，首发前选择团队会等待收件同步和内化；只查看历史不会启动同步。实际继续工作时，Inbox 默认后台同步并排队内化，不向普通对话插入命令。用户也可执行 `/inbox`：显示拉取、持久化、ACK 和待内化数量以及任务 ID。通过 `/acn-status` 查看结果，失败后用 `/acn-status retry <job_id>` 重试。Inbox 没有自身会话路由，默认使用同一知识身份下最近会话的请求路由；首次显式同步会优先读取当前会话的待生效模型选择；也可显式配置后台 provider/model。
 
 Policy 是建议，只有内化后才改变本地 Claim。普通 Policy 可创建、修订或跳过；CAU 同时校验持有权、仲裁冻结上下文和相关 Policy 来源。连续同类消息合批，单 Policy CAU 可补充兼容归因，多 Policy 必须由模型明确指出相关来源。撤回 Policy 直接废弃依赖它的本地 Claim，不递归废弃间接下游。内化只读取 Policy、冻结 Claim 和本地 Claim，不读取私有 Memory / USER 或会话正文。
 
@@ -112,7 +112,7 @@ Dream 清理自身 Claim 中的纯一次性记录，或把同主题知识整理�
 
 Dream 通过 DSH 子会话自主发现候选、按需探索、暂存、校验、语义复核并逐组提交。复核必须解释每条输入的有效条件、例外、备选行动、版本和证据限制的去向，并核对最终名称与置信度。沿用原 ACN 的简洁逐 Claim 复核，不强制逐字复制原摘要；事实纠正与置信度提升仍须真实、适用且版本未变化的直接证据。
 
-默认插件激活、会话创建与每四小时检查一次；上次成功满 24 小时且至少五条不同的自有 Claim 版本变化后自动执行。`/dream` 跳过时间和数量门槛，已有排队、运行或暂停任务时继续原任务；failed 任务通过 `/acn-status retry <job_id>` 重试。`dream.enabled=false` 同时禁止自动和手动执行。路由使用最近任意会话的请求路由，或显式配置的 `llm.provider` / `llm.model`。子代理不能触发或停止 Dream。
+默认插件激活、会话创建与每四小时检查一次；上次成功满 24 小时且至少五条不同的自有 Claim 版本变化后自动执行。`/dream` 跳过时间和数量门槛，已有排队、运行或暂停任务时继续原任务；failed 任务通过 `/acn-status retry <job_id>` 重试。`dream.enabled=false` 同时禁止自动和手动执行。路由使用同一知识身份下最近会话的请求路由，或显式配置的 `llm.provider` / `llm.model`。子代理不能触发或停止 Dream。
 
 `/dream stop` 取消正在等待的模型调用或知识锁，保留候选、草稿和已提交组。已 prepared 的本地组先完成，再暂停；停止确认表示请求已记录，可通过状态页观察是否到达暂停点。再次 `/dream` 可继续用户主动停止的原任务，也可通过重新启用插件恢复。额度耗尽则走有限收尾并结束本次，不属于暂停；收尾结束会记录冷却，下次手动触发建立新任务。用户停止和未完成的故障恢复不会消耗成功冷却；高优先级知识任务可让尚未 prepared 的 Dream 让位。
 

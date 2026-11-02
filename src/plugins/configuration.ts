@@ -7,7 +7,7 @@ import { ConfigurationService } from '../dsh-adapter/configuration-service.js';
 export const name = 'acn-configuration';
 export function apply(ctx: Context): void {
   // 终端和最小测试宿主可以没有网页配置服务。
-  void ctx.inject(['configEditor', 'typert', 'llm', 'agents', 'tools'], (child) => {
+  void ctx.inject(['configEditor', 'typert', 'llm', 'agents', 'sessions', 'tools'], (child) => {
     child.effect(() => child.typert.register({ package: 'dsh-plugin-acn', face: 'host', schemas: [], model: { services: [], events: [], objects: [] }, invocations: configurationRemote.descriptors }));
     child.plugin(ConfigurationService);
   });

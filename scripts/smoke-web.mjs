@@ -111,11 +111,23 @@ const patches = [
 ];
 const patch = join(root, 'acceptance.yml'); await fs.writeFile(patch, stringify(patches));
 await fs.writeFile(join(root, 'profile.txt'), browserInstall ? 'Fresh profile awaiting browser installation and configuration. Credentials remain in the helper process environment.\n' : 'Fresh profile installed from the packed plugin. Credentials remain in the helper process environment.\n');
-const child = spawn(dsh, ['--profile', profile, '--patch', patch, '--no-open', '--port', '0'], { cwd: project, env, stdio: ['ignore', 'pipe', 'pipe'] });
-const log = await fs.open(join(root, 'web.log'), 'a', 0o600); let announced = false;
-for (const stream of [child.stdout, child.stderr]) stream.on('data', (chunk) => { void log.write(chunk); const match = chunk.toString().match(/https?:\/\/(?:127\.0\.0\.1|localhost):\d+[^\s]*/); if (match && !announced) { announced = true; process.stdout.write(JSON.stringify({ root, project, url: match[0], model_inspection: `http://127.0.0.1:${address.port}/acceptance` }) + '\n'); } });
-let closing = false;
+const log = await fs.open(join(root, 'web.log'), 'a', 0o600); let announced = false; let restarting = false; let closing = false;
+function startRuntime() {
+  const runtime = spawn(dsh, ['--profile', profile, '--patch', patch, '--no-open', '--port', '0'], { cwd: project, env, stdio: ['ignore', 'pipe', 'pipe'] });
+  for (const stream of [runtime.stdout, runtime.stderr]) stream.on('data', (chunk) => { void log.write(chunk); const match = chunk.toString().match(/https?:\/\/(?:127\.0\.0\.1|localhost):\d+[^\s]*/); if (match && !announced) { announced = true; process.stdout.write(JSON.stringify({ root, project, url: match[0], model_inspection: `http://127.0.0.1:${address.port}/acceptance` }) + '\n'); } });
+  runtime.once('exit', (code) => { if (!closing && !restarting) { process.stderr.write(`Web runtime exited ${code}; inspect ${join(root, 'web.log')}\n`); void close(); } });
+  return runtime;
+}
+let child = startRuntime();
+// 更新安装包后只重启验收宿主，保留环境凭据、团队服务、知识和会话，便于验证恢复。
+process.on('SIGUSR1', () => {
+  if (closing || restarting) return;
+  restarting = true;
+  void (async () => {
+    const previous = child; const exited = new Promise((done) => { if (previous.exitCode !== null || previous.signalCode !== null) done(); else previous.once('exit', done); }); previous.kill('SIGTERM'); await exited;
+    if (!closing) { announced = false; child = startRuntime(); }
+  })().catch(() => { process.stderr.write('Acceptance runtime restart failed.\n'); void close(); }).finally(() => { restarting = false; });
+});
 async function close() { if (closing) return; closing = true; child.kill('SIGTERM'); await new Promise((done) => { if (child.exitCode !== null || child.signalCode !== null) done(); else child.once('exit', done); }); server.closeAllConnections(); await new Promise((done) => { server.close(done); }); await log.close(); }
 process.once('SIGINT', () => { void close(); }); process.once('SIGTERM', () => { void close(); });
-child.once('exit', (code) => { if (!closing) { process.stderr.write(`Web runtime exited ${code}; inspect ${join(root, 'web.log')}\n`); void close(); } });
 process.stdout.write(JSON.stringify({ root, project, tarball: join(root, 'package', tarballs[0]), browserInstall, state: 'starting' }) + '\n');

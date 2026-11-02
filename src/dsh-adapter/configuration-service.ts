@@ -15,6 +15,8 @@ import { ConfigError } from '../config.js';
 import { configurationValues, mergeConfiguration, SaveConfigurationSchema } from '../configuration.js';
 import type { ConfigurationSnapshot, ConfigurationResult, ModelChoice, SaveConfiguration } from '../configuration.js';
 import { agentHomePath } from '../store/paths.js';
+import { executeInteraction } from './interaction-service.js';
+import type { InteractionRequest, InteractionResult } from '../interaction.js';
 
 declare module '@deepseek-ai/cordis' { interface Context { acnConfiguration: ConfigurationService } }
 
@@ -46,6 +48,12 @@ async function checkDirectory(path: string): Promise<void> {
 
 export class ConfigurationService extends TypertRemoteService {
   pending = 0;
+  interact(request: InteractionRequest): Promise<InteractionResult> {
+    if (this.pending > 0 && ['select', 'sync', 'retry'].includes(request.action)) return Promise.resolve({ ok: false, message: configurationBusy });
+    // Gateway 调用会重绑定 Service tracker；领域实例必须从配置行自己的隔离作用域取。
+    const pool = this.entry().fiber?.ctx.acnRuntime;
+    return executeInteraction(pool?.ctx ?? this.ctx, request, pool);
+  }
   constructor(ctx: Context) {
     super(ctx, 'acnConfiguration');
     ctx.on('agent/created', () => { if (this.pending > 0) throw new Error(configurationBusy); });
@@ -59,7 +67,7 @@ export class ConfigurationService extends TypertRemoteService {
   }
 
   private checkIdle(): void {
-    if (this.ctx.agents.list().some((agent) => agent.status === 'running')) throw new ConfigurationBusy();
+    if (this.ctx.agents.list().some((agent) => agent.status === 'running') || this.entry().fiber?.ctx.acnRuntime.preparing) throw new ConfigurationBusy();
   }
 
   private entry(): Entry {

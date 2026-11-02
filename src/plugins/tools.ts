@@ -7,7 +7,7 @@ import { isSubagent } from '../tools/subagent.js';
 import type {} from './knowledge.js';
 
 export const name = 'acn-tools';
-export const inject = ['acnKnowledge', 'tools'];
+export const inject = ['acnKnowledge', 'acnRuntime', 'tools'];
 export function apply(ctx: Context): void {
   if (!ctx.acnKnowledge.configured) return;
   const denied = (exec: Readonly<ToolExecution>): string | undefined => {
@@ -20,7 +20,7 @@ export function apply(ctx: Context): void {
     return reason === undefined ? next() : Promise.resolve({ kind: 'deny', reason });
   });
   ctx.tools.guard(denied);
-  ctx.tools.register(claimTool(ctx.acnKnowledge));
-  if (ctx.acnKnowledge.team !== null) ctx.tools.register(consultRouterTool(ctx.acnKnowledge));
+  ctx.tools.register(claimTool(ctx.acnKnowledge, (header) => ctx.acnRuntime.knowledge(header)));
+  if (ctx.acnKnowledge.team !== null || ctx.acnKnowledge.config.connections.some((connection) => connection.enabled)) ctx.tools.register(consultRouterTool(ctx.acnKnowledge, (header) => ctx.acnRuntime.knowledge(header)));
 }
 export default { name, inject, apply };

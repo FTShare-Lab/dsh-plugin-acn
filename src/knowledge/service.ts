@@ -29,6 +29,7 @@ import { InboxEffectStore } from '../inbox/effects.js';
 import { DreamStore } from '../dream/checkpoint.js';
 import { AnalysisReadBoundary } from './alignment.js';
 import { MemoryFileStore } from '../store/memory.js';
+import { PresentationStore } from '../store/presentation.js';
 
 import { nextClaimUpdateAt } from './timestamps.js';
 export { nextClaimUpdateAt } from './timestamps.js';
@@ -49,6 +50,7 @@ export class AcnKnowledge {
     this.team = this.agentId !== null && this.mode === 'team' ? new TeamFacade(config.team, this.agentId, logger) : null;
     this.jobs = this.storeContext === null ? null : new DurableWorker(this.storeContext);
   }
+  get active(): boolean { return this.mode === 'solo' || this.config.legacyEnabled; }
   get configured(): boolean { return this.agentId !== null; }
   teamStatus(): TeamStatus { return this.team?.status() ?? { mode: 'solo', router: { state: 'unknown' }, maintainer: { state: 'unknown' } }; }
   context(): StoreContext {
@@ -57,6 +59,7 @@ export class AcnKnowledge {
   }
   async initialize(): Promise<void> {
     if (!this.configured) return;
+    await new PresentationStore(this.context()).initialize();
     await cleanupAtomicTemps(this.context().paths.root, this.logger);
     await new MemoryFileStore(this.context()).recover();
     await new DreamStore(this.context()).recover();

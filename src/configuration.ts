@@ -1,6 +1,6 @@
 // 网页仅编辑常用配置；高级字段保留在原配置中，由同一领域校验器检查。
 import { z } from 'zod';
-import { resolveConfig } from './config.js';
+import { resolveConfig, ConnectionSchema } from './config.js';
 
 export const ConfigurationValuesSchema = z.strictObject({
   agentId: z.string().trim(), home: z.string().trim(),
@@ -8,6 +8,7 @@ export const ConfigurationValuesSchema = z.strictObject({
   mode: z.enum(['solo', 'team']),
   routerEndpoint: z.string().trim(), maintainerEndpoint: z.string().trim(), keyEnv: z.string().trim(),
   timeoutMs: z.number(),
+  legacyEnabled: z.boolean().optional(), connections: z.array(ConnectionSchema).optional(), defaultConnection: z.string().optional(), showCompletion: z.boolean().optional(),
 });
 export type ConfigurationValues = z.infer<typeof ConfigurationValuesSchema>;
 export const ModelChoiceSchema = z.strictObject({ provider: z.string(), providerName: z.string(), id: z.string(), name: z.string() });
@@ -32,6 +33,7 @@ export function configurationValues(raw: unknown): ConfigurationValues {
     mode: config.team.routerEndpoint === '' ? 'solo' : 'team',
     routerEndpoint: config.team.routerEndpoint, maintainerEndpoint: config.team.maintainerEndpoint,
     keyEnv: config.team.keyEnv, timeoutMs: config.team.timeoutMs,
+    legacyEnabled: config.legacyEnabled, connections: config.connections, defaultConnection: config.defaultConnection, showCompletion: config.showCompletion,
   };
 }
 
@@ -42,6 +44,10 @@ function record(value: unknown): Record<string, unknown> {
 export function mergeConfiguration(raw: Record<string, unknown>, values: ConfigurationValues): Record<string, unknown> {
   const next = {
     ...raw, agentId: values.agentId, home: values.home,
+    ...(values.legacyEnabled === undefined ? {} : { legacyEnabled: values.legacyEnabled }),
+    ...(values.connections === undefined ? {} : { connections: values.connections }),
+    ...(values.defaultConnection === undefined ? {} : { defaultConnection: values.defaultConnection }),
+    ...(values.showCompletion === undefined ? {} : { showCompletion: values.showCompletion }),
     llm: { ...record(raw.llm), provider: values.provider, model: values.model },
     team: {
       ...record(raw.team), timeoutMs: values.timeoutMs,

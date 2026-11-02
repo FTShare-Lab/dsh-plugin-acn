@@ -13,22 +13,25 @@ declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap { 'acn-claim-changes': { kind: 'acn-claim-changes' } }
 }
 export const name = 'acn-prompt';
-export const inject = ['acnKnowledge', 'systemPrompt', 'agents', 'sessions'];
+export const inject = ['acnKnowledge', 'acnRuntime', 'systemPrompt', 'agents', 'sessions'];
 export async function apply(ctx: Context): Promise<void> {
   const knowledge = ctx.acnKnowledge;
   if (!knowledge.configured) return;
+  ctx.effect(() => ctx.acnRuntime.component('prompt'));
+  if (!knowledge.active) return;
   const render = await loadPromptRenderer();
   const sessions = new KnowledgeSessions(knowledge);
   const pending = new Map<string, { sessionId: string; notice: ChangeAdmission }>();
   // 基线 persona 为 0、policy 为 500/600、首个工具段为 800，700/710 位于其间。
-  ctx.systemPrompt.section({ name: 'acn:knowledge', order: 700, interpolate: false, text: render('knowledge.j2', { agent_id: knowledge.agentId, team: knowledge.mode === 'team' }) });
-  ctx.systemPrompt.section({ name: 'acn:claim-catalog', order: 710, interpolate: false, text: ({ agent }) => agent === undefined ? '' : sessions.catalog(agent.session.id) });
+  ctx.systemPrompt.section({ name: 'acn:knowledge', order: 700, interpolate: false, text: ({ agent }) => agent !== undefined && !sessionAllowed(ctx, knowledge.config, agent.session.header) ? '' : render('knowledge.j2', { agent_id: knowledge.agentId, team: knowledge.mode === 'team' }) });
+  ctx.systemPrompt.section({ name: 'acn:claim-catalog', order: 710, interpolate: false, text: ({ agent }) => agent === undefined || !sessionAllowed(ctx, knowledge.config, agent.session.header) ? '' : sessions.catalog(agent.session.id) });
+  ctx.effect(() => ctx.acnRuntime.registerBaseline((id) => sessions.freeze(id, 'clear')));
   ctx.on('agent/created', async ({ agent, source }) => {
     if (!sessionAllowed(ctx, knowledge.config, agent.session.header) || isEvidenceAgent(agent.session.header)) return;
     await sessions.freeze(agent.session.id, source, agent.session.header.parentSession);
   });
   ctx.on('agent/pre-step', async ({ agent, signal }, next) => {
-    if (isEvidenceAgent(agent.session.header)) return next();
+    if (isEvidenceAgent(agent.session.header) || !sessionAllowed(ctx, knowledge.config, agent.session.header)) return next();
     const decision = await next();
     if (decision.kind === 'reject') return decision;
     signal.throwIfAborted();

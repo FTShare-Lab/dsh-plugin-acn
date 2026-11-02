@@ -17,12 +17,14 @@ import { RouteSchema } from '../formation/transcript.js';
 
 declare module '@deepseek-ai/cordis' { interface Context { acnDream: AcnDream } }
 export const name = 'acn-dream';
-export const inject = ['acnKnowledge', 'agents', 'sessions', 'llm', 'tools', 'systemPrompt'];
+export const inject = ['acnKnowledge', 'acnRuntime', 'agents', 'sessions', 'llm', 'tools', 'systemPrompt'];
 export async function apply(ctx: Context): Promise<void> {
   const knowledge = ctx.acnKnowledge; if (!knowledge.configured) return;
+  ctx.effect(() => ctx.acnRuntime.component('dream'));
   let pending = Promise.resolve();
   const render = await loadPromptRenderer();
   const service = new AcnDream(knowledge, structuredBackend(ctx), render, () => pending, { workspace: async () => { await pending; return readYamlOr(knowledge.context().paths.dreamWorkspace, z.string(), () => process.cwd()); }, run: autonomousDreamRunner(ctx) }); ctx.provide('acnDream', service);
+  if (!knowledge.active) { ctx.effect(() => () => service.close()); return; }
   ctx.on('session/event', (session, event) => {
     if (!sessionAllowed(ctx, knowledge.config, session.header) || isSubagent(session.header)) return;
     const route = projectEvent(event).route;

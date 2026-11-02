@@ -29,7 +29,9 @@ async function main() {
   const { stdout } = await promisify(execFile)('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z']);
   let count = 0;
   for (const path of stdout.split('\0').filter(Boolean)) {
-    const content = await readFile(path);
+    // 尚未暂存的文档删除仍在索引中；扫描工作区时跳过已不存在的文件。
+    let content;
+    try { content = await readFile(path); } catch (error) { if (error?.code === 'ENOENT') continue; throw error; }
     if (content.includes(0)) continue;
     for (const violation of findViolations(content.toString('utf8'))) {
       process.stderr.write(`${path}:${violation.line}: ${violation.kind}\n`);

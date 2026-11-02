@@ -4,6 +4,7 @@
       group: true
       isolate:
         acnKnowledge: true
+        acnRuntime: true
         acnFormation: true
         acnInbox: true
         acnDream: true

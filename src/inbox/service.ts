@@ -27,15 +27,15 @@ export class AcnInbox {
     const pending = operation(); this.active.add(pending);
     try { return await pending; } finally { this.active.delete(pending); }
   }
-  enqueue(synchronize = true): Promise<Job> {
+  enqueue(synchronize = true, sessionId?: string): Promise<Job> {
     this.stopping.signal.throwIfAborted();
     if (this.knowledge.jobs === null) throw new JobError('unconfigured', '请先配置 agentId。');
-    return this.knowledge.jobs.enqueue('inbox', { synchronize });
+    return this.knowledge.jobs.enqueue('inbox', { synchronize }, sessionId);
   }
-  async request(signal?: AbortSignal) {
+  async request(signal?: AbortSignal, sessionId?: string) {
     return this.track(async () => {
       const report = await syncInbox(this.knowledge.context(), this.knowledge.team, signal === undefined ? this.stopping.signal : AbortSignal.any([signal, this.stopping.signal]));
-      const job = await this.enqueue(false);
+      const job = await this.enqueue(false, sessionId);
       return { ...report, pending: (await new InboxStore(this.knowledge.context()).listPending()).length, jobId: job.id };
     });
   }

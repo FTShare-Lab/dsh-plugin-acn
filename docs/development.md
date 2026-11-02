@@ -44,7 +44,7 @@ export ACN_ACCEPTANCE_PROVIDER=your-provider
 pnpm smoke:web
 ```
 
-脚本默认使用 `deepseek-v4-flash-api`；可通过 `ACN_ACCEPTANCE_MODEL_ID` 选择该提供商下其他已配置模型。凭据只传给子进程，模型请求会访问所选提供商。脚本创建临时工作区、知识目录和 DSH profile，并输出网页地址；日常配置不变。停止脚本会结束其创建的服务。
+脚本默认使用 `deepseek-v4-flash-api`；可通过 `ACN_ACCEPTANCE_MODEL_ID` 选择该提供商下其他已配置模型。凭据只传给子进程，模型请求会访问所选提供商。脚本创建临时工作区、知识目录和 DSH profile，并输出网页地址；日常配置不变。停止脚本会结束其创建的服务。调试期间向该脚本进程发送 `SIGUSR1` 可只重启它创建的 DSH，保留测试服务与数据；新网页地址会再次输出。
 
 只验证安装与网页配置时使用：
 
@@ -59,6 +59,9 @@ ACN_WEB_INSTALL=browser pnpm smoke:web
 建议检查以下稳定行为，而不是只看任务是否显示成功：
 
 - 安装、启用、保存、重读草稿与重启后，身份、目录和模型配置符合预期。
+- 多个具名连接可检查、离线保存、停用和恢复；新会话默认单人、首发前选择并等待内化，首发后归属固定。
+- 首次同步失败阻止首发，后续同步失败允许普通工作；取消、热重载、冷历史读取和派生会话不改变归属。
+- 知识浏览不触发同步/模型；活动可查看来源、失败和重试。结果只在可见且有焦点的来源会话展示，重启不重复弹旧结果。
 - 完成一项小任务并 `/recap` 或 `/acn-finalize` 后，能从新会话检索 Claim、读取 Trace，并保留适用范围与未验证条件。
 - Memory 更新后，新会话读取新快照，原会话继续使用原快照；私有内容不直接进入 Claim 或团队上传。
 - 模型输出不合法、服务不可达或进程中断时，任务状态可解释，恢复后没有重复提交或丢失输入。
@@ -97,7 +100,7 @@ pnpm test:contract
 
 接入已经启动的测试服务时，为 `pnpm smoke:web` 同时提供 `ACN_WEB_TEAM_ROUTER`、`ACN_WEB_TEAM_MAINTAINER`，并用 `ACN_WEB_TEAM_KEY_ENV` 指定认证环境变量名。默认变量名为 `ACN_WEB_TEAM_CREDENTIAL`。少配一个 endpoint 会启动失败；凭据不写入配置文件。
 
-多个成员分别设置独立的 `ACN_WEB_HOME`、不同的 `ACN_WEB_AGENT_ID` 和对应凭据。可用 `ACN_WEB_SEED_CLAIM=false` 从空知识开始，避免多个成员生成同一个 seed ID。`ACN_WEB_TEAM_TIMEOUT_MS` 控制团队请求超时，默认 15000 毫秒。
+可在同一隔离 profile 的「ACN 插件设置 → 团队连接」页添加两条连接，分别使用不同成员 ID 与凭据变量；也可为多个进程分别设置独立的 `ACN_WEB_HOME`、不同的 `ACN_WEB_AGENT_ID` 和对应凭据。可用 `ACN_WEB_SEED_CLAIM=false` 从空知识开始，避免多个成员生成同一个 seed ID。`ACN_WEB_TEAM_TIMEOUT_MS` 控制团队请求超时，默认 15000 毫秒。
 
 团队检查应覆盖 A 形成并上传知识、B 检索和复用、冲突上报、Maintainer 给出建议、各成员 Inbox 内化、修订回传，以及 Dream 整理后的依赖交付。仲裁完成、建议送达和本地内化是不同阶段，应分别确认；服务断开后的补送也应检查。
 
