@@ -16,6 +16,7 @@
 | `agents.create` setup / dispose | 隔离只读证据子会话、专属系统上下文与预算 |
 | `dsh.client`、`plugins.bundle.config`、`settings.section`、ModuleLoader | 配置入口与ACN 插件设置，宿主共享 React |
 | `conversation.input.left`、conversation blocks、`uiWorkspace.openSession` | 会话团队选择、首次准备反馈、知识活动与返回来源 |
+| `sessionPersistence.list/open`、`sessions.list` | 同项目按创建时间选择最近普通会话的 upstream，只读历史，不恢复 Agent |
 | `sessionController.inspect` / `resolveAgent` | 只读历史与显式恢复分离，不因浏览启动同步 |
 | Typert Remote / Gateway、`configEditor.edit` | 宿主认证、严格入参、profile 文件锁、原子写和普通字段重载 |
 | `workspaceRegistry.archiveSession`、`archivedSessionIds` | 归档前冻结范围，归档后暂停；包裹公开方法，卸载时恢复。宿主升级需重验普通及停止归档 |

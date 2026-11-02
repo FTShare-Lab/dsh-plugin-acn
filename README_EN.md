@@ -16,6 +16,7 @@ This repository contains the TypeScript plugin, its web configuration page, mode
 | Recap and Finalize | Form knowledge through `/recap`, batch or tail idle periods, host compaction, and archive finalization; process increments and pause automatic work after archival |
 | Private Memory | Maintain `MEMORY.md` and `USER.md`, with frozen session snapshots, periodic reviews that prioritize dialogue, and no direct team upload |
 | Dream | Clean up and consolidate knowledge, trace its local provenance, and optionally check workspace files while preserving valid conditions and evidence limits |
+| Work configurations | Save multiple solo or team upstreams, inherit the newest conversation configuration per project, with a global fallback, and keep session ownership and private stores separate |
 | Team collaboration | Discover claims through ACN Router, deliver knowledge to Maintainer and internalize its suggestions locally |
 | Recovery and import | Resume interrupted background work and import existing ACN knowledge without overwriting targets |
 
@@ -28,15 +29,17 @@ pnpm install --frozen-lockfile
 pnpm pack --pack-destination .artifacts
 ```
 
-In DSH, open **Plugins**, expand **Add plugin**, choose the third-party installation option and enter the tarball's absolute path. Install, enable and open **agent-claim-network**. **Settings → ACN settings** and the plugin detail show the same tabs: **Personal**, **Team connections**, and **Knowledge and model**. Set the identity and directory on the Personal tab, then click **Save and apply**. A background model is saved only after its availability check succeeds. Add named team connections as needed. In the composer, open **ACN** to browse knowledge or recap. New sessions start in solo mode; select a team before the first message to enable **Sync Inbox**. Sync feedback appears outside the composer. That binding stays fixed after sending. **Reload saved configuration** discards unsaved edits.
+In DSH, open **Plugins**, add the tarball by its absolute local path, then enable **agent-claim-network**. **Settings → ACN settings** and the plugin detail share two tabs, **Work configurations** and **Knowledge and model**. Create a work configuration with an Agent ID; its display name is optional. The first configuration becomes the global default. New sessions inherit the configuration of the most recently created ordinary conversation in the same project. They fall back to the global default when no valid record is available. Users can change the selection before the first message; existing sessions and drafts retain their bindings. No project preference UI or additional host compatibility package is required.
 
-Solo mode needs no team services. Choose a stable ID such as `personal`; all projects using the same ID and directory share knowledge and private memory. Team members need distinct IDs matching their service authorization. Each named connection stores its member identity, both service URLs and the credential environment variable **name**, never its value. Connections have separate knowledge and private memory stores. First selection waits for Inbox processing; later sync failures provide recovery controls without blocking ordinary work.
+Each upstream can run solo or connect to team services. Enable team services in the existing configuration and supply both URLs and the credential environment variable name. The same Agent ID and local knowledge are retained. Team members use distinct IDs matching their authorization. A failed initial sync reports the problem and allows local work. Solo history is not automatically uploaded when joining. Changing team URLs keeps the pending queue, so eligible pending records may be delivered to the new service after activation. Create another upstream to isolate teams.
+
+Configuration edits take effect in newly started runtime instances; running sessions retain their starting clients. **Reload saved configuration** discards unsaved edits. New stores use `<home>/<upstream>/data/agents/<agentId>/`; existing installations retain their original directories through migration mappings.
 
 Chat and background models are selected separately from the models configured in DSH. Changing identity or storage location does not migrate data; start a new session after either change. Private memory review sends its input to the configured model provider, not to team services.
 
 ACN background tasks default to a 32,768-token output limit. Explicit `llm.maxOutputTokens` settings continue to take precedence; see the [configuration reference](docs/config.md).
 
-![ACN configuration page in DSH, Chinese UI](docs/assets/team-settings.jpg)
+![ACN configuration page in DSH, Chinese UI](docs/assets/upstream-settings.png)
 
 The declared DSH version range is `>=0.2.1-rc.2 <0.3.0`, with `0.2.1-rc.2` as the compatibility baseline. The package identifier is `dsh-plugin-acn`; the Chinese display name is **ACN记忆框架**.
 

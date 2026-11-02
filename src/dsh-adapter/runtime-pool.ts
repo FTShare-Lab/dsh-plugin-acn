@@ -1,11 +1,13 @@
 // 连接各自拥有领域服务和私有存储；会话记录决定路由，界面切换不会重绑定已开始的工作。
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import fs from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import type { Context } from '@deepseek-ai/cordis';
-import { appendPluginRecord } from '@deepseek-ai/dsh-session';
+import { appendPluginRecord, pluginRecordOf } from '@deepseek-ai/dsh-session';
+import type { PromptSection } from '@deepseek-ai/dsh-system-prompt';
 import type { SessionHeader, SessionEvent } from '@deepseek-ai/dsh-session';
 import { createUserMessage } from '@deepseek-ai/dsh-llm';
 import { z } from 'zod';
-import { resolveConfig } from '../config.js';
 import type { ResolvedConfig } from '../config.js';
 import { AcnKnowledge } from '../knowledge/service.js';
 import { KnowledgeSessions } from '../knowledge/sessions.js';
@@ -22,13 +24,16 @@ import { isSubagent, isEvidenceAgent } from '../tools/subagent.js';
 import { structuredBackend } from './llm.js';
 import { autonomousDreamRunner } from './dream-agent.js';
 import { compactionEnd, projectEvent } from './formation.js';
-import { identityOf, sessionAllowed, sessionSelection, restoreSessionBinding } from './session-binding.js';
+import { identityOf, sessionAllowed, sessionSelection, restoreSessionBinding, rememberConfiguration, runningConfiguration, forgetConfiguration, configurationActivation } from './session-binding.js';
 import { connectArchives } from './formation-archive.js';
 import { readYamlOr, writeYamlAtomic } from '../store/yaml.js';
 import { withFileLock } from '../store/lock.js';
+import { agentHomePath } from '../store/paths.js';
 import { RouteSchema } from '../formation/transcript.js';
 import { JobError } from '../worker/types.js';
 import type { SessionView } from '../interaction.js';
+import { recentProjectSelection } from './project-upstream.js';
+import { upstreamsOf, resolveUpstream, defaultUpstream } from '../upstreams.js';
 
 export interface Runtime {
   knowledge: AcnKnowledge; formation: AcnFormation; inbox: AcnInbox; dream: AcnDream; memory: AcnMemory;
@@ -42,9 +47,16 @@ type SyncState = { phase: 'ready' | 'syncing' | 'failed'; message: string; contr
 export class RuntimePool {
   private readonly runtimes = new Map<string, Promise<Runtime>>();
   private readonly ready = new Map<string, Runtime>();
+  private readonly workers = new Map<string, Runtime>();
+  private readonly preferredWorkers = new Map<string, string>();
+  private readonly retiredWorkers = new Set<Runtime>();
+  private starting = Promise.resolve();
+  private readonly instructions = new Map<string, string>();
   private render: Awaited<ReturnType<typeof loadPromptRenderer>> | undefined;
   private readonly syncs = new Map<string, SyncState>();
-  private readonly baselines = new Set<(id: string) => Promise<void>>();
+  private readonly syncTasks = new Map<string, Promise<void>>();
+  private readonly baselines = new Set<(id: string, fetchOverview?: boolean) => Promise<void>>();
+  private readonly baselineRenderers = new Map<(id: string, fetchOverview?: boolean) => Promise<void>, (header: SessionHeader) => Record<string, string>>();
   private readonly admissions = new Map<string, { id: string; runtime: Runtime; notice: ChangeAdmission }>();
   private readonly resumed = new Set<string>();
   private readonly attached = new Map<string, string>();
@@ -64,20 +76,29 @@ export class RuntimePool {
   }
   private enabled(name: RuntimeComponent): boolean { return (this.components.get(name)?.size ?? 0) > 0; }
   choices() {
-    const config = this.base.config;
-    return [
-      { key: 'personal', name: '单人模式', agentId: config.agentId, enabled: true, mode: 'solo' as const },
-      ...(this.base.mode === 'team' ? [{ key: 'legacy', name: '原有团队连接', agentId: config.agentId, enabled: config.legacyEnabled, mode: 'team' as const }] : []),
-      ...config.connections.map((item) => ({ key: item.id, name: item.name, agentId: item.agentId, enabled: item.enabled, mode: 'team' as const })),
-    ];
+    return Object.entries(upstreamsOf(this.base.config)).map(([key, item]) => ({ key, name: item.name || key, agentId: item.agentId, enabled: item.enabled, mode: item.routerEndpoint ? 'team' as const : 'solo' as const }));
   }
   config(key: string, includeDisabled = false): ResolvedConfig | undefined {
-    const base = this.base.config;
-    if (key === 'legacy') return this.base.mode === 'team' && (base.legacyEnabled || includeDisabled) ? base : undefined;
-    if (key === 'personal') return this.base.mode === 'solo' ? base : resolveConfig({ ...base, home: join(base.home, 'personal'), team: { ...base.team, routerEndpoint: '', maintainerEndpoint: '', keyEnv: '' }, connections: [], defaultConnection: '' });
-    const connection = base.connections.find((item) => item.id === key && (item.enabled || includeDisabled));
-    if (connection === undefined) return undefined;
-    return resolveConfig({ ...base, agentId: connection.agentId, home: join(base.home, 'connections', connection.id), sessionEpoch: 0, legacyEnabled: true, connections: [], defaultConnection: '', team: { ...base.team, routerEndpoint: connection.routerEndpoint, maintainerEndpoint: connection.maintainerEndpoint, keyEnv: connection.keyEnv, timeoutMs: connection.timeoutMs } });
+    const profiles = upstreamsOf(this.base.config);
+    const mapped = profiles[key] === undefined ? Object.keys(profiles).find((name) => profiles[name]?.legacyKey === key) : key;
+    return mapped === undefined ? undefined : resolveUpstream(this.base.config, mapped, includeDisabled);
+  }
+  private forSession(header: SessionHeader): ResolvedConfig | undefined {
+    const config = this.config(this.key(header));
+    const running = runningConfiguration(header);
+    return config !== undefined && running !== undefined && identityOf(running) === identityOf(config) ? running : config;
+  }
+  private runtimeId(key: string, config: ResolvedConfig): string {
+    return key + '@' + createHash('sha256').update(JSON.stringify([config.home, config.agentId, config.team, config.llm])).digest('hex');
+  }
+  private prefer(header: SessionHeader): void {
+    if (isSubagent(header) || !this.allowed(header)) return;
+    const config = this.forSession(header);
+    if (config !== undefined) this.preferredWorkers.set(identityOf(config), this.runtimeId(this.key(header), config));
+  }
+  private readyFor(header: SessionHeader): Runtime | undefined {
+    const config = this.forSession(header);
+    return config === undefined ? undefined : this.ready.get(this.runtimeId(this.key(header), config));
   }
   backgroundSelection(config: ResolvedConfig) {
     const identity = identityOf(config);
@@ -87,13 +108,19 @@ export class RuntimePool {
   private selected(header: SessionHeader) {
     return sessionSelection(this.ctx, header);
   }
-  key(header: SessionHeader): string {
-    return this.selected(header)?.key ?? (this.base.mode === 'team' ? 'legacy' : 'personal');
+  private defaultFor(): string { return defaultUpstream(this.base.config); }
+  sessionView(header: SessionHeader, events?: readonly SessionEvent[]): Promise<SessionView> {
+    return Promise.resolve(this.view(header, events));
   }
-  isBase(key: string): boolean { return key === (this.base.mode === 'team' ? 'legacy' : 'personal'); }
+  key(header: SessionHeader): string {
+    const key = this.selected(header)?.key ?? (this.base.config.upstreams === undefined ? (this.base.mode === 'team' ? 'legacy' : 'personal') : this.defaultFor());
+    const profiles = upstreamsOf(this.base.config);
+    return profiles[key] === undefined ? Object.keys(profiles).find((name) => profiles[name]?.legacyKey === key) ?? key : key;
+  }
+  isBase(key: string): boolean { return key === '' || this.base.config.upstreams === undefined && key === (this.base.mode === 'team' ? 'legacy' : 'personal'); }
   allowed(header: SessionHeader): boolean {
     const selected = this.selected(header);
-    if (selected === undefined) return sessionAllowed(this.ctx, this.base.config, header);
+    if (selected === undefined) return this.base.config.upstreams === undefined ? sessionAllowed(this.ctx, this.base.config, header) : Object.keys(this.base.config.upstreams).length === 0;
     const config = this.config(selected.key);
     return config !== undefined && selected.identity === identityOf(config) && config.agentId !== '';
   }
@@ -101,14 +128,14 @@ export class RuntimePool {
     await this.pending;
     if (!this.allowed(header)) throw new JobError('identity', '团队连接不可用或身份已改变，请检查连接，或新建会话。');
     const key = this.key(header);
-    return this.isBase(key) ? this.base : (await this.ensure(key, header.cwd)).knowledge;
+    return this.isBase(key) ? this.base : (await this.ensure(key, header.cwd, this.forSession(header))).knowledge;
   }
   async service(header: SessionHeader) {
     await this.pending;
     if (!this.allowed(header)) throw new JobError('identity', '当前会话的知识身份不可用。');
     const key = this.key(header);
     if (!this.isBase(key)) {
-      const runtime = await this.ensure(key, header.cwd);
+      const runtime = await this.ensure(key, header.cwd, this.forSession(header));
       return { knowledge: runtime.knowledge, formation: runtime.components.has('formation') ? runtime.formation : undefined, inbox: runtime.components.has('inbox') ? runtime.inbox : undefined, dream: runtime.components.has('dream') ? runtime.dream : undefined, memory: runtime.components.has('memory') ? runtime.memory : undefined };
     }
     return { knowledge: this.base, formation: this.ctx.get('acnFormation'), inbox: this.ctx.get('acnInbox'), dream: this.ctx.get('acnDream'), memory: this.ctx.get('acnMemory') };
@@ -117,9 +144,13 @@ export class RuntimePool {
     await this.pending;
     const config = this.config(key);
     if (config === undefined || config.agentId === '') throw new JobError('connection', '知识身份不可用，请恢复连接后重试。');
+    this.preferredWorkers.set(identityOf(config), this.runtimeId(key, config));
     return this.isBase(key) ? this.base : (await this.ensure(key)).knowledge;
   }
-  registerBaseline(refresh: (id: string) => Promise<void>): () => void { this.baselines.add(refresh); return () => { this.baselines.delete(refresh); }; }
+  registerBaseline(refresh: (id: string, fetchOverview?: boolean) => Promise<void>, render: (header: SessionHeader) => Record<string, string>): () => void {
+    this.baselines.add(refresh); this.baselineRenderers.set(refresh, render);
+    return () => { this.baselines.delete(refresh); this.baselineRenderers.delete(refresh); };
+  }
   private hasUser(header: SessionHeader): boolean {
     const session = this.ctx.sessions.get(header.id);
     return session === undefined || session.snapshotEvents().some((event) => event.type === 'user/message' && event.data.source.kind === 'user');
@@ -129,8 +160,21 @@ export class RuntimePool {
     const state = this.syncs.get(header.id);
     const available = this.allowed(header);
     const key = this.key(header);
-    return { sessionId: header.id, key, name: this.choices().find((item) => item.key === key)?.name ?? '连接不可用', locked: (events === undefined ? this.hasUser(header) : events.some((event) => event.type === 'user/message' && event.data.source.kind === 'user')) || header.parentSession !== undefined || isSubagent(header), available, explicitSelection: this.selected(header) !== undefined, needsPreparation: this.selected(header)?.prepared === false,
-      phase: !available ? 'blocked' : state?.phase ?? (this.selected(header)?.prepared === false ? 'failed' : 'ready'), message: !available ? (key === 'personal' ? '此会话的个人知识身份已改变；请新建会话使用当前身份。' : '团队连接已停用、删除或身份已改变；恢复原连接后可继续，其他团队请新建会话。') : state?.message ?? (this.selected(header)?.prepared === false ? '上次首次同步未完成，请重试同步后发送。' : ''), choices: this.choices(), defaultConnection: this.base.config.defaultConnection, showCompletion: this.base.config.showCompletion };
+    const active = this.forSession(header); const current = this.config(key);
+    const configurationChanged = active !== undefined && current !== undefined && JSON.stringify(active.team) !== JSON.stringify(current.team);
+    let message = state?.message ?? '';
+    if (!available) message = key === '' ? '请从 ACN 菜单选择工作配置，或在插件设置中新建配置。' : '工作配置已停用、缺失或 Agent ID 已改变；恢复原配置后可继续此会话。';
+    else if (configurationChanged && message === '') message = '已保存新连接，当前会话仍使用启动时的配置。';
+    else if (message === '' && this.selected(header)?.prepared === false) message = '上次同步未完成，可继续本地工作或重试同步。';
+    return {
+      sessionId: header.id, key, name: this.choices().find((item) => item.key === key)?.name ?? '选择工作配置',
+      activeMode: active?.team.routerEndpoint ? 'team' : 'solo', configurationChanged, available,
+      locked: (events === undefined ? this.hasUser(header) : events.some((event) => event.type === 'user/message' && event.data.source.kind === 'user')) || header.parentSession !== undefined || isSubagent(header),
+      explicitSelection: this.selected(header) !== undefined, needsPreparation: this.syncTasks.has(header.id),
+      phase: !available ? 'blocked' : this.syncTasks.has(header.id) ? 'syncing' : state?.phase ?? (this.selected(header)?.prepared === false ? 'failed' : 'ready'), message,
+      choices: this.choices(), defaultConnection: this.defaultFor(),
+      showCompletion: this.base.config.showCompletion,
+    };
   }
   async select(header: SessionHeader, key: string): Promise<SessionView> {
     await this.pending;
@@ -138,11 +182,14 @@ export class RuntimePool {
     if (this.syncs.get(header.id)?.phase === 'syncing') throw new JobError('busy', '收件同步仍在进行，可取消等待后重试。');
     const config = this.config(key);
     if (config === undefined || config.agentId === '') throw new JobError('connection', '请先配置可用身份和团队连接。');
+    const attached = this.attached.get(header.id); const previous = attached === undefined ? undefined : this.ready.get(attached);
+    if (previous !== undefined) { previous.formation.disposed(header.id); previous.memories.forget(header.id); await previous.catalog.forget(header.id); this.attached.delete(header.id); }
     const session = this.ctx.sessions.get(header.id);
     if (session === undefined) throw new JobError('session', '会话已关闭，请重新打开。');
-    // 准备完成前保留选择，失败时阻止首发；切换会话与重启都不能悄悄改到其他连接。
+    // 先持久化归属再访问知识；收件失败只降级本地工作，不改绑其他配置。
     appendPluginRecord(session, 'plugin:acn/team-selection', { schemaVersion: 1, key, identity: identityOf(config), prepared: config.team.routerEndpoint === '' });
-    if (!this.isBase(key)) await this.ensure(key, header.cwd);
+    rememberConfiguration(header, config); this.prefer(header); this.instructions.delete(header.id);
+    if (!this.isBase(key)) await this.ensure(key, header.cwd, config);
     if (config.team.routerEndpoint !== '') await this.sync(header);
     else this.syncs.set(header.id, { phase: 'ready', message: '单人模式已就绪，不连接团队服务。' });
     if (config.team.routerEndpoint === '' && this.syncs.get(header.id)?.phase !== 'failed' && this.key(header) === key) {
@@ -151,16 +198,27 @@ export class RuntimePool {
     }
     return this.view(header);
   }
-  cancel(header: SessionHeader): void {
+  async cancel(header: SessionHeader): Promise<void> {
+    const preparing = this.syncTasks.get(header.id);
+    if (preparing === undefined) return;
     const state = this.syncs.get(header.id);
-    if (state?.phase !== 'syncing' || state.controller === undefined) return;
-    state.controller.abort();
-    this.syncs.set(header.id, { phase: 'failed', message: '已取消等待，已持久化的收件保留。请重试同步，或在首发前选择单人模式。' });
+    state?.controller?.abort();
+    if (state !== undefined) state.message = '正在结束同步并准备本地知识，已持久化的收件保留。';
+    await preparing;
   }
-  async sync(header: SessionHeader): Promise<void> {
+  sync(header: SessionHeader): Promise<void> {
+    if (this.syncTasks.has(header.id)) return Promise.reject(new JobError('busy', '收件同步仍在进行。'));
+    const task = this.synchronize(header);
+    this.syncTasks.set(header.id, task);
+    const finish = () => { if (this.syncTasks.get(header.id) === task) this.syncTasks.delete(header.id); };
+    void task.then(finish, finish);
+    return task;
+  }
+  private async synchronize(header: SessionHeader): Promise<void> {
+    const hadUserAtStart = this.hasUser(header);
     if (this.syncs.get(header.id)?.phase === 'syncing') throw new JobError('busy', '收件同步仍在进行。');
     const selectedKey = this.key(header);
-    if (selectedKey === 'personal') throw new JobError('connection', '单人模式没有团队收件箱。');
+    if (this.base.config.upstreams === undefined && selectedKey === 'personal') throw new JobError('connection', '单人模式没有团队收件箱。');
     const controller = new AbortController();
     const state: SyncState = { phase: 'syncing', message: '正在同步团队收件并准备本地知识…', controller };
     this.syncs.set(header.id, state);
@@ -182,12 +240,12 @@ export class RuntimePool {
         const route = pending ?? last ?? RouteSchema.safeParse({ provider: agent.options.provider, model: agent.options.model }).data;
         if (route !== undefined) { const context = services.knowledge.context(); await withFileLock(`${context.paths.lastRoute}.lock`, () => writeYamlAtomic(context.paths.lastRoute, route, RouteSchema, context.logger)); }
       }
+      let routerFailed = false;
       if (services.knowledge.team !== null) {
         const team = services.knowledge.team;
-        await team.request('router', () => team.router.overview(controller.signal));
+        try { await team.request('router', () => team.router.overview(controller.signal)); } catch { routerFailed = true; }
       }
       const report = await services.inbox.request(controller.signal, header.id);
-      if (report.warnings.length > 0) throw new JobError('connection', '团队收件未完整同步，请检查连接与认证后重试。');
       const deadline = Date.now() + services.knowledge.config.llm.timeoutMs;
       for (;;) {
         controller.signal.throwIfAborted();
@@ -199,29 +257,41 @@ export class RuntimePool {
       }
       controller.signal.throwIfAborted();
       if (this.key(header) !== selectedKey) throw new JobError('superseded', '同步已被新的选择取代。');
-      if (!this.hasUser(header)) {
-        if (this.isBase(this.key(header))) for (const refresh of this.baselines) await refresh(header.id);
-        else await this.attach(header, 'clear');
-      }
       controller.signal.throwIfAborted();
       const session = this.ctx.sessions.get(header.id); const selection = this.selected(header);
       if (session !== undefined && selection !== undefined && this.key(header) === selectedKey) appendPluginRecord(session, 'plugin:acn/team-selection', { ...selection, prepared: true });
-      state.phase = 'ready'; state.message = `收件同步完成：拉取 ${report.pulled} 条，知识将在新步骤中生效。`;
+      state.phase = routerFailed || report.warnings.length > 0 ? 'failed' : 'ready';
+      state.message = [routerFailed ? 'Router 概览暂不可用。' : '', report.warnings.length > 0 ? 'Maintainer 收件或确认未完成。' : `收件同步完成：拉取 ${report.pulled} 条。`, '本地收件已处理，可继续使用本地知识。'].filter(Boolean).join(' ');
     } catch (error) {
-      state.phase = 'failed'; state.message = error instanceof JobError ? error.message : '同步失败，请检查团队连接、认证环境变量和知识模型后重试。';
-    } finally { delete state.controller; }
+      state.phase = 'failed'; state.message = controller.signal.aborted ? '已取消同步等待，已持久化的收件保留，可继续使用本地知识。' : (error instanceof JobError ? error.message : '同步失败，请检查团队连接、认证环境变量和知识模型后重试。') + ' 可继续使用本地知识。';
+    } finally {
+      delete state.controller;
+      const selectedConfig = this.forSession(header);
+      const missingAttachment = !this.isBase(this.key(header)) && selectedConfig !== undefined && this.attached.get(header.id) !== this.runtimeId(this.key(header), selectedConfig);
+      if (this.allowed(header) && (!hadUserAtStart || missingAttachment)) {
+        if (this.isBase(this.key(header))) for (const refresh of this.baselines) await refresh(header.id, state.phase !== 'failed');
+        else await this.attach(header, hadUserAtStart ? 'resume' : 'clear', false);
+      }
+    }
   }
-  private ensure(key: string, workspace?: string): Promise<Runtime> {
-    const previous = this.runtimes.get(key); if (previous !== undefined) return previous;
-    const config = this.config(key);
+  private ensure(key: string, workspace?: string, selected?: ResolvedConfig): Promise<Runtime> {
+    const config = selected ?? this.config(key);
     if (config === undefined || this.closed) return Promise.reject(new JobError('connection', '团队连接不可用。'));
-    const creating = this.create(config, workspace);
-    this.runtimes.set(key, creating);
-    void creating.then((runtime) => { this.ready.set(key, runtime); }, () => {});
-    void creating.catch(() => { if (this.runtimes.get(key) === creating) this.runtimes.delete(key); });
+    const runtimeId = this.runtimeId(key, config);
+    const previous = this.runtimes.get(runtimeId); const ready = this.ready.get(runtimeId);
+    const ownsCurrent = this.preferredWorkers.get(identityOf(config)) === runtimeId;
+    if (previous !== undefined && (!ownsCurrent || ready === undefined || !this.retiredWorkers.has(ready))) return previous;
+    const creating = this.starting.then(async () => {
+      if (ready !== undefined) { this.ready.delete(runtimeId); await ready.close(); this.retiredWorkers.delete(ready); }
+      return this.create(config, workspace, ownsCurrent);
+    });
+    this.starting = creating.then(() => {}, () => {});
+    this.runtimes.set(runtimeId, creating);
+    void creating.then((runtime) => { this.ready.set(runtimeId, runtime); }, () => {});
+    void creating.catch(() => { if (this.runtimes.get(runtimeId) === creating) this.runtimes.delete(runtimeId); });
     return creating;
   }
-  private async create(config: ResolvedConfig, workspace?: string): Promise<Runtime> {
+  private async create(config: ResolvedConfig, workspace?: string, current = true): Promise<Runtime> {
     const knowledge = new AcnKnowledge(config, this.ctx.logger); await knowledge.initialize();
     if (workspace !== undefined) await writeYamlAtomic(knowledge.context().paths.dreamWorkspace, workspace, z.string(), knowledge.logger);
     const render = await loadPromptRenderer(); this.render = render; const backend = structuredBackend(this.ctx);
@@ -239,7 +309,7 @@ export class RuntimePool {
         if (component === 'dream') { runtime.dream = new AcnDream(knowledge, backend, render, () => this.pending, { workspace: () => readYamlOr(knowledge.context().paths.dreamWorkspace, z.string(), () => process.cwd()), run: autonomousDreamRunner(this.ctx) }); await runtime.dream.start(); }
         if (component === 'memory') { runtime.review = new MemoryReview(memory, backend, render); await runtime.review.start(); }
         runtime.components.add(component);
-        for (const agent of this.ctx.agents.list()) if (this.allowed(agent.session.header) && this.config(this.key(agent.session.header))?.home === config.home) await this.attach(agent.session.header, 'resume');
+        for (const agent of this.ctx.agents.list()) if (this.allowed(agent.session.header) && this.readyFor(agent.session.header) === runtime) await this.attach(agent.session.header, 'resume', false);
       } else {
         runtime.components.delete(component);
         if (component === 'formation') await runtime.formation.close();
@@ -250,6 +320,13 @@ export class RuntimePool {
       }
     }, close: async () => { await runtime.formation.close(); await runtime.inbox.close(); await runtime.dream.close(); await runtime.review.close(); await catalog.flush(); await uploads.close(); await knowledge.jobs?.close(); await knowledge.team?.close(); } };
     try {
+      const identity = identityOf(config);
+      const previous = this.workers.get(identity);
+      if (previous !== undefined) {
+        if (current) { await previous.uploads.close(); await previous.knowledge.jobs?.close(); this.retiredWorkers.add(previous); }
+        else { await knowledge.jobs?.close(); await uploads.close(); this.retiredWorkers.add(runtime); }
+      }
+      if (current || previous === undefined) this.workers.set(identity, runtime);
       await this.ctx.inject(['workspaceRegistry'], (child) => connectArchives(child, { beginArchive: (id, upper) => runtime.components.has('formation') ? runtime.formation.beginArchive(id, upper) : Promise.resolve(null), cancelArchive: (id) => runtime.formation.cancelArchive(id), archived: (id, upper) => runtime.formation.archived(id, upper), reconcileArchives: (ids) => runtime.formation.reconcileArchives(ids) }));
       for (const name of ['prompt', 'formation', 'inbox', 'dream', 'memory'] as const) {
         if (this.enabled(name) && (name !== 'memory' || config.memory.enabled)) {
@@ -261,43 +338,113 @@ export class RuntimePool {
       return runtime;
     } catch (error) { await runtime.close(); throw error; }
   }
-  private async attach(header: SessionHeader, source: 'startup' | 'clear' | 'resume' | 'compact'): Promise<void> {
+  private async freezeInstructions(header: SessionHeader, knowledge: AcnKnowledge): Promise<void> {
+    if (this.base.config.upstreams === undefined || this.instructions.has(header.id)) return;
+    const file = join(knowledge.context().paths.session(header.id), 'upstream-instructions.yaml');
+    let text = await readYamlOr(file, z.string(), () => null);
+    if (text === null && header.parentSession !== undefined) text = await readYamlOr(join(knowledge.context().paths.session(header.parentSession), 'upstream-instructions.yaml'), z.string(), () => null);
+    if (text === null) {
+      text = '';
+      const requested = this.ctx.sessions.get(header.id)?.snapshotEvents().some((event) => event.type === 'request/header') ?? true;
+      if (!requested) {
+        try { text = await fs.readFile(join(resolve(agentHomePath(this.base.config.home, 'example'), '..', '..'), this.key(header), 'ACN.md'), 'utf8'); }
+        catch (error) { if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error; }
+      }
+      await writeYamlAtomic(file, text, z.string(), knowledge.logger);
+    }
+    this.instructions.set(header.id, text);
+  }
+  private async bind(header: SessionHeader): Promise<void> {
+    if (this.base.config.upstreams === undefined || isEvidenceAgent(header)) return;
+    const session = this.ctx.sessions.get(header.id);
+    if (session === undefined) return;
+    let selection = this.selected(header);
+    if (selection === undefined && header.parentSession !== undefined) {
+      const parent = this.ctx.sessions.get(header.parentSession);
+      if (parent !== undefined && this.allowed(parent.header)) selection = this.selected(parent.header);
+    }
+    if (selection === undefined && session.firstLiveSeq > 0) {
+      const old = session.snapshotEvents().map(pluginRecordOf).find((record) => record?.type === 'plugin:acn/session-binding');
+      const identity = (old?.data as { identity?: string } | undefined)?.identity;
+      const key = this.choices().find((choice) => { const config = this.config(choice.key); return config !== undefined && identityOf(config) === identity; })?.key;
+      if (key !== undefined && identity !== undefined) selection = { schemaVersion: 1, key, identity, prepared: true };
+    }
+    if (selection === undefined && session.firstLiveSeq === 0 && !header.isSeeded && header.parentSession === undefined) {
+      const recent = await recentProjectSelection(this.ctx, header);
+      const previous = recent === undefined ? undefined : this.config(recent.key);
+      const key = recent !== undefined && previous !== undefined && recent.identity === identityOf(previous) ? recent.key : this.defaultFor();
+      const config = this.config(key);
+      if (config !== undefined) selection = { schemaVersion: 1, key, identity: identityOf(config), prepared: true };
+    }
+    if (selection === undefined) return;
+    if (this.selected(header) === undefined) appendPluginRecord(session, 'plugin:acn/team-selection', selection);
+    const config = this.config(selection.key);
+    if (config !== undefined && identityOf(config) === selection.identity && runningConfiguration(header) === undefined) rememberConfiguration(header, config);
+  }
+  private async attach(header: SessionHeader, source: 'startup' | 'clear' | 'resume' | 'compact', synchronize = true): Promise<void> {
     if (!this.allowed(header) || this.isBase(this.key(header)) || isEvidenceAgent(header)) return;
-    const runtime = await this.ensure(this.key(header), header.cwd);
-    if (runtime.components.has('prompt')) await runtime.catalog.freeze(header.id, source, header.parentSession);
+    const runtime = await this.ensure(this.key(header), header.cwd, this.forSession(header));
+    if (synchronize && this.base.config.upstreams !== undefined && (source === 'startup' || source === 'resume') && !isSubagent(header) && runtime.components.has('inbox') && runtime.knowledge.config.inbox.pullOnSessionStart) {
+      await this.sync(header);
+      if (!this.hasUser(header)) return;
+    }
+    await this.freezeInstructions(header, runtime.knowledge);
+    if (runtime.components.has('prompt')) await runtime.catalog.freeze(header.id, source, header.parentSession, this.syncs.get(header.id)?.phase !== 'failed');
     if (!isSubagent(header)) {
       if (runtime.components.has('memory') && runtime.knowledge.config.memory.enabled) { await runtime.memories.freeze(header.id, source, header.parentSession); await runtime.review.attach(header.id, source); }
-      if (runtime.components.has('formation')) runtime.formation.attach(header.id);
+      if (runtime.components.has('formation')) { runtime.formation.attach(header.id); if (this.ctx.agents.get(header.id)?.status === 'running') runtime.formation.running(header.id); }
       if (header.cwd !== undefined) await writeYamlAtomic(runtime.knowledge.context().paths.dreamWorkspace, header.cwd, z.string(), runtime.knowledge.logger);
       if (runtime.components.has('dream')) runtime.dream.trigger();
     }
-    this.attached.set(header.id, this.key(header));
+    this.attached.set(header.id, this.runtimeId(this.key(header), runtime.knowledge.config));
+  }
+  private async prepareSession(header: SessionHeader): Promise<void> {
+    await this.pending;
+    await this.syncTasks.get(header.id);
+    if (!this.allowed(header)) throw new JobError('identity', '会话的知识归属不可用，请恢复原连接或新建会话。');
+    const state = this.syncs.get(header.id);
+    if (state?.phase === 'syncing') throw new JobError('sync', '收件同步仍在进行，可取消等待后继续本地工作。');
+    if (!this.isBase(this.key(header))) {
+      const runtime = await this.ensure(this.key(header), header.cwd, this.forSession(header));
+      if (this.attached.get(header.id) !== this.runtimeId(this.key(header), runtime.knowledge.config)) await this.attach(header, 'resume', false);
+      // 领域组件可能在 Agent 存活期间重载；请求准入前从持久快照恢复缺失缓存。
+      if (runtime.components.has('prompt') && runtime.catalog.catalog(header.id) === '') await runtime.catalog.freeze(header.id, 'resume', header.parentSession);
+      if (runtime.components.has('memory') && !isSubagent(header) && runtime.memories.text(header.id) === '') { await runtime.memories.freeze(header.id, 'resume', header.parentSession); await runtime.review.attach(header.id, 'resume'); }
+    }
   }
   private async install(ctx: Context): Promise<void> {
-    const forAgent = (header: SessionHeader | undefined, component: RuntimeComponent) => { const runtime = header === undefined || !this.allowed(header) || this.isBase(this.key(header)) ? undefined : this.ready.get(this.key(header)); return runtime?.components.has(component) ? runtime : undefined; };
-    ctx.systemPrompt.section({ name: 'acn:connection-knowledge', order: 700, interpolate: false, text: ({ agent }) => { const runtime = forAgent(agent?.session.header, 'prompt'); return runtime === undefined ? '' : this.render?.('knowledge.j2', { agent_id: runtime.knowledge.agentId, team: runtime.knowledge.mode === 'team' }) ?? ''; } });
-    ctx.systemPrompt.section({ name: 'acn:connection-catalog', order: 710, interpolate: false, text: ({ agent }) => forAgent(agent?.session.header, 'prompt')?.catalog.catalog(agent?.session.id ?? '') ?? '' });
-    ctx.systemPrompt.section({ name: 'acn:connection-memory', order: 720, interpolate: false, text: ({ agent }) => agent === undefined || isSubagent(agent.session.header) ? '' : forAgent(agent.session.header, 'memory')?.memories.text(agent.session.id) ?? '' });
-    ctx.on('agent/created', async ({ agent, source }) => { await this.attach(agent.session.header, source); if (source === 'resume') this.resumed.add(agent.session.id); });
+    const forAgent = (header: SessionHeader | undefined, component: RuntimeComponent) => { const runtime = header === undefined || !this.allowed(header) || this.isBase(this.key(header)) ? undefined : this.readyFor(header); return runtime?.components.has(component) ? runtime : undefined; };
+    const contributions: PromptSection[] = [
+      { name: 'acn:upstream-instructions', order: 730, interpolate: false, text: ({ agent }) => agent === undefined || isEvidenceAgent(agent.session.header) || !this.allowed(agent.session.header) ? '' : this.instructions.get(agent.session.id) ?? '' },
+      { name: 'acn:connection-knowledge', order: 700, interpolate: false, text: ({ agent }) => { const runtime = forAgent(agent?.session.header, 'prompt'); return runtime === undefined ? '' : this.render?.('knowledge.j2', { agent_id: runtime.knowledge.agentId, team: runtime.knowledge.mode === 'team' }) ?? ''; } },
+      { name: 'acn:connection-catalog', order: 710, interpolate: false, text: ({ agent }) => forAgent(agent?.session.header, 'prompt')?.catalog.catalog(agent?.session.id ?? '') ?? '' },
+      { name: 'acn:connection-memory', order: 720, interpolate: false, text: ({ agent }) => agent === undefined || isSubagent(agent.session.header) ? '' : forAgent(agent.session.header, 'memory')?.memories.text(agent.session.id) ?? '' }
+    ];
+    for (const section of contributions) ctx.systemPrompt.section(section);
+    // 宿主在 pre-step 之前已经组装系统段落，准备完成后须刷新本次的插件贡献。
+    ctx.on('system-prompt/assemble', async (_assembly, context, next) => {
+      const header = context.agent?.session.header;
+      if (header === undefined || isEvidenceAgent(header) || !this.allowed(header)) return next();
+      await this.prepareSession(header); context.signal?.throwIfAborted();
+      const assembly = await next();
+      const baseSections = this.isBase(this.key(header)) ? Object.assign({}, ...[...this.baselineRenderers.values()].map((render) => render(header))) as Record<string, string> : {};
+      return { ...assembly, sections: assembly.sections.map((section) => {
+        if (Object.hasOwn(baseSections, section.name)) return { ...section, text: baseSections[section.name] ?? '' };
+        const definition = contributions.find((item) => item.name === section.name);
+        return definition === undefined ? section : { ...section, text: typeof definition.text === 'function' ? definition.text(context) : definition.text };
+      }) };
+    });
+    ctx.on('agent/created', async ({ agent, source }) => { await this.bind(agent.session.header); this.prefer(agent.session.header); await this.attach(agent.session.header, source); if (source === 'resume') this.resumed.add(agent.session.id); });
     ctx.on('agent/pre-step', async ({ agent, signal }, next) => {
       if (isEvidenceAgent(agent.session.header)) return next();
-      await this.pending;
-      if (!this.allowed(agent.session.header)) throw new JobError('identity', '会话的知识归属不可用，请恢复原连接或新建会话。');
-      const state = this.syncs.get(agent.session.id);
-      if (this.selected(agent.session.header)?.prepared === false || !this.hasUser(agent.session.header) && state !== undefined && state.phase !== 'ready') throw new JobError('sync', state?.message ?? '首次收件同步未完成，请重试同步。');
-      if (!this.isBase(this.key(agent.session.header))) {
-        const runtime = await this.ensure(this.key(agent.session.header));
-        // 领域组件可能在 Agent 存活期间重载；请求准入前从持久快照恢复缺失缓存。
-        if (runtime.components.has('prompt') && runtime.catalog.catalog(agent.session.id) === '') await runtime.catalog.freeze(agent.session.id, 'resume', agent.session.header.parentSession);
-        if (runtime.components.has('memory') && !isSubagent(agent.session.header) && runtime.memories.text(agent.session.id) === '') { await runtime.memories.freeze(agent.session.id, 'resume', agent.session.header.parentSession); await runtime.review.attach(agent.session.id, 'resume'); }
-      }
-      if (this.resumed.delete(agent.session.id) && !isSubagent(agent.session.header) && !this.isBase(this.key(agent.session.header))) {
-        const runtime = await this.ensure(this.key(agent.session.header));
+      await this.prepareSession(agent.session.header);
+      if (this.resumed.delete(agent.session.id) && this.base.config.upstreams === undefined && !isSubagent(agent.session.header) && !this.isBase(this.key(agent.session.header))) {
+        const runtime = await this.ensure(this.key(agent.session.header), agent.session.header.cwd, this.forSession(agent.session.header));
         if (runtime.components.has('inbox') && runtime.knowledge.mode === 'team' && runtime.knowledge.config.inbox.pullOnSessionStart) await runtime.inbox.enqueue(true, agent.session.id);
       }
       const decision = await next();
       if (decision.kind === 'reject' || this.isBase(this.key(agent.session.header))) return decision;
-      const runtime = await this.ensure(this.key(agent.session.header)); const notice = runtime.components.has('prompt') ? await runtime.catalog.prepare(agent.session.id) : null; signal.throwIfAborted();
+      const runtime = await this.ensure(this.key(agent.session.header), agent.session.header.cwd, this.forSession(agent.session.header)); const notice = runtime.components.has('prompt') ? await runtime.catalog.prepare(agent.session.id) : null; signal.throwIfAborted();
       if (notice === null) return decision;
       const message = createUserMessage({ content: [{ type: 'text', text: notice.text }], source: { kind: 'acn-claim-changes' } });
       this.admissions.set(message.id, { id: agent.session.id, runtime, notice });
@@ -307,18 +454,26 @@ export class RuntimePool {
       const admission = event.type === 'user/message' ? this.admissions.get(event.data.id) : undefined;
       if (admission?.id === session.id && event.type === 'user/message') { this.admissions.delete(event.data.id); admission.runtime.catalog.admitted(session.id, admission.notice); }
       if (!this.allowed(session.header) || this.isBase(this.key(session.header)) || isSubagent(session.header)) return;
-      const runtime = this.ready.get(this.key(session.header)); if (runtime === undefined) return;
+      const runtime = this.readyFor(session.header); if (runtime === undefined) return;
       const projection = projectEvent(event); const until = compactionEnd(event);
       if (runtime.components.has('formation') && (Object.keys(projection).length > 0 || until !== undefined)) runtime.formation.capture(session.id, projection, until);
       const user = event.type === 'user/message' && event.data.source.kind === 'user';
       if (runtime.components.has('memory') && runtime.knowledge.config.memory.enabled) runtime.review.capture(session.id, { seq: event.seq, projection: event.type === 'user/message' && !user ? {} : projection, user, completed: event.type === 'turn/end' && event.data.reason.kind === 'completed', ended: event.type === 'turn/end' });
       if (projection.route !== undefined) this.schedule(() => withFileLock(`${runtime.knowledge.context().paths.lastRoute}.lock`, () => writeYamlAtomic(runtime.knowledge.context().paths.lastRoute, projection.route, RouteSchema, runtime.knowledge.logger)));
     });
-    ctx.on('agent/status', ({ agent, status }) => { if (!this.allowed(agent.session.header) || this.isBase(this.key(agent.session.header)) || isSubagent(agent.session.header)) return; const runtime = this.ready.get(this.key(agent.session.header)); if (runtime === undefined) return; if (status === 'running') runtime.formation.running(agent.session.id); else runtime.formation.idle(agent.session.id); });
-    ctx.on('agent/disposed', ({ agent }) => { const key = this.attached.get(agent.session.id); if (key === undefined) return; const runtime = this.ready.get(key); if (runtime === undefined) return; runtime.formation.disposed(agent.session.id); runtime.memories.forget(agent.session.id); this.schedule(() => runtime.catalog.forget(agent.session.id)); this.attached.delete(agent.session.id); });
+    ctx.on('agent/status', ({ agent, status }) => { if (!this.allowed(agent.session.header) || this.isBase(this.key(agent.session.header)) || isSubagent(agent.session.header)) return; const runtime = this.readyFor(agent.session.header); if (runtime === undefined) return; if (status === 'running') runtime.formation.running(agent.session.id); else runtime.formation.idle(agent.session.id); });
+    ctx.on('agent/disposed', ({ agent }) => { const key = this.attached.get(agent.session.id); if (key === undefined) return; const runtime = this.ready.get(key); if (runtime === undefined) return; runtime.formation.disposed(agent.session.id); runtime.memories.forget(agent.session.id); this.schedule(() => runtime.catalog.forget(agent.session.id)); this.attached.delete(agent.session.id); this.instructions.delete(agent.session.id); forgetConfiguration(agent.session.header); });
     // 配置重载时宿主可能保留 Agent；不能只依赖下一次 created 事件恢复冻结上下文。
-    for (const agent of ctx.agents.list()) { await this.attach(agent.session.header, 'resume'); this.resumed.add(agent.session.id); }
+    const existing = ctx.agents.list();
+    for (const agent of existing) { await this.bind(agent.session.header); }
+    // 先恢复最近实际启动的实例所拥有的后台管线，保存配置本身不激活新团队。
+    existing.sort((left, right) => configurationActivation(right.session.header) - configurationActivation(left.session.header));
+    for (const agent of existing) {
+      const config = this.forSession(agent.session.header);
+      if (config !== undefined && !this.preferredWorkers.has(identityOf(config))) this.prefer(agent.session.header);
+    }
+    for (const agent of existing) { await this.attach(agent.session.header, 'resume', false); this.resumed.add(agent.session.id); }
   }
   private schedule(action: () => Promise<unknown>): void { if (this.closed) return; this.pending = this.pending.then(action).then(() => {}).catch(() => { this.ctx.logger.warn('Could not persist a connection runtime event.'); }); }
-  async close(): Promise<void> { this.closed = true; for (const state of this.syncs.values()) state.controller?.abort(); await this.pending; const runtimes = await Promise.allSettled([...this.runtimes.values()]); for (const result of runtimes) if (result.status === 'fulfilled') await result.value.close(); }
+  async close(): Promise<void> { this.closed = true; for (const state of this.syncs.values()) state.controller?.abort(); await this.pending; await Promise.allSettled([...this.syncTasks.values()]); const runtimes = await Promise.allSettled([...this.runtimes.values()]); for (const result of runtimes) if (result.status === 'fulfilled') await result.value.close(); }
 }

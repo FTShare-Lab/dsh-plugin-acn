@@ -17,8 +17,8 @@ export const name = 'acn-inbox';
 export const inject = ['acnKnowledge', 'acnRuntime', 'agents', 'sessions', 'llm'];
 export async function apply(ctx: Context): Promise<void> {
   const knowledge = ctx.acnKnowledge;
-  if (!knowledge.configured) return;
   ctx.effect(() => ctx.acnRuntime.component('inbox'));
+  if (!knowledge.configured || knowledge.config.upstreams !== undefined) return;
   const service = new AcnInbox(knowledge, structuredBackend(ctx), await loadPromptRenderer());
   ctx.provide('acnInbox', service);
   if (!knowledge.active) { ctx.effect(() => () => service.close()); return; }

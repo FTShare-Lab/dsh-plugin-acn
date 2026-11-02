@@ -1,6 +1,8 @@
 // 网页仅编辑常用配置；高级字段保留在原配置中，由同一领域校验器检查。
 import { z } from 'zod';
-import { resolveConfig, ConnectionSchema } from './config.js';
+import { resolveConfig, ConnectionSchema, UpstreamSchema, UpstreamNameSchema } from './config.js';
+import { ConfigError } from './config.js';
+import { upstreamsOf } from './upstreams.js';
 
 export const ConfigurationValuesSchema = z.strictObject({
   agentId: z.string().trim(), home: z.string().trim(),
@@ -9,6 +11,7 @@ export const ConfigurationValuesSchema = z.strictObject({
   routerEndpoint: z.string().trim(), maintainerEndpoint: z.string().trim(), keyEnv: z.string().trim(),
   timeoutMs: z.number(),
   legacyEnabled: z.boolean().optional(), connections: z.array(ConnectionSchema).optional(), defaultConnection: z.string().optional(), showCompletion: z.boolean().optional(),
+  upstream: z.string().optional(), upstreams: z.record(UpstreamNameSchema, UpstreamSchema).optional(),
 });
 export type ConfigurationValues = z.infer<typeof ConfigurationValuesSchema>;
 export const ModelChoiceSchema = z.strictObject({ provider: z.string(), providerName: z.string(), id: z.string(), name: z.string() });
@@ -16,6 +19,7 @@ export type ModelChoice = z.infer<typeof ModelChoiceSchema>;
 export const ConfigurationSnapshotSchema = z.strictObject({
   revision: z.string(), values: ConfigurationValuesSchema, models: z.array(ModelChoiceSchema),
   active: z.boolean(), dataDirectory: z.string(),
+  upstreamPending: z.record(z.string(), z.number().int().nonnegative().nullable()).optional(),
 });
 export type ConfigurationSnapshot = z.infer<typeof ConfigurationSnapshotSchema>;
 export const SaveConfigurationSchema = z.strictObject({ revision: z.string(), values: ConfigurationValuesSchema });
@@ -34,6 +38,7 @@ export function configurationValues(raw: unknown): ConfigurationValues {
     routerEndpoint: config.team.routerEndpoint, maintainerEndpoint: config.team.maintainerEndpoint,
     keyEnv: config.team.keyEnv, timeoutMs: config.team.timeoutMs,
     legacyEnabled: config.legacyEnabled, connections: config.connections, defaultConnection: config.defaultConnection, showCompletion: config.showCompletion,
+    ...(config.upstreams === undefined ? {} : { upstreams: config.upstreams, upstream: config.upstream }),
   };
 }
 
@@ -42,8 +47,15 @@ function record(value: unknown): Record<string, unknown> {
 }
 
 export function mergeConfiguration(raw: Record<string, unknown>, values: ConfigurationValues): Record<string, unknown> {
-  const next = {
+  if (values.upstreams !== undefined) {
+    const previous = upstreamsOf(resolveConfig(raw));
+    for (const [key, value] of Object.entries(values.upstreams)) {
+      if (value.legacyStorage !== previous[key]?.legacyStorage || value.legacyKey !== previous[key]?.legacyKey) throw new ConfigError(['upstreams', key, 'legacyStorage']);
+    }
+  }
+  const next: Record<string, unknown> = {
     ...raw, agentId: values.agentId, home: values.home,
+    ...(values.upstreams === undefined ? {} : { upstreams: values.upstreams, upstream: values.upstream ?? '' }),
     ...(values.legacyEnabled === undefined ? {} : { legacyEnabled: values.legacyEnabled }),
     ...(values.connections === undefined ? {} : { connections: values.connections }),
     ...(values.defaultConnection === undefined ? {} : { defaultConnection: values.defaultConnection }),
@@ -56,6 +68,7 @@ export function mergeConfiguration(raw: Record<string, unknown>, values: Configu
       keyEnv: values.mode === 'team' ? values.keyEnv : '',
     },
   };
+  delete next['projectUpstreams'];
   resolveConfig(next);
   return next;
 }

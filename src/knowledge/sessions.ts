@@ -20,7 +20,7 @@ export class KnowledgeSessions {
   private readonly states = new Map<string, KnowledgeSessionState>();
   private readonly writes = new Map<string, Promise<void>>();
   constructor(readonly knowledge: AcnKnowledge) { this.store = new SessionStateStore(knowledge.context()); }
-  async freeze(id: string, source: 'startup' | 'clear' | 'resume' | 'compact', parentId?: string): Promise<void> {
+  async freeze(id: string, source: 'startup' | 'clear' | 'resume' | 'compact', parentId?: string, fetchOverview = true): Promise<void> {
     await this.flush(id);
     const stored = await this.store.read(id);
     let state = KnowledgeSessionStateSchema.parse(stored ?? { schemaVersion: 1 });
@@ -39,7 +39,7 @@ export class KnowledgeSessions {
       const baseline = claimIndex(snapshot.claims);
       state = { ...state, catalog: { text: renderCatalog(snapshot.claims, this.knowledge.config.catalog), knowledgeVersion: snapshot.version, createdAt: nowSeconds(), baseline }, lastNotifiedVersion: snapshot.version, knownClaims: baseline, seenSourceIds: source === 'clear' ? [] : state.seenSourceIds ?? [] };
       const team = this.knowledge.team;
-      if (team !== null && state.catalog !== undefined) {
+      if (fetchOverview && team !== null && state.catalog !== undefined) {
         try {
           const overview = await team.request('router', () => team.router.overview());
           const lines = overview.scopes.map((item) => `${JSON.stringify(item.scope)} | active=${item.active_claims} | stale=${item.stale_claims} | open_disputes=${item.open_disputes} | resolved_disputes=${item.resolved_disputes}`);

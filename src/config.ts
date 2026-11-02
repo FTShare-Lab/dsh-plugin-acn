@@ -10,6 +10,20 @@ const endpoint = z.string().refine((value) => {
   catch { return false; }
 });
 
+export const UpstreamNameSchema = z.string().regex(/^[a-z0-9_-]+$/).refine((value) => !['data', 'skills', 'config.toml', 'acn.md', 'logs', 'tmp', '.git'].includes(value));
+export const UpstreamSchema = z.strictObject({
+  name: z.string().trim().max(80).default(''), agentId: AgentIdSchema, enabled: z.boolean().default(true),
+  routerEndpoint: endpoint.default(''), maintainerEndpoint: endpoint.default(''),
+  keyEnv: z.string().regex(/^(?:[A-Za-z_][A-Za-z0-9_]*)?$/).default(''), timeoutMs: positive().default(15_000),
+  // 旧安装只记录可推导的目录种类，不能把网页输入变成任意存储路径。
+  legacyStorage: z.enum(['base', 'personal', 'connection']).optional(),
+  legacyKey: z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/).optional(),
+}).superRefine((value, ctx) => {
+  if (Boolean(value.routerEndpoint) !== Boolean(value.maintainerEndpoint)) ctx.addIssue({ code: 'custom', path: ['routerEndpoint'], message: 'Configure both team endpoints or neither.' });
+  if ((value.legacyStorage === 'connection') !== (value.legacyKey !== undefined)) ctx.addIssue({ code: 'custom', path: ['legacyStorage'], message: 'Invalid legacy storage mapping.' });
+});
+export type Upstream = z.infer<typeof UpstreamSchema>;
+
 export const ConnectionSchema = z.strictObject({
   id: z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/).refine((id) => !['personal', 'legacy'].includes(id)),
   name: z.string().trim().min(1).max(80), enabled: z.boolean().default(true), agentId: AgentIdSchema,
@@ -19,6 +33,7 @@ export const ConnectionSchema = z.strictObject({
 export type Connection = z.infer<typeof ConnectionSchema>;
 
 export const ConfigSchema = z.strictObject({
+  upstream: z.string().default(''), upstreams: z.record(UpstreamNameSchema, UpstreamSchema).optional(),
   agentId: z.union([z.literal(''), AgentIdSchema]).default(''),
   home: z.string().trim().min(1).default('~/.acn-dsh'),
   sessionEpoch: nonnegative().default(0),
@@ -57,6 +72,9 @@ export const ConfigSchema = z.strictObject({
     review: z.strictObject({ enabled: z.boolean().default(true), intervalTurns: positive().default(10), maxTranscriptChars: positive().max(128_000).default(32_000) }).prefault({}),
   }).prefault({}),
 }).superRefine((config, ctx) => {
+  if (config.upstreams !== undefined) {
+    if (config.upstream !== '' && config.upstreams[config.upstream]?.enabled !== true) ctx.addIssue({ code: 'custom', path: ['upstream'], message: 'Select an enabled upstream.' });
+  }
   if (new Set(config.connections.map((item) => item.id)).size !== config.connections.length) ctx.addIssue({ code: 'custom', path: ['connections'], message: 'Connection identifiers must be unique.' });
   if (config.defaultConnection !== '' && config.defaultConnection !== 'legacy' && !config.connections.some((item) => item.id === config.defaultConnection && item.enabled)) ctx.addIssue({ code: 'custom', path: ['defaultConnection'], message: 'Default connection must be enabled.' });
   if (Boolean(config.team.routerEndpoint) !== Boolean(config.team.maintainerEndpoint)) ctx.addIssue({ code: 'custom', path: ['team'], message: 'Configure both team endpoints or neither.' });
@@ -70,7 +88,29 @@ export class ConfigError extends Error {
   constructor(readonly fields: readonly string[]) { super(`Invalid ACN configuration: ${fields.join(', ')}`); this.name = 'ConfigError'; }
 }
 export function resolveConfig(input: unknown): ResolvedConfig {
-  const parsed = ConfigSchema.safeParse(input);
+  // 兼容读取已废弃的项目覆盖；它不再参与选择，也不会出现在网页配置中。
+  let value = input;
+  if (typeof input === 'object' && input !== null && !Array.isArray(input)) {
+    const compatible = { ...input } as Record<string, unknown>;
+    delete compatible['projectUpstreams']; value = compatible;
+  }
+  const parsed = ConfigSchema.safeParse(value);
   if (!parsed.success) throw new ConfigError([...new Set(parsed.error.issues.map((issue) => issue.path.join('.') || 'config'))]);
   return parsed.data;
+}
+
+export function upstreamsOf(config: ResolvedConfig): Record<string, Upstream> {
+  if (config.upstreams !== undefined) return config.upstreams;
+  const items: Record<string, Upstream> = {};
+  if (config.agentId !== '') {
+    items['personal'] = UpstreamSchema.parse({ name: '个人知识', agentId: config.agentId, legacyStorage: config.team.routerEndpoint ? 'personal' : 'base' });
+    if (config.team.routerEndpoint) items['legacy'] = UpstreamSchema.parse({ name: '原有团队', agentId: config.agentId, enabled: config.legacyEnabled, routerEndpoint: config.team.routerEndpoint, maintainerEndpoint: config.team.maintainerEndpoint, keyEnv: config.team.keyEnv, timeoutMs: config.team.timeoutMs, legacyStorage: 'base' });
+  }
+  for (const connection of config.connections) {
+    const { id, ...value } = connection;
+    let key = id.toLowerCase();
+    while (items[key] !== undefined || ['data', 'skills', 'logs', 'tmp'].includes(key)) key = `${key}_copy`;
+    items[key] = UpstreamSchema.parse({ ...value, legacyStorage: 'connection', legacyKey: id });
+  }
+  return items;
 }

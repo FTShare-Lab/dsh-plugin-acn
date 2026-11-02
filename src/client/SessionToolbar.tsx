@@ -8,20 +8,16 @@ import type { Activity, InteractionRequest, SessionView } from '../interaction.j
 import { ComposerMenu, Icon, MenuItem, Notice } from './ComposerMenu.js';
 import type { SettingsTab } from './TeamSettingsPage.js';
 import type { Copy } from './interaction-ui.js';
+import { configurationLabel } from './interaction-ui.js';
 type Props = Pick<PropsRuntime<'conversation.input.left'>, 'sessionId' | 'useSession'> & {
   api: InteractionApi; c: Copy; block: (id: string, reason?: string) => void;
   openSettings: (tab?: SettingsTab) => void; openKnowledge: (key: string, activity?: boolean) => void;
   suppressed?: boolean;
 };
-export const composerBlockReason = (view: SessionView): string | undefined => !view.available || view.phase === 'blocked' || view.needsPreparation ? view.message || '等待首次团队收件同步完成。' : undefined;
-// 读取与「重试读取」共用同一归属规则，旧配置的未发送草稿必须确认切回个人空间。
-async function readDraft(api: InteractionApi, sessionId: string, c: Copy, signal?: AbortSignal) {
-  const result = await api.interact({ action: 'session', sessionId }, signal);
-  const view = result.session;
-  if (signal?.aborted || !result.ok || !view || view.locked || view.key !== 'legacy' || view.explicitSelection) return result;
-  const selected = await api.interact({ action: 'select', sessionId, key: 'personal' }, signal);
-  if (selected.ok && selected.session?.key === 'personal') return selected;
-  return { ok: false, message: selected.message || c('未能确认单人模式，请打开 ACN 菜单重试。', 'Solo mode could not be confirmed. Open the ACN menu to retry.') };
+export const composerBlockReason = (view: SessionView): string | undefined => !view.available || view.phase === 'blocked' || view.phase === 'syncing' && view.needsPreparation ? view.message || '等待首次团队收件同步完成。' : undefined;
+// 读取不会改变草稿选择，也不会触发同步；归属由持久绑定和默认配置决定。
+async function readDraft(api: InteractionApi, sessionId: string, _c: Copy, signal?: AbortSignal) {
+  return api.interact({ action: 'session', sessionId }, signal);
 }
 export function SessionToolbar(props: Props) {
   const subagent = props.useSession((session: { subagent: unknown }) => session.subagent !== null);
@@ -119,11 +115,11 @@ function SessionControls({ api, c, block, openSettings, openKnowledge, sessionId
   const selected = view?.choices.find((item) => item.key === view.key);
   const pending = attention && attention.key === view?.key ? attention.count : 0;
   const configured = Boolean(selected?.agentId);
-  const team = view !== undefined && view.key !== 'personal';
-  const teamChoices = view?.choices.filter((item) => item.enabled && item.mode === 'team') ?? [];
+  const team = (view?.activeMode ?? selected?.mode) === 'team';
+  const choices = view?.choices.filter((item) => item.enabled && item.agentId) ?? [];
   const trouble = Boolean(loadError || view?.phase === 'failed' || view?.phase === 'blocked');
   const syncing = view?.phase === 'syncing';
-  const name = team ? view.name : c('单人模式', 'Solo');
+  const name = view?.name || c('选择工作配置', 'Choose configuration');
   const title = c('ACN 记忆与知识', 'ACN memory and knowledge');
   const label = title + ' · ' + name;
   const settingsLabel = c('ACN 插件设置', 'ACN settings');
@@ -131,22 +127,24 @@ function SessionControls({ api, c, block, openSettings, openKnowledge, sessionId
   const choose = (request: InteractionRequest) => { finishMenu(() => { void action(request); }); };
   return <>
     <button type="button" ref={anchor} className="acn-trigger" aria-label={label} title={label} aria-haspopup="menu" aria-expanded={menu} aria-controls={menu ? menuId : undefined} onClick={() => { setMenu(!menu); }} onKeyDown={(event) => { if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); setMenu(true); } }}>
-      <span className="acn-mark" data-state={trouble ? 'warning' : syncing || pending > 0 ? 'activity' : team ? 'team' : undefined}><Icon name="network" /></span><span className="acn-short-label">ACN</span><span className="acn-chevron"><Icon name="chevron" size={11} /></span>
+      <span className="acn-mark" data-state={trouble ? 'warning' : syncing || pending > 0 ? 'activity' : team ? 'team' : undefined}><Icon name="network" /></span><span className="acn-short-label">ACN · {name}</span><span className="acn-chevron"><Icon name="chevron" size={11} /></span>
     </button>
     {menu && <ComposerMenu anchor={anchor} id={menuId} label={title} close={close}>
       <p>{c('当前会话', 'Current session')} · <strong>{name}</strong>{view?.locked && c('（已固定）', ' (fixed)')}</p>
       {loadError && <><p role="alert">{loadError}</p><MenuItem icon="sync" disabled={busy} onClick={() => { choose({ action: 'session', sessionId }); }}>{c('重试读取状态', 'Reload status')}</MenuItem></>}
-      {(trouble || syncing) && view?.message && <p role={trouble ? 'alert' : 'status'}>{view.message}</p>}
+      {selected && <p>Agent ID · {selected.agentId} · {team ? c('团队', 'Team') : c('单人', 'Solo')}</p>}
+      {(trouble || syncing || view?.configurationChanged) && view?.message && <p role={trouble ? 'alert' : 'status'}>{view.message}</p>}
       {syncing && <MenuItem icon="close" onClick={() => { choose({ action: 'cancel', sessionId }); }}>{c('取消等待', 'Cancel waiting')}</MenuItem>}
-      {view && !view.locked && (teamChoices.length > 0 || team) && <>
-        {view.choices.filter((item) => item.enabled && item.agentId).map((item) => <MenuItem key={item.key} icon={view.key === item.key ? 'check' : item.mode === 'solo' ? 'user' : 'network'} role="menuitemradio" aria-checked={view.key === item.key} disabled={busy || running || syncing} onClick={() => { if (view.key === item.key) { anchor.current?.focus(); close(); } else choose({ action: 'select', sessionId, key: item.key }); }}>{item.mode === 'solo' ? c('单人模式', 'Solo') : item.name}{item.key === view.defaultConnection && <small>{c('默认候选', 'Suggested')}</small>}</MenuItem>)}
+      {view && !view.locked && choices.length > 0 && <>
+        {view.choices.filter((item) => item.enabled && item.agentId).map((item) => <MenuItem key={item.key} icon={view.key === item.key ? 'check' : item.mode === 'solo' ? 'user' : 'network'} role="menuitemradio" aria-checked={view.key === item.key} disabled={busy || running || syncing} onClick={() => { if (view.key === item.key) { anchor.current?.focus(); close(); } else choose({ action: 'select', sessionId, key: item.key }); }}>{configurationLabel(item.name, item.agentId)}{item.key === view.defaultConnection && <small>{c('全局默认', 'Global default')}</small>}</MenuItem>)}
         <hr className="acn-separator" />
       </>}
+      {view?.configurationChanged && !view.locked && <MenuItem icon="sync" disabled={busy || running || syncing} onClick={() => { choose({ action: 'select', sessionId, key: view.key }); }}>{c('按已保存配置启动', 'Start with saved configuration')}</MenuItem>}
       {configured && <MenuItem icon="book" onClick={() => { finishMenu(() => { openKnowledge(view?.key ?? 'personal'); }); }}>{c('知识与活动', 'Knowledge and activity')}{pending > 0 && <small>{pending} {c('项待处理', 'need attention')}</small>}</MenuItem>}
       {configured && view?.available && <MenuItem icon="recap" disabled={busy || running || syncing || view.needsPreparation} onClick={() => { choose({ action: 'recap', sessionId }); }}>{c('复盘本次会话', 'Recap session')}</MenuItem>}
-      {team && view.available && !syncing && <MenuItem icon="sync" disabled={busy || running} onClick={() => { choose({ action: 'sync', sessionId }); }}>{view.phase === 'failed' ? c('重试同步', 'Retry sync') : c('同步收件', 'Sync Inbox')}</MenuItem>}
-      {!configured && !team && !loadError && view && <p>{c('在插件设置中填写个人 Agent ID 即可启用知识记忆。', 'Set a solo Agent ID in ACN settings to start using memory.')}</p>}
-      <hr className="acn-separator" /><MenuItem icon="settings" onClick={() => { finishMenu(() => { openSettings(team && trouble ? 'team' : undefined); }); }}>{settingsLabel}</MenuItem>
+      {team && view?.available && !syncing && <MenuItem icon="sync" disabled={busy || running} onClick={() => { choose({ action: 'sync', sessionId }); }}>{view.phase === 'failed' ? c('重试同步', 'Retry sync') : c('同步收件', 'Sync Inbox')}</MenuItem>}
+      {!configured && !team && !loadError && view && <p>{c('在插件设置中新建工作配置，填写 Agent ID 后即可使用。', 'Create a work configuration with an Agent ID in ACN settings.')}</p>}
+      <hr className="acn-separator" /><MenuItem icon="settings" onClick={() => { finishMenu(() => { openSettings(team && trouble ? 'upstreams' : undefined); }); }}>{settingsLabel}</MenuItem>
     </ComposerMenu>}
     {notice && !suppressed && <Notice c={c} failed={notice.failed} close={() => { setNotice(undefined); }}>{notice.text}</Notice>}
     {completion && showCompletion && <Notice c={c} failed={completion.state === 'failed'} close={() => { setCompletion(undefined); }}><strong>{completion.kind} · {completion.state === 'failed' ? c('未完成', 'Incomplete') : c('本地处理完成', 'Local processing complete')}</strong><p>{completion.error ?? completion.summary}</p><button type="button" className="acn-tab" onClick={() => { openKnowledge(view?.key ?? 'personal', true); setCompletion(undefined); }}>{c('查看处理活动', 'View activity')}</button></Notice>}

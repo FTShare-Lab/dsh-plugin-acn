@@ -23,6 +23,10 @@ describe('current configuration documentation', () => {
       expect(text).toContain('](docs/config.md)');
       expect(text).toContain('](docs/user-guide.md)');
     }
-    for (const row of rows) expect(resolveConfig(row.config).agentId).toBe('agent-a');
+    for (const row of rows) {
+      const config = resolveConfig(row.config);
+      if (config.upstreams === undefined) expect(config.agentId).toBe('agent-a');
+      else expect(config.upstreams[config.upstream]?.agentId).toBeTruthy();
+    }
   });
 });

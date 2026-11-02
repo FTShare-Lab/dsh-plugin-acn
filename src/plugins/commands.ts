@@ -42,14 +42,14 @@ export function apply(ctx: Context): void {
     try { const job = await worker.retry(parts[1] ?? ''); return { kind: 'success', text: `任务已重新入队：${job.id}` }; }
     catch (error) { if (error instanceof JobError) return { kind: 'error', text: error.message }; throw error; }
   } });
-  if (!knowledge.configured) return;
+  if (!knowledge.configured && knowledge.config.upstreams === undefined) return;
   ctx.commands.register({ name: 'acn-import', description: 'Import owned knowledge from a separate read-only agent directory.', input: { hint: '[--dry-run] [--without-memory] <acn_agent_home>' }, handler: async ({ agent, rawInput, signal }) => {
     const reason = denied(agent); if (reason !== undefined) return { kind: 'error', text: reason };
     const knowledge = await pool.knowledge(agent.session.header);
     try { return { kind: 'success', text: renderImportReport(await importCommand(knowledge, rawInput, isSubagent(agent.session.header), signal)) }; }
     catch (error) { const message = commandDomainError(error); if (message !== undefined) return { kind: 'error', text: message }; throw error; }
   } });
-  void ctx.inject(['acnDream', 'commands'], (child) => {
+  void ctx.inject(knowledge.config.upstreams === undefined ? ['acnDream', 'commands'] : ['commands'], (child) => {
     child.commands.register({ name: 'dream', description: 'Organize owned knowledge or stop at a recoverable boundary.', input: { hint: '[stop]' }, handler: async ({ agent, rawInput }) => {
       const reason = denied(agent); if (reason !== undefined) return { kind: 'error', text: reason };
       if (isSubagent(agent.session.header)) return { kind: 'error', text: '子 agent 不能触发或停止 Dream。' };
@@ -61,7 +61,7 @@ export function apply(ctx: Context): void {
       catch (error) { if (error instanceof JobError) return { kind: 'error', text: error.message }; throw error; }
     } });
   });
-  void ctx.inject(['acnInbox', 'commands'], (child) => {
+  void ctx.inject(knowledge.config.upstreams === undefined ? ['acnInbox', 'commands'] : ['commands'], (child) => {
     child.commands.register({ name: 'inbox', description: 'Sync team Inbox and queue local internalization.', handler: async ({ agent, signal }) => {
       const reason = denied(agent); if (reason !== undefined) return { kind: 'error', text: reason };
     const knowledge = await pool.knowledge(agent.session.header);
@@ -72,7 +72,7 @@ export function apply(ctx: Context): void {
       return { kind: 'success', text: `${knowledge.mode === 'solo' ? '单人模式没有团队 inbox；处理本地 pending。\n' : ''}拉取 ${report.pulled}；持久化 ${report.accepted}；确认 ${report.acknowledged}；待内化 ${report.pending}。任务 ${report.jobId} 已入队。${report.warnings.length === 0 ? '' : `\n${report.warnings.join('\n')}`}` };
     } });
   });
-  void ctx.inject(['acnFormation', 'commands'], (child) => {
+  void ctx.inject(knowledge.config.upstreams === undefined ? ['acnFormation', 'commands'] : ['commands'], (child) => {
     child.commands.register({ name: 'recap', description: 'Review this session’s unprocessed knowledge without closing it.', handler: async ({ agent }) => {
       const reason = denied(agent); if (reason !== undefined) return { kind: 'error', text: reason };
       if (isSubagent(agent.session.header)) return { kind: 'error', text: '子 agent 不能触发知识形成。' };

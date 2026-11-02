@@ -17,6 +17,14 @@ declare module '@deepseek-ai/dsh-session' {
 const bindings = new WeakMap<SessionHeader, string | null>();
 export const identityOf = (config: ResolvedConfig): string => createHash('sha256').update(config.agentId === '' ? '' : agentHomePath(config.home, config.agentId)).digest('hex');
 const selections = new WeakMap<SessionHeader, SessionSelection | undefined>();
+// 配置插件重载可能保留宿主 Agent；正在运行的实例继续使用原客户端配置。
+const runningConfigurations = new WeakMap<SessionHeader, ResolvedConfig>();
+const activations = new WeakMap<SessionHeader, number>();
+let activationSequence = 0;
+export const configurationActivation = (header: SessionHeader): number => activations.get(header) ?? 0;
+export function runningConfiguration(header: SessionHeader): ResolvedConfig | undefined { return runningConfigurations.get(header); }
+export function rememberConfiguration(header: SessionHeader, config: ResolvedConfig): void { runningConfigurations.set(header, config); activations.set(header, ++activationSequence); }
+export function forgetConfiguration(header: SessionHeader): void { runningConfigurations.delete(header); activations.delete(header); }
 function decodeSelection(value: unknown): SessionSelection {
   const parsed = SelectionSchema.safeParse(value);
   return parsed.success ? parsed.data : { schemaVersion: 1, key: 'invalid', identity: '0'.repeat(64) };

@@ -4,7 +4,7 @@ import Schema from '@deepseek-ai/schemastery';
 import { resolveConfig } from '../config.js';
 import { AcnKnowledge } from '../knowledge/service.js';
 import { UploadScheduler } from '../upload/scheduler.js';
-import { bindSession, sessionChanged, observeSelection } from '../dsh-adapter/session-binding.js';
+import { bindSession, sessionChanged, observeSelection, runningConfiguration, rememberConfiguration, sessionAllowed } from '../dsh-adapter/session-binding.js';
 import { protectMemoryPaths } from '../dsh-adapter/memory-paths.js';
 import { RuntimePool } from '../dsh-adapter/runtime-pool.js';
 
@@ -23,6 +23,8 @@ const boolean = (value: boolean) => Schema.boolean().default(value);
 export const Config: Schema = Schema.object({
   agentId: Schema.string().default(''), home: Schema.string().default('~/.acn-dsh'), sessionEpoch: number(0),
   connections: Schema.array(Schema.object({ id: Schema.string(), name: Schema.string(), enabled: boolean(true), agentId: Schema.string(), routerEndpoint: Schema.string(), maintainerEndpoint: Schema.string(), keyEnv: Schema.string().default(''), timeoutMs: number(15_000) })).default([]),
+  upstream: Schema.string().default(''),
+  upstreams: Schema.any(),
   defaultConnection: Schema.string().default(''), legacyEnabled: boolean(true), showCompletion: boolean(true),
   team: Schema.object({
     routerEndpoint: Schema.string().default(''), maintainerEndpoint: Schema.string().default(''), keyEnv: Schema.string().default(''),
@@ -37,13 +39,14 @@ export const Config: Schema = Schema.object({
 });
 
 export async function apply(ctx: Context, input: unknown = {}): Promise<void> {
-  const knowledge = new AcnKnowledge(resolveConfig(input), ctx.logger);
+  const config = resolveConfig(input);
+  const knowledge = new AcnKnowledge(config.upstreams === undefined ? config : { ...config, agentId: '' }, ctx.logger);
   await knowledge.initialize();
   ctx.provide('acnKnowledge', knowledge);
   const pool = new RuntimePool(ctx, knowledge);
   ctx.provide('acnRuntime', pool);
   ctx.effect(() => () => pool.close());
-  if (knowledge.configured || knowledge.config.connections.length > 0) void ctx.inject(['fs', 'tools', 'workingDirectory'], (child) => { protectMemoryPaths(child, knowledge); });
+  if (knowledge.configured || config.upstreams !== undefined || config.connections.length > 0) void ctx.inject(['fs', 'tools', 'workingDirectory'], (child) => { protectMemoryPaths(child, knowledge); });
   const uploads = knowledge.configured && knowledge.active ? new UploadScheduler(knowledge) : null;
   ctx.effect(() => {
     const abort = new AbortController();
@@ -58,8 +61,14 @@ export async function apply(ctx: Context, input: unknown = {}): Promise<void> {
       return next();
     });
     child.tools.guard((execution) => ['claim', 'consult_router', 'memory'].includes(execution.name) && execution.agent !== undefined && !pool.allowed(execution.agent.session.header) ? sessionChanged : undefined);
-    child.on('agent/created', ({ agent }) => { bindSession(child, knowledge.config, agent.session.header); uploads?.kick(); });
-    for (const agent of child.agents.list()) bindSession(child, knowledge.config, agent.session.header);
+    child.on('agent/created', ({ agent }) => {
+      if (config.upstreams === undefined) {
+        bindSession(child, knowledge.config, agent.session.header);
+        if (runningConfiguration(agent.session.header) === undefined && sessionAllowed(child, knowledge.config, agent.session.header)) rememberConfiguration(agent.session.header, knowledge.config);
+      }
+      uploads?.kick();
+    });
+    if (config.upstreams === undefined) for (const agent of child.agents.list()) bindSession(child, knowledge.config, agent.session.header);
   });
   if (knowledge.active) await knowledge.jobs?.start();
   ctx.logger.info('ACN knowledge plugin activated.');

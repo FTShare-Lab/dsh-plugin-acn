@@ -14,8 +14,8 @@ declare module '@deepseek-ai/cordis' { interface Context { acnFormation: AcnForm
 export const name = 'acn-formation';
 export const inject = ['acnKnowledge', 'acnRuntime', 'agents', 'sessions', 'llm'];
 export async function apply(ctx: Context): Promise<void> {
-  if (!ctx.acnKnowledge.configured) return;
   ctx.effect(() => ctx.acnRuntime.component('formation'));
+  if (!ctx.acnKnowledge.configured || ctx.acnKnowledge.config.upstreams !== undefined) return;
   const knowledge = ctx.acnKnowledge;
   const worker = knowledge.jobs;
   if (worker === null) return;

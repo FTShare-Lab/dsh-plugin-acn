@@ -36,7 +36,7 @@ describe('session team interaction', () => {
       expect(pool.view(agent.session.header)).toMatchObject({ key: 'personal', phase: 'ready', locked: false });
       const denied = await executeInteraction(flow.ctx, { action: 'sync', sessionId: agent.session.id }, pool);
       expect(denied).toMatchObject({ ok: false, message: '单人模式没有团队收件箱。' });
-      pool.cancel(agent.session.header); expect(pool.view(agent.session.header).phase).toBe('ready');
+      await pool.cancel(agent.session.header); expect(pool.view(agent.session.header).phase).toBe('ready');
       expect(await flow.knowledge.jobs?.queue.list()).toEqual([]);
       expect((await readKnowledge(pool, 'team-a', 'claim', '', 0)).items).toEqual([]);
       expect(server.requests).toEqual([]); expect(adapter.requests).toEqual([]);
@@ -72,16 +72,16 @@ describe('session team interaction', () => {
       const knowledge = await pool.knowledge(agent.session.header); expect(await readYaml(knowledge.context().paths.lastRoute, RouteSchema)).toEqual({ provider: 'mock', model: 'selected-model' });
     } finally { await flow.close(); await server.close(); }
   });
-  it('blocks first send after a real connection failure, then repairs the same selection', async () => {
+  it('allows local first send after a real connection failure, then repairs the same selection', async () => {
     let fail = true; const server = await teamServer((request) => fail ? { status: 503 } : reply(request.path));
-    const adapter = new ScriptAdapter([textResponse('Recovered team task.')]); const flow = await flowHarness(adapter, { inbox: true, config: config(server.endpoint) });
+    const adapter = new ScriptAdapter([textResponse('Local team task.'), textResponse('Recovered team task.')]); const flow = await flowHarness(adapter, { inbox: true, config: config(server.endpoint) });
     try {
       const agent = await flow.create(); const pool = flow.ctx.acnRuntime;
       expect((await pool.select(agent.session.header, 'team-a')).phase).toBe('failed');
-      expect(sessionSelection(flow.ctx, agent.session.header)?.prepared).toBe(false);
-      await turn(agent); expect(adapter.requests).toEqual([]);
-      fail = false; await pool.sync(agent.session.header); expect(pool.view(agent.session.header).phase).toBe('ready');
+      expect(sessionSelection(flow.ctx, agent.session.header)?.prepared).toBe(true);
       await turn(agent); expect(adapter.requests).toHaveLength(1);
+      fail = false; await pool.sync(agent.session.header); expect(pool.view(agent.session.header).phase).toBe('ready');
+      await turn(agent); expect(adapter.requests).toHaveLength(2);
     } finally { await flow.close(); await server.close(); }
   });
   it('cancels waiting without losing the selected ownership and lets a blank session return to solo', async () => {
@@ -90,7 +90,7 @@ describe('session team interaction', () => {
     try {
       const agent = await flow.create(); const pool = flow.ctx.acnRuntime; hold = true;
       const selecting = pool.select(agent.session.header, 'team-a');
-      await vi.waitFor(() => { expect(pool.view(agent.session.header).phase).toBe('syncing'); }); pool.cancel(agent.session.header); await selecting;
+      await vi.waitFor(() => { expect(pool.view(agent.session.header).phase).toBe('syncing'); }); await pool.cancel(agent.session.header); await selecting;
       expect(pool.view(agent.session.header)).toMatchObject({ phase: 'failed', key: 'team-a' });
       expect((await pool.select(agent.session.header, 'personal')).phase).toBe('ready');
       expect(await pool.knowledge(agent.session.header)).toBe(flow.knowledge);
@@ -112,15 +112,15 @@ describe('session team interaction', () => {
       } finally { await child.dispose(); }
     } finally { await flow.close(); await server.close(); }
   });
-  it('retains an unfinished first-sync gate in the actual session journal across disposal and resume', async () => {
+  it('retains an unfinished first-sync record without blocking local work in the actual session journal across disposal and resume', async () => {
     const server = await teamServer(() => ({ status: 503 }));
-    const adapter = new ScriptAdapter([]); const flow = await flowHarness(adapter, { persistence: true, inbox: true, config: config(server.endpoint) });
+    const adapter = new ScriptAdapter([textResponse('Local work after resume.')]); const flow = await flowHarness(adapter, { persistence: true, inbox: true, config: config(server.endpoint) });
     try {
       const handle = await flow.ctx.agents.create({ sessionId: SessionId('unfinished-team'), agentOptions: { provider: 'mock', model: 'mock' } });
       await flow.ctx.acnRuntime.select(handle.agent.session.header, 'team-a'); await handle.dispose();
       const resumed = await flow.ctx.agents.resume({ resumeSessionId: SessionId('unfinished-team'), agentOptions: { provider: 'mock', model: 'mock' } });
-      expect(sessionSelection(flow.ctx, resumed.agent.session.header)).toMatchObject({ key: 'team-a', prepared: false });
-      await turn(resumed.agent); expect(adapter.requests).toEqual([]); await resumed.dispose();
+      expect(sessionSelection(flow.ctx, resumed.agent.session.header)).toMatchObject({ key: 'team-a', prepared: true });
+      await turn(resumed.agent); expect(adapter.requests).toHaveLength(1); await resumed.dispose();
     } finally { await flow.close(); await server.close(); }
   });
   it('rejects changed identities instead of falling back to personal data', async () => {

@@ -1,8 +1,9 @@
 // 知识浏览与处理活动独立于同步；筛选、展开和刷新只读取当前身份的公开台账。
 import { useEffect, useState } from 'react';
+import { settingsUpstreams } from './TeamSettingsPage.js';
 import type { InteractionApi } from './TeamSettingsPage.js';
 import type { KnowledgeView } from '../interaction.js';
-import { Button, Select, Tabs, inputStyle, muted } from './interaction-ui.js';
+import { Button, Select, Tabs, configurationLabel, inputStyle, muted } from './interaction-ui.js';
 import type { Copy } from './interaction-ui.js';
 function KnowledgeDetail({ text, c, openClaim }: { text: string; c: Copy; openClaim: (id: string) => void }) {
   let values: Record<string, unknown>;
@@ -17,7 +18,7 @@ export function KnowledgePanel({ api, initialKey, initialTab = 'knowledge', c, o
   const [offset, setOffset] = useState(0); const [data, setData] = useState<KnowledgeView>();
   const [message, setMessage] = useState(''); const [busy, setBusy] = useState(false); const [refresh, setRefresh] = useState(0);
   const [sourceOnly, setSourceOnly] = useState(''); const [attention, setAttention] = useState(false);
-  useEffect(() => { const controller = new AbortController(); void api.read(controller.signal).then((snapshot) => { if (!controller.signal.aborted) setChoices([{ key: 'personal', name: c('单人模式', 'Solo') }, ...(snapshot.values.mode === 'team' ? [{ key: 'legacy', name: c('原有团队连接', 'Existing team connection') }] : []), ...snapshot.values.connections?.map((item) => ({ key: item.id, name: `${item.name}${item.enabled ? '' : c('（已停用）', ' (disabled)')}` })) ?? []]); }, () => { if (!controller.signal.aborted) setMessage(c('无法加载身份列表。', 'Could not load identities.')); }); return () => { controller.abort(); }; }, [api, c]);
+  useEffect(() => { const controller = new AbortController(); void api.read(controller.signal).then((snapshot) => { if (!controller.signal.aborted) setChoices(Object.entries(settingsUpstreams(snapshot.values)).map(([key, item]) => ({ key, name: `${configurationLabel(item.name || key, item.agentId)}${item.enabled ? '' : c('（已停用）', ' (disabled)')}` }))); }, () => { if (!controller.signal.aborted) setMessage(c('无法加载身份列表。', 'Could not load identities.')); }); return () => { controller.abort(); }; }, [api, c]);
   useEffect(() => {
     const controller = new AbortController(); setBusy(true);
     void api.interact(tab === 'activity' ? { action: 'activity', key } : { action: 'knowledge', key, kind, query, offset }, controller.signal).then((result) => { if (controller.signal.aborted) return; if (result.ok && result.knowledge !== undefined) { setData(result.knowledge); setMessage(''); } else { setData(undefined); setMessage(result.message); } }, () => { if (!controller.signal.aborted) { setData(undefined); setMessage(c('无法读取本地知识，请重试。', 'Could not read local knowledge. Retry.')); } }).finally(() => { if (!controller.signal.aborted) setBusy(false); });

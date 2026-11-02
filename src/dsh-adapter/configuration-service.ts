@@ -2,7 +2,7 @@
 import { createHash } from 'node:crypto';
 import { access, stat } from 'node:fs/promises';
 import { constants } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import type { Context, FiberState } from '@deepseek-ai/cordis';
 import type { Entry } from '@deepseek-ai/cordis-plugin-loader';
 import type {} from '@deepseek-ai/dsh-config-editor';
@@ -11,11 +11,16 @@ import { TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol';
 import type {} from '@deepseek-ai/dsh-agent';
 import type {} from '@deepseek-ai/dsh-tools';
 import { configurationBusy } from './session-binding.js';
-import { ConfigError } from '../config.js';
+import { ConfigError, resolveConfig } from '../config.js';
 import { configurationValues, mergeConfiguration, SaveConfigurationSchema } from '../configuration.js';
 import type { ConfigurationSnapshot, ConfigurationResult, ModelChoice, SaveConfiguration } from '../configuration.js';
-import { agentHomePath } from '../store/paths.js';
+import { AgentPaths, agentHomePath } from '../store/paths.js';
 import { executeInteraction } from './interaction-service.js';
+import { upstreamsOf, resolveUpstream } from '../upstreams.js';
+import { PendingUploadsSchema } from '../store/uploads.js';
+import { withFileLock } from '../store/lock.js';
+import { readYamlOr, writeYamlAtomic } from '../store/yaml.js';
+import { z } from 'zod';
 import type { InteractionRequest, InteractionResult } from '../interaction.js';
 
 declare module '@deepseek-ai/cordis' { interface Context { acnConfiguration: ConfigurationService } }
@@ -48,7 +53,7 @@ async function checkDirectory(path: string): Promise<void> {
 
 export class ConfigurationService extends TypertRemoteService {
   pending = 0;
-  interact(request: InteractionRequest): Promise<InteractionResult> {
+  async interact(request: InteractionRequest): Promise<InteractionResult> {
     if (this.pending > 0 && ['select', 'sync', 'retry'].includes(request.action)) return Promise.resolve({ ok: false, message: configurationBusy });
     // Gateway 调用会重绑定 Service tracker；领域实例必须从配置行自己的隔离作用域取。
     const pool = this.entry().fiber?.ctx.acnRuntime;
@@ -91,7 +96,18 @@ export class ConfigurationService extends TypertRemoteService {
     const entry = this.entry();
     const raw = entryConfig(entry);
     const values = configurationValues(raw);
-    return { revision: configurationRevision(raw), values, models, active: entry.fiber?.state === activeState, dataDirectory: values.agentId === '' ? '' : agentHomePath(values.home, values.agentId) };
+    const config = resolveConfig(raw);
+    const upstreamPending: Record<string, number | null> = {};
+    for (const key of Object.keys(upstreamsOf(config))) {
+      const selected = resolveUpstream(config, key, true); if (selected === undefined) continue;
+      const path = new AgentPaths(agentHomePath(selected.home, selected.agentId)).pendingUploads;
+      try {
+        const pending = await readYamlOr(path, PendingUploadsSchema, () => PendingUploadsSchema.parse({}));
+        upstreamPending[key] = pending.claims.length + pending.disputes.length + (pending.consolidations?.length ?? 0) + (pending.acknowledgements?.length ?? 0);
+      } catch { upstreamPending[key] = null; this.ctx.logger.warn('Could not read pending counts for an upstream; configuration remains available.'); }
+    }
+    const selected = config.upstreams === undefined ? config : resolveUpstream(config, config.upstream);
+    return { revision: configurationRevision(raw), values, models, active: entry.fiber?.state === activeState, dataDirectory: selected?.agentId ? agentHomePath(selected.home, selected.agentId) : '', upstreamPending };
   }
 
   async save(request: SaveConfiguration): Promise<ConfigurationResult> {
@@ -101,11 +117,17 @@ export class ConfigurationService extends TypertRemoteService {
     try {
       const entry = this.entry();
       if (configurationRevision(entryConfig(entry)) !== revision) return { ok: false, code: 'conflict', fields: [] };
-      if (values.agentId === '') throw new ConfigError(['agentId']);
+      if (values.upstreams === undefined && values.agentId === '') throw new ConfigError(['agentId']);
       if (values.mode === 'team' && (!values.routerEndpoint || !values.maintainerEndpoint)) throw new ConfigError(['team']);
       const previous = configurationValues(entryConfig(entry));
       mergeConfiguration(entryConfig(entry), values);
-      await checkDirectory(agentHomePath(values.home, values.agentId));
+      await checkDirectory(agentHomePath(values.home, values.agentId || 'example'));
+      if (values.upstreams !== undefined && previous.upstreams === undefined && (previous.agentId !== '' || (previous.connections?.length ?? 0) > 0)) {
+        const backup = join(dirname(dirname(agentHomePath(previous.home, 'example'))), 'upstream-migration-v1.yaml');
+        await withFileLock(`${backup}.lock`, async () => {
+          if (await readYamlOr(backup, z.unknown(), () => null) === null) await writeYamlAtomic(backup, entryConfig(entry), z.unknown(), this.ctx.logger);
+        });
+      }
       if (values.provider !== '' && !(await this.models()).some((model) => model.provider === values.provider && model.id === values.model)) {
         return { ok: false, code: 'unavailable', fields: ['llm'] };
       }
@@ -124,7 +146,7 @@ export class ConfigurationService extends TypertRemoteService {
         }
         this.checkIdle();
         const next = mergeConfiguration(current, values);
-        if (identity(previous) !== identity(values)) next.sessionEpoch = epoch();
+        if (values.upstreams === undefined && identity(previous) !== identity(values)) next.sessionEpoch = epoch();
         return next;
       }); } finally { this.pending -= 1; }
       if (conflict) return { ok: false, code: 'conflict', fields: [] };

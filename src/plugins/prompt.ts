@@ -16,8 +16,8 @@ export const name = 'acn-prompt';
 export const inject = ['acnKnowledge', 'acnRuntime', 'systemPrompt', 'agents', 'sessions'];
 export async function apply(ctx: Context): Promise<void> {
   const knowledge = ctx.acnKnowledge;
-  if (!knowledge.configured) return;
   ctx.effect(() => ctx.acnRuntime.component('prompt'));
+  if (!knowledge.configured || knowledge.config.upstreams !== undefined) return;
   if (!knowledge.active) return;
   const render = await loadPromptRenderer();
   const sessions = new KnowledgeSessions(knowledge);
@@ -25,7 +25,7 @@ export async function apply(ctx: Context): Promise<void> {
   // 基线 persona 为 0、policy 为 500/600、首个工具段为 800，700/710 位于其间。
   ctx.systemPrompt.section({ name: 'acn:knowledge', order: 700, interpolate: false, text: ({ agent }) => agent !== undefined && !sessionAllowed(ctx, knowledge.config, agent.session.header) ? '' : render('knowledge.j2', { agent_id: knowledge.agentId, team: knowledge.mode === 'team' }) });
   ctx.systemPrompt.section({ name: 'acn:claim-catalog', order: 710, interpolate: false, text: ({ agent }) => agent === undefined || !sessionAllowed(ctx, knowledge.config, agent.session.header) ? '' : sessions.catalog(agent.session.id) });
-  ctx.effect(() => ctx.acnRuntime.registerBaseline((id) => sessions.freeze(id, 'clear')));
+  ctx.effect(() => ctx.acnRuntime.registerBaseline((id, fetchOverview) => sessions.freeze(id, 'clear', undefined, fetchOverview), (header) => sessionAllowed(ctx, knowledge.config, header) ? { 'acn:knowledge': render('knowledge.j2', { agent_id: knowledge.agentId, team: knowledge.mode === 'team' }), 'acn:claim-catalog': sessions.catalog(header.id) } : { 'acn:knowledge': '', 'acn:claim-catalog': '' }));
   ctx.on('agent/created', async ({ agent, source }) => {
     if (!sessionAllowed(ctx, knowledge.config, agent.session.header) || isEvidenceAgent(agent.session.header)) return;
     await sessions.freeze(agent.session.id, source, agent.session.header.parentSession);

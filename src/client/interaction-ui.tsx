@@ -3,6 +3,10 @@ import { useEffect, useId, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import type { CSSProperties, ReactNode, SelectHTMLAttributes, ButtonHTMLAttributes } from 'react';
 export type Copy = (zh: string, en: string) => string;
+export function configurationLabel(name: string, agentId: string): string {
+  const label = name.trim() || agentId;
+  return !agentId || label === agentId ? label : `${label} · ${agentId}`;
+}
 export const muted: CSSProperties = { color: 'var(--dsw-alias-label-secondary, GrayText)', fontSize: 13, lineHeight: 1.55, margin: '4px 0 0' };
 export const inputStyle: CSSProperties = { width: '100%', minWidth: 0, boxSizing: 'border-box', border: '1px solid var(--dsw-alias-border-l2, #8886)', background: 'var(--dsw-alias-bg-layer-1, Canvas)', color: 'inherit', borderRadius: 8, padding: '7px 10px', font: 'inherit', fontWeight: 400, fontSize: 14, lineHeight: '20px' };
 export function Select(props: SelectHTMLAttributes<HTMLSelectElement>) { return <span style={{ display: 'block', position: 'relative', maxWidth: '100%', minWidth: 0 }}><select {...props} style={{ ...inputStyle, appearance: 'none', paddingRight: 30, textOverflow: 'ellipsis', ...props.style }} /><svg aria-hidden="true" viewBox="0 0 16 16" width="14" height="14" style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }}><path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.5" /></svg></span>; }

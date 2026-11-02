@@ -55,7 +55,7 @@ function registerPage(ctx: Context): void {
   const settingsTitle = () => c('ACN 插件设置', 'ACN settings');
   const closeLabel = () => c('关闭', 'Close');
   function openSource(id: string, close?: () => void) { const workspace = ctx.get('uiWorkspace'); if (workspace) { close?.(); workspace.openSession(id as SessionId); } }
-  function SettingsEntry({ initialTab = 'personal', close }: { initialTab?: SettingsTab; close?: () => void }) {
+  function SettingsEntry({ initialTab = 'upstreams', close }: { initialTab?: SettingsTab; close?: () => void }) {
     const [key, setKey] = useState<string>();
     const previous = useRef<HTMLElement | null>(null); const back = useRef<HTMLButtonElement>(null);
     useEffect(() => { if (key !== undefined) back.current?.focus(); else if (previous.current?.isConnected) previous.current.focus({ preventScroll: true }); }, [key]);
@@ -74,7 +74,7 @@ function registerPage(ctx: Context): void {
     function ToolbarSession(props: PropsRuntime<'conversation.input.left'>) {
       const [settings, setSettings] = useState<SettingsTab>(); const [knowledge, setKnowledge] = useState<{ key: string; activity: boolean }>();
       const title = c('知识与活动', 'Knowledge and activity');
-      return <><SessionToolbar {...props} api={api} c={c} block={block} suppressed={settings !== undefined || knowledge !== undefined} openSettings={(tab = 'personal') => { setSettings(tab); }} openKnowledge={(key, activity = false) => { setKnowledge({ key, activity }); }} />
+      return <><SessionToolbar {...props} api={api} c={c} block={block} suppressed={settings !== undefined || knowledge !== undefined} openSettings={(tab = 'upstreams') => { setSettings(tab); }} openKnowledge={(key, activity = false) => { setKnowledge({ key, activity }); }} />
         {settings !== undefined && <Modal title={settingsTitle()} closeLabel={closeLabel()} close={() => { setSettings(undefined); }}><SettingsEntry initialTab={settings} close={() => { setSettings(undefined); }} /></Modal>}
         {knowledge && <Modal title={title} closeLabel={closeLabel()} close={() => { setKnowledge(undefined); }}><KnowledgePanel api={api} initialKey={knowledge.key} initialTab={knowledge.activity ? 'activity' : 'knowledge'} c={c} openSource={(id) => { openSource(id, () => { setKnowledge(undefined); }); }} /></Modal>}
       </>;

@@ -18,6 +18,7 @@ import { LlmAdapter } from '@deepseek-ai/dsh-llm';
 import type { LlmModelInfo, StreamChunk } from '@deepseek-ai/dsh-llm';
 import type { PatchOptions } from '@deepseek-ai/cordis-plugin-include';
 import type {} from '../../src/dsh-adapter/configuration-service.js';
+import { AgentIdSchema } from 'dsh-plugin-acn/protocol';
 
 class Model extends LlmAdapter {
   calls = 0;
@@ -168,5 +169,46 @@ try {
   const racingResume = await ctx.agents.resume({ resumeSessionId: SessionId('external-busy-session'), agentOptions: { provider: 'example', model: 'example-model' } });
   assert.equal((await memory(racingResume.agent, 'RACING_RESUME_WRONG_MARKER')).isError, true);
   await racingResume.dispose();
+  // 原配置升级后，真实 Loader、Remote、会话日志与项目预选必须一起工作。
+  let native = await service.read();
+  const upgraded = { ...native.values, upstream: 'coding', upstreams: { coding: { name: '开发', agentId: AgentIdSchema.parse('agent-a'), enabled: true, routerEndpoint: '', maintainerEndpoint: '', keyEnv: '', timeoutMs: 15000 }, review: { name: '审查', agentId: AgentIdSchema.parse('agent-b'), enabled: true, routerEndpoint: '', maintainerEndpoint: '', keyEnv: '', timeoutMs: 15000 } } };
+  const upgrade = await service.save({ revision: native.revision, values: upgraded }); assert.equal(upgrade.ok, true, JSON.stringify(upgrade));
+  assert.ok((await readFile(join(upgraded.home, 'upstream-migration-v1.yaml'), 'utf8')).includes('external-next'));
+  const coding = await ctx.agents.create({ sessionId: SessionId('upstream-coding'), meta: { cwd: root }, agentOptions: { provider: 'example', model: 'example-model' } });
+  assert.equal((await service.interact({ action: 'session', sessionId: coding.agent.session.id })).session?.key, 'coding');
+  assert.equal((await memory(coding.agent, 'UPSTREAM_CODING_PRIVATE')).isError, false);
+  native = await service.read();
+  assert.equal((await service.save({ revision: native.revision, values: { ...native.values, upstream: 'review' } })).ok, true);
+  assert.equal((await service.interact({ action: 'session', sessionId: coding.agent.session.id })).session?.key, 'coding');
+  // 同一项目沿用最近新建会话；修改全局默认不改绑已存在的会话。
+  const inherited = await ctx.agents.create({ sessionId: SessionId('same-project-inherited'), meta: { cwd: root }, agentOptions: { provider: 'example', model: 'example-model' } });
+  assert.equal((await service.interact({ action: 'session', sessionId: inherited.agent.session.id })).session?.key, 'coding');
+  const directory = join(root, 'another-project'); await mkdir(directory);
+  const review = await ctx.agents.create({ sessionId: SessionId('upstream-review'), meta: { cwd: directory }, agentOptions: { provider: 'example', model: 'example-model' } });
+  assert.equal((await service.interact({ action: 'session', sessionId: review.agent.session.id })).session?.key, 'review');
+  assert.ok(!JSON.stringify(await ctx.systemPrompt.assemble(assembleContextFor(review.agent))).includes('UPSTREAM_CODING_PRIVATE'));
+  const callsBeforePreference = model.calls;
+  assert.equal((await service.interact({ action: 'select', sessionId: review.agent.session.id, key: 'coding' })).ok, true);
+  const projectNext = await ctx.agents.create({ sessionId: SessionId('project-recent-next'), meta: { cwd: directory }, agentOptions: { provider: 'example', model: 'example-model' } });
+  assert.equal((await service.interact({ action: 'session', sessionId: projectNext.agent.session.id })).session?.key, 'coding');
+  assert.equal(model.calls, callsBeforePreference);
+  assert.equal((await service.interact({ action: 'session', sessionId: coding.agent.session.id })).session?.key, 'coding');
+  // 冷历史浏览不恢复 Agent，也不写入项目配置。
+  const coldId = SessionId('cold-project-history'); const coldHeader = { ...review.agent.session.header, id: coldId };
+  let inspected = 0;
+  ctx.provide('sessionController', { inspect: (id: string) => { assert.equal(id, coldId); inspected += 1; return Promise.resolve({ meta: coldHeader, events: [] }); }, resolveAgent: () => { throw new Error('History browsing must not activate an Agent.'); } } as unknown as typeof ctx.sessionController);
+  assert.equal(ctx.sessions.get(coldId), undefined);
+  await service.interact({ action: 'session', sessionId: coldId });
+  assert.equal(inspected, 1); assert.equal(ctx.sessions.get(coldId), undefined);
+  await entry.fiber.ctx.acnRuntime.knowledge(review.agent.session.header);
+  await entry.fiber.ctx.acnRuntime.knowledge(projectNext.agent.session.header);
+  await coding.dispose(); await inherited.dispose(); await review.dispose(); await projectNext.dispose();
+  const beforeBroken = await service.read();
+  const withBroken = await service.save({ revision: beforeBroken.revision, values: { ...beforeBroken.values, upstreams: { ...beforeBroken.values.upstreams, broken: { ...upgraded.upstreams.review, enabled: false } } } });
+  assert.equal(withBroken.ok, true, JSON.stringify(withBroken));
+  const brokenQueue = join(upgraded.home, 'broken', 'data', 'agents', 'agent-b', 'maintainer_uploads');
+  await mkdir(brokenQueue, { recursive: true }); await writeFile(join(brokenQueue, 'pending.yaml'), 'claims: invalid-queue\n');
+  const recoveredSettings = await service.read(); assert.equal(recoveredSettings.upstreamPending?.['broken'], null);
+  assert.equal((await service.save({ revision: recoveredSettings.revision, values: { ...recoveredSettings.values, showCompletion: false } })).ok, true);
   process.stdout.write('ACN_CONFIGURATION_OK\n');
 } finally { await ctx.fiber.dispose(); }

@@ -58,6 +58,7 @@ export async function executeInteraction(ctx: Context, input: InteractionRequest
   if (pool === undefined) return { ok: false, message: '知识服务尚未启用，请检查插件配置。' };
   try {
     if (request.action === 'check') {
+      if (!request.connection.routerEndpoint || !request.connection.maintainerEndpoint) return { ok: false, message: '单人配置不需要连接检查；请先填写两个团队地址。' };
       const config = resolveConfig({ agentId: request.connection.agentId, team: { routerEndpoint: request.connection.routerEndpoint, maintainerEndpoint: request.connection.maintainerEndpoint, keyEnv: request.connection.keyEnv, timeoutMs: request.connection.timeoutMs, retryCount: 0 } });
       const team = new TeamFacade(config.team, request.connection.agentId, ctx.logger);
       try {
@@ -100,17 +101,17 @@ export async function executeInteraction(ctx: Context, input: InteractionRequest
     const controller = ctx.get('sessionController');
     if (session === undefined && request.action === 'session' && controller !== undefined) {
       const inspection = await controller.inspect(id);
-      return { ok: true, message: '', session: pool.view(inspection.meta, inspection.events) };
+      return { ok: true, message: '', session: await pool.sessionView(inspection.meta, inspection.events) };
     }
     if (session === undefined && controller !== undefined) {
       const resolved = await controller.resolveAgent(id);
       if ('agent' in resolved) session = resolved.agent.session;
     }
     if (session === undefined) return { ok: false, message: '会话不可用，请重新打开或新建会话。' };
-    if (request.action === 'session') return { ok: true, message: '', session: pool.view(session.header) };
+    if (request.action === 'session') return { ok: true, message: '', session: await pool.sessionView(session.header) };
     if (request.action === 'select') return { ok: true, message: '', session: await pool.select(session.header, request.key) };
-    if (request.action === 'cancel') { pool.cancel(session.header); return { ok: true, message: '', session: pool.view(session.header) }; }
-    if (request.action === 'sync') { await pool.sync(session.header); return { ok: true, message: '', session: pool.view(session.header) }; }
+    if (request.action === 'cancel') { await pool.cancel(session.header); return { ok: true, message: '', session: await pool.sessionView(session.header) }; }
+    if (request.action === 'sync') { await pool.sync(session.header); return { ok: true, message: '', session: await pool.sessionView(session.header) }; }
     const services = await pool.service(session.header);
     const job = await services.formation?.recap(session.id);
     return { ok: services.formation !== undefined, message: services.formation === undefined ? '知识形成组件未启用。' : job == null ? '没有可复盘的新增内容。' : '复盘已入队，可在处理活动中查看。' };

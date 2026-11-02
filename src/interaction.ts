@@ -1,12 +1,13 @@
 // 网页交互仅传递连接参数、公开知识与任务摘要，不传递私有记忆或凭据正文。
 import { z } from 'zod';
-import { ConnectionSchema } from './config.js';
+import { ConnectionSchema, UpstreamSchema } from './config.js';
 
 export const RuntimeChoiceSchema = z.object({ key: z.string(), name: z.string(), agentId: z.string(), enabled: z.boolean(), mode: z.enum(['solo', 'team']) });
 export const SessionViewSchema = z.object({
   sessionId: z.string(), key: z.string(), name: z.string(), locked: z.boolean(), available: z.boolean(),
   phase: z.enum(['ready', 'syncing', 'failed', 'blocked']), message: z.string(), defaultConnection: z.string(),
   needsPreparation: z.boolean().default(false), explicitSelection: z.boolean().default(false),
+  activeMode: z.enum(['solo', 'team']).optional(), configurationChanged: z.boolean().optional(),
   choices: z.array(RuntimeChoiceSchema), showCompletion: z.boolean(),
 });
 export type SessionView = z.infer<typeof SessionViewSchema>;
@@ -25,7 +26,7 @@ export const InteractionRequestSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('retry'), key: z.string(), id: z.string() }),
   z.object({ action: z.literal('ack'), key: z.string(), id: z.string(), version: z.number().int().nonnegative() }),
   z.object({ action: z.literal('recap'), sessionId: z.string() }),
-  z.object({ action: z.literal('check'), connection: ConnectionSchema }),
+  z.object({ action: z.literal('check'), connection: z.union([ConnectionSchema, UpstreamSchema.safeExtend({ id: z.string().optional() })]) }),
   z.object({ action: z.literal('probe'), provider: z.string(), model: z.string() }),
 ]);
 export type InteractionRequest = z.input<typeof InteractionRequestSchema>;
