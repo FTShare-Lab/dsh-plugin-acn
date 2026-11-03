@@ -76,6 +76,11 @@ export class RuntimePool {
     this.schedule(async () => { const values = await Promise.allSettled([...this.runtimes.values()]); for (const value of values) if (value.status === 'fulfilled') await value.value.setComponent(name, true); });
     return async () => { owners.delete(token); if (owners.size > 0) return; await this.pending; for (const runtime of this.ready.values()) await runtime.setComponent(name, false); };
   }
+  supportsJob(key: string, kind: import('../worker/types.js').JobKind): boolean {
+    const config = this.config(key, true); if (config === undefined) return false;
+    const component = kind === 'recap' || kind === 'finalize' ? 'formation' : kind === 'memory_review' ? 'memory' : kind;
+    return this.enabled(component) && (kind !== 'memory_review' || config.memory.enabled && config.memory.review.enabled) && (kind !== 'dream' || config.dream.enabled);
+  }
   private enabled(name: RuntimeComponent): boolean { return (this.components.get(name)?.size ?? 0) > 0; }
   choices() {
     return Object.entries(upstreamsOf(this.base.config)).map(([key, item]) => ({ key, name: item.name || key, agentId: item.agentId, enabled: item.enabled, mode: item.routerEndpoint ? 'team' as const : 'solo' as const }));
@@ -148,6 +153,12 @@ export class RuntimePool {
     if (config === undefined || config.agentId === '') throw new JobError('connection', '知识身份不可用，请恢复连接后重试。');
     this.preferredWorkers.set(identityOf(config), this.runtimeId(key, config));
     return this.isBase(key) ? this.base : (await this.ensure(key)).knowledge;
+  }
+  async dreamService(key: string): Promise<AcnDream | undefined> {
+    await this.activate(key);
+    if (this.isBase(key)) return this.ctx.get('acnDream');
+    const runtime = await this.ensure(key);
+    return runtime.components.has('dream') ? runtime.dream : undefined;
   }
   registerBaseline(refresh: (id: string, fetchOverview?: boolean) => Promise<void>, render: (header: SessionHeader) => Record<string, string>): () => void {
     this.baselines.add(refresh); this.baselineRenderers.set(refresh, render);
@@ -271,7 +282,7 @@ export class RuntimePool {
       state.phase = routerFailed || report.warnings.length > 0 ? 'failed' : 'ready';
       state.message = [routerFailed ? 'Router 概览暂不可用。' : '', report.warnings.length > 0 ? 'Maintainer 收件或确认未完成。' : `收件同步完成：拉取 ${report.pulled} 条。`, '本地收件已处理，可继续使用本地知识。'].filter(Boolean).join(' ');
     } catch (error) {
-      state.phase = 'failed'; state.message = controller.signal.aborted ? '已取消同步等待，已持久化的收件保留，可继续使用本地知识。' : (error instanceof JobError ? error.message : '同步失败，请检查团队连接、认证环境变量和知识模型后重试。') + ' 可继续使用本地知识。';
+      state.phase = 'failed'; state.message = controller.signal.aborted ? '已取消同步等待，已持久化的收件保留，可继续使用本地知识。' : (error instanceof JobError ? error.message : '同步失败，请检查 Router、Maintainer 地址、团队鉴权密钥、知识模型和本地存储后重试。') + ' 可继续使用本地知识。';
     } finally {
       delete state.controller;
       const selectedConfig = this.forSession(header);

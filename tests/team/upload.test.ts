@@ -1,6 +1,9 @@
 // 投递使用真实 HTTP 与本地锁验证故障保留、精确版本清理、去重和空闲恢复。
 import fs from 'node:fs/promises';
 import { describe, expect, it, vi } from 'vitest';
+import { allActivities } from '../../src/activities.js';
+import { PresentationStore } from '../../src/store/presentation.js';
+import { DeliveryStatusStore } from '../../src/store/delivery-status.js';
 import { UploadDelivery } from '../../src/upload/deliver.js';
 import { UploadScheduler } from '../../src/upload/scheduler.js';
 import { UploadStore } from '../../src/store/uploads.js';
@@ -38,6 +41,11 @@ describe('upload delivery', () => {
       const spy = vi.spyOn(UploadStore.prototype, 'removeDeliveredDisputes').mockRejectedValueOnce(new Error('Interrupted after rejection.'));
       try { await expect(new UploadDelivery(context, f.knowledge.team).deliver()).rejects.toThrow('Interrupted'); } finally { spy.mockRestore(); }
       expect(await new RejectedDisputeStore(context).contains(rejected)).toBe(true);
+      const record = (await allActivities(f.knowledge)).find((row) => row.state === 'rejected');
+      expect(record).toMatchObject({ entityId: rejected.id, requiresAttention: true, retryable: false });
+      if (!record) throw new Error('Expected rejected activity.');
+      await new PresentationStore(context).acknowledge(record.id, record.updatedAt);
+      expect((await allActivities(f.knowledge)).find((row) => row.id === record.id)).toMatchObject({ state: 'rejected', requiresAttention: false, acknowledged: true });
       await new UploadDelivery(context, f.knowledge.team).deliver(); expect((await queue.read()).disputes).toEqual([]); expect(server.requests).toHaveLength(1);
       await queue.enqueue([], [rejected]); expect((await queue.read()).disputes).toEqual([]);
       const fresh = dispute('dispute_00000002'); await queue.enqueue([], [fresh]); expect((await queue.read()).disputes).toEqual([fresh]);
@@ -79,7 +87,7 @@ describe('upload delivery', () => {
       expect((await queue.read()).claims).toEqual([claim]); expect(server.requests).toEqual([]);
       const result = await new UploadDelivery(context, fixture.knowledge.team).deliver();
       expect(result).toMatchObject({ deliveredClaims: 0, deliveredDisputes: 1, pendingClaims: 1, pendingDisputes: 0 });
-      expect(result.warnings.join(' ')).toContain(claim.id); expect(server.requests.map((request) => request.path)).toEqual(['/disputes/report']);
+      expect(result.warnings.join(' ')).toContain(claim.id); expect((await allActivities(fixture.knowledge)).find((row) => row.entityId === claim.id)).toMatchObject({ state: 'paused', retryable: false, summaryInfo: { code: 'delivery.version' } }); expect(server.requests.map((request) => request.path)).toEqual(['/disputes/report']);
       expect((await queue.read()).claims).toEqual([claim]);
       const current = await fixture.knowledge.readClaim(claim.id);
       const confirmed = await fixture.knowledge.updateClaim({ id: claim.id, expected_revision: current.revision, evidence_summary: 'Team review confirms this claim should be retired.' });
@@ -95,8 +103,11 @@ describe('upload delivery', () => {
       const context = fixture.knowledge.context(); const store = new UploadStore(context); const delivery = new UploadDelivery(context, fixture.knowledge.team);
       for (const value of [claim, other]) await new ClaimStore(context).write(value);
       await store.enqueue([claim, other], [dispute()], true); expect((await delivery.deliver()).pendingClaims).toBe(2); expect((await store.read()).disputes).toHaveLength(1); expect(await new ReportedSetStore(context).contains(dispute().claims)).toBe(false);
-      available = true; const result = await delivery.deliver(); expect(result).toMatchObject({ deliveredClaims: 2, deliveredDisputes: 1, pendingClaims: 0, pendingDisputes: 0 }); await expect(fs.access(context.paths.pendingUploads)).rejects.toMatchObject({ code: 'ENOENT' });
-      expect(server.requests.filter((item) => item.path === '/disputes/report')).toHaveLength(2);
+      const issues = await new DeliveryStatusStore(context).read(); expect(Object.values(issues.issues).find((issue) => issue.kind === 'claim' && issue.id === claim.id)?.attempts).toBe(1);
+      await delivery.deliver(); expect(Object.values((await new DeliveryStatusStore(context).read()).issues).find((issue) => issue.kind === 'claim' && issue.id === claim.id)?.attempts).toBe(2);
+      expect((await allActivities(fixture.knowledge)).some((row) => row.kind === 'delivery' && row.state === 'failed' && row.entityId === claim.id)).toBe(true);
+      available = true; const result = await delivery.deliver(); expect(result).toMatchObject({ deliveredClaims: 2, deliveredDisputes: 1, pendingClaims: 0, pendingDisputes: 0 }); await expect(fs.access(context.paths.pendingUploads)).rejects.toMatchObject({ code: 'ENOENT' }); expect((await new DeliveryStatusStore(context).read()).issues).toEqual({});
+      expect(server.requests.filter((item) => item.path === '/disputes/report')).toHaveLength(3);
     } finally { await fixture.close(); await server.close(); }
   });
   it('a service recovers during the idle timer and the existing durable queue is delivered automatically', async () => {
@@ -166,4 +177,15 @@ describe('upload delivery', () => {
       await queue.save({ claims: [], disputes: [], acknowledgements: [claim] }); await expect(fs.access(context.paths.pendingUploads)).resolves.toBeUndefined(); expect((await queue.read()).acknowledgements).toEqual([claim]);
     } finally { await fixture.close(); await server.close(); }
   });
+});
+
+it('retains exact-version rejection attempts after transient failures and a terminal 409', async () => {
+  let status = 503; const server = await teamServer(() => ({ status }));
+  const f = await inboxFixture(undefined, { team: { routerEndpoint: server.endpoint, maintainerEndpoint: server.endpoint, retryCount: 0 } });
+  try {
+    const context = f.knowledge.context();const value = dispute();await new UploadStore(context).enqueue([], [value]);
+    await new UploadDelivery(context, f.knowledge.team).deliver();status = 409;await new UploadDelivery(context, f.knowledge.team).deliver();
+    const row = (await allActivities(f.knowledge)).find((item) => item.state === 'rejected');expect(row).toMatchObject({ attempts: 2, entityId: value.id });
+    expect(Object.values(await new RejectedDisputeStore(context).read())[0]?.attempts).toBe(2);
+  } finally { await f.close();await server.close(); }
 });

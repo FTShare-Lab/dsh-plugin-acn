@@ -217,5 +217,33 @@ try {
   await mkdir(brokenQueue, { recursive: true }); await writeFile(join(brokenQueue, 'pending.yaml'), 'claims: invalid-queue\n');
   const recoveredSettings = await service.read(); assert.equal(recoveredSettings.upstreamPending?.['broken'], null);
   assert.equal((await service.save({ revision: recoveredSettings.revision, values: { ...recoveredSettings.values, showCompletion: false } })).ok, true);
+  // 保存与临时引用清理共享顺序，连接失联不能删除尚在提交的新密钥。
+  const reference = `ACN_TEAM_${crypto.randomUUID().replaceAll('-', '').toUpperCase()}`;
+  let removed = false;
+  ctx.provide('credentials', { describe: () => Promise.resolve({ configured: false, writable: true }), set: () => Promise.resolve(), unset: () => { removed = true; return Promise.resolve(); } } as unknown as import('@deepseek-ai/dsh-credentials').CredentialProvider);
+  assert.equal((await service.credential({ action: 'store', reference, value: crypto.randomUUID() })).ok, true);
+  const beforeRace = await service.read(); const raceEdit = ctx.configEditor.edit.bind(ctx.configEditor);
+  let enter: (() => void) | undefined; const entered = new Promise<void>((resolve) => { enter = resolve; });
+  let finish: (() => void) | undefined; const gate = new Promise<void>((resolve) => { finish = resolve; });
+  ctx.configEditor.edit = async (...args: Parameters<typeof raceEdit>) => { enter?.(); await gate; return raceEdit(...args); };
+  try {
+    const pendingSave = service.save({ revision: beforeRace.revision, values: { ...beforeRace.values, upstreams: { ...beforeRace.values.upstreams, credential_race: { name: '', agentId: AgentIdSchema.parse('agent-race'), enabled: true, routerEndpoint: '', maintainerEndpoint: '', keyEnv: reference, timeoutMs: 1000 } } } });
+    await entered; const cleanup = service.credential({ action: 'discard', reference });
+    await new Promise<void>((resolve) => { setImmediate(resolve); }); assert.equal(removed, false);
+    finish?.(); assert.equal((await pendingSave).ok, true); assert.equal((await cleanup).ok, false); assert.equal(removed, false);
+  } finally { finish?.(); ctx.configEditor.edit = raceEdit; }
+  // 曾采用的引用在轮换后也不能被迟到清理删除，不能仅因暂无实例就推断可安全清理。
+  const historicalReference = `ACN_TEAM_${crypto.randomUUID().replaceAll('-', '').toUpperCase()}`;
+  assert.equal((await service.credential({ action: 'store', reference: historicalReference, value: crypto.randomUUID() })).ok, true);
+  const historical = await service.read();
+  const withHistorical = { ...historical.values, upstreams: { ...historical.values.upstreams, credential_history: { name: '', agentId: AgentIdSchema.parse('agent-history'), enabled: true, routerEndpoint: '', maintainerEndpoint: '', keyEnv: historicalReference, timeoutMs: 1000 } } };
+  assert.equal((await service.save({ revision: historical.revision, values: withHistorical })).ok, true);
+  const adopted = await service.read();
+  assert.equal((await service.save({ revision: adopted.revision, values: { ...adopted.values, upstreams: { ...withHistorical.upstreams, credential_history: { ...withHistorical.upstreams.credential_history, keyEnv: '' } } } })).ok, true);
+  assert.equal((await service.credential({ action: 'discard', reference: historicalReference })).ok, false);assert.equal(removed, false);
+  await entry.fiber?.dispose();
+  assert.equal((await service.read()).active, false);
+  const inactive = await service.interact({ action: 'session', sessionId: coldId });
+  assert.equal(inactive.ok, false); assert.equal(inactive.serviceAvailable, false); assert.equal(inactive.messageInfo?.code, 'service_inactive');
   process.stdout.write('ACN_CONFIGURATION_OK\n');
 } finally { await ctx.fiber.dispose(); }

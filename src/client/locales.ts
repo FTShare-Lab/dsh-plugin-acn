@@ -20,11 +20,11 @@ export const en = {
   saved: 'Saved and applied. Open a new session to use this configuration.', directory: 'Current agent data directory',
   active: 'Knowledge service active', pending: 'Set an Agent ID to get started', inactive: 'Knowledge service inactive',
   errorLoad: 'Could not load configuration. Check that the plugin and DSH configuration services are enabled, then retry.',
-  errorTransport: 'The save result could not be confirmed. Reload saved configuration before retrying.',
-  invalid: 'Invalid configuration. Check these fields:', conflict: 'Configuration changed in another window or on disk. Your draft is retained. Reload saved configuration before retrying.',
+  errorTransport: 'The save result could not be confirmed. Your draft is retained. Use Refresh and keep edits to check the saved configuration before retrying.',
+  invalid: 'Invalid configuration. Check these fields:', conflict: 'Configuration changed in another window or on disk. Your draft is retained. Use Refresh and keep edits, review, then save.',
   busy: 'An agent is still running. Finish or stop the current turn, then retry.',
   unavailable: 'This model is no longer available. Configure it in DSH or choose another registered model.',
-  persistence: 'The profile could not be updated. Check file permissions, higher-priority overrides and plugin status, then reload before retrying.',
+  persistence: 'The save could not be confirmed. Check permissions, configuration overrides and plugin status, then use Refresh and keep edits.',
   activation: 'Configuration was saved, but the knowledge service did not activate. Check the plugin status and host logs, then retry activation.',
 } as const;
 export type ConfigurationText = keyof typeof en;
@@ -49,10 +49,10 @@ export const zh: Record<ConfigurationText, string> = {
   saved: '已保存并应用。请新建会话使用这份配置。', directory: '当前 Agent 数据目录',
   active: '知识服务已启用', pending: '请先设置 Agent ID', inactive: '知识服务未启用',
   errorLoad: '无法读取配置。请确认插件及 DSH 配置服务已启用后重试。',
-  errorTransport: '无法确认保存结果，请先重新加载已保存配置，再决定是否重试。',
-  invalid: '配置无效，请检查这些字段：', conflict: '其他窗口或磁盘中的配置已发生变化，当前草稿已保留。请重新加载已保存配置后再提交。',
+  errorTransport: '无法确认保存结果，当前草稿已保留。请点击「刷新并保留草稿」核对已保存配置，再决定是否重试。',
+  invalid: '配置无效，请检查这些字段：', conflict: '其他窗口或磁盘中的配置已发生变化，当前草稿已保留。请点击「刷新并保留草稿」，核对后保存。',
   busy: '还有 Agent 正在运行，请结束或停止当前轮次后再保存。',
   unavailable: '该模型当前不可用。请在 DSH 中配置它，或选择其他已注册模型。',
-  persistence: '无法更新配置文件。请检查文件权限、高优先级覆盖配置和插件状态，再重新加载后重试。',
+  persistence: '无法确认配置已保存。请检查文件权限、覆盖配置和插件状态，再点击「刷新并保留草稿」核对。',
   activation: '配置已保存，但知识服务未能启用。请检查插件状态和宿主日志，再重试启用。',
 };

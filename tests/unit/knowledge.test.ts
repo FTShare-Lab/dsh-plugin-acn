@@ -50,7 +50,7 @@ describe('configuration boundary', () => {
     const home = join(root, 'absent');
     const knowledge = new AcnKnowledge(resolveConfig({ home }), logger);
     await knowledge.initialize();
-    expect(await statusCommand(knowledge)).toContain('agentId');
+    expect(await statusCommand(knowledge)).toContain('Agent ID');
     expect(knowledge.configured).toBe(false);
     await expect(fs.access(home)).rejects.toMatchObject({ code: 'ENOENT' });
   });

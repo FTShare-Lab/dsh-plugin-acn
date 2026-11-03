@@ -57,10 +57,10 @@ export class JobQueue {
     await this.write(job);
     return job;
   }); }
-  settle(job: Job, state: Job['state'], details: Partial<Pick<Job, 'lastError' | 'nextRunAt' | 'result' | 'attempts'>> = {}): Promise<void> { return this.locked(async () => {
+  settle(job: Job, state: Job['state'], details: Partial<Pick<Job, 'lastError' | 'lastErrorKind' | 'nextRunAt' | 'result' | 'attempts'>> = {}): Promise<void> { return this.locked(async () => {
     const current = await this.read(job.id);
     const next = { ...job, payload: current?.payload ?? job.payload, state, updatedAt: Date.now() };
-    delete next.lastError; delete next.nextRunAt; delete next.result;
+    delete next.lastError; delete next.lastErrorKind; delete next.nextRunAt; delete next.result;
     await this.write({ ...next, ...details });
   }); }
   pauseDream(paused: boolean): Promise<Job[]> { return this.locked(async () => {
@@ -77,7 +77,7 @@ export class JobQueue {
     const job = await this.read(id);
     if (job === null || job.state !== 'failed') throw new JobError('validation', '只能重试已失败的任务；请从 /acn-status 复制任务 ID。');
     const next: Job = { ...job, state: 'queued', attempts: 0, updatedAt: Date.now() };
-    delete next.lastError; delete next.nextRunAt;
+    delete next.lastError; delete next.lastErrorKind; delete next.nextRunAt;
     await this.write(next); return next;
   }); }
 }

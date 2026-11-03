@@ -68,3 +68,14 @@ describe('team host integration', () => {
   });
 });
 async function fsExists(path: string): Promise<boolean> { const fs = await import('node:fs/promises'); try { await fs.access(path); return true; } catch { return false; } }
+
+it('retries a failed initial overview using the structured parameters shown in its recovery hint', async () => {
+  let available = false;const server = await teamServer(() => available ? { body: overview } : { status: 503 });
+  const fixture = await inboxFixture(undefined, { team: { routerEndpoint: server.endpoint, maintainerEndpoint: server.endpoint, retryCount: 0 } });
+  try {
+    const sessions = new KnowledgeSessions(fixture.knowledge);await sessions.freeze('overview-retry', 'startup');
+    const encoded = sessions.catalog('overview-retry').match(/\{"mode":"overview"\}/)?.[0];expect(encoded).toBeDefined();if (!encoded) throw new Error('Missing structured retry parameters.');
+    available = true;expect(await executeConsultRouter(fixture.knowledge, JSON.parse(encoded), 'overview-retry')).toMatchObject({ mode: 'overview', available: true, scopes: overview.scopes });
+    expect(server.requests.filter((request) => request.path.endsWith('/overview'))).toHaveLength(2);
+  } finally { await fixture.close();await server.close(); }
+});

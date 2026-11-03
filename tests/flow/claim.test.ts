@@ -97,7 +97,7 @@ describe('Claim tool in the production loop', () => {
       expect((await flow.ctx.systemPrompt.assemble(assembleContextFor(agent))).sections.map((section) => section.name)).not.toContain('acn:knowledge');
       const result = await flow.ctx.commands.execute(agent, '/acn-status', [], new AbortController().signal);
       expect(result?.result.kind).toBe('success');
-      expect(result?.result.text).toContain('agentId');
+      expect(result?.result.text).toContain('Agent ID');
       await expect(fs.access(join(flow.root, 'knowledge'))).rejects.toMatchObject({ code: 'ENOENT' });
     } finally { await flow.close(); }
   });

@@ -116,7 +116,7 @@ export class AcnDream {
         requireDream(session.finished, '自主 Dream 尚未完成。');
       }
       await new UploadDelivery(this.knowledge.context(), this.knowledge.team).deliver(control.signal);
-      return { updatedClaimIds: [...new Set((await store.records(job.id)).flatMap(({ checkpoint }) => Object.keys(checkpoint.self_versions)))], modelSteps: session.progress.autonomy?.steps ?? 0, wrapUpSteps: session.progress.autonomy?.wrap_up?.steps ?? 0, budgetLimited: session.exhausted, report: 'Dream report.md 已保存。' };
+      return { updatedClaimIds: [...new Set((await store.records(job.id)).flatMap(({ checkpoint }) => Object.keys(checkpoint.self_versions)))], modelSteps: session.progress.autonomy?.steps ?? 0, wrapUpSteps: session.progress.autonomy?.wrap_up?.steps ?? 0, budgetLimited: session.exhausted, incompleteCandidates: session.progress.entries.filter((entry) => entry.status === 'skipped').map((entry) => ({ groupId: entry.candidate.group_id, claimIds: entry.candidate.claim_ids, reason: entry.reason ?? '' })), report: 'Dream report.md 已保存。' };
     }
     const loaded = claimInput(origin.claims.filter((claim) => claim.status !== 'deprecated')).loaded;
     const evidenceEnabled = this.knowledge.config.dream.evidenceCalibration && this.options.explore !== undefined && origin.workspace_root !== undefined;

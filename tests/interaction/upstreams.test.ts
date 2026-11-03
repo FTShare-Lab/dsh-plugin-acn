@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { SessionId } from '@deepseek-ai/dsh-session';
 import { ToolCallId } from '@deepseek-ai/dsh-llm';
 import { assembleContextFor } from '@deepseek-ai/dsh-agent';
+import type { CredentialProvider } from '@deepseek-ai/dsh-credentials';
 import { flowHarness, turn, callTool } from '../flow/harness.js';
 import { ScriptAdapter, textResponse } from '../flow/adapter.js';
 import { KnowledgeSessions } from '../../src/knowledge/sessions.js';
@@ -102,6 +103,28 @@ describe('upstream selection and ownership', () => {
       const resumed = await flow.ctx.agents.resume({ resumeSessionId: SessionId('instructions'), agentOptions: { provider: 'mock', model: 'mock' } });
       try { const prompt = JSON.stringify(await flow.ctx.systemPrompt.assemble(assembleContextFor(resumed.agent))); expect(prompt).toContain('UPSTREAM_INSTRUCTION_BEFORE'); expect(prompt).not.toContain('UPSTREAM_INSTRUCTION_AFTER'); } finally { await resumed.dispose(); }
     } finally { await flow.close(); }
+  });
+  it('uses the current upstream connection on a cold resume while keeping the persisted identity', async () => {
+    const reply = (path: string) => path.endsWith('/query') ? { body: { candidate_claims: [], disputes: [] } } : response(path);
+    const first = await teamServer((request) => reply(request.path));const second = await teamServer((request) => reply(request.path));
+    const oldKey = crypto.randomUUID();const newKey = crypto.randomUUID();
+    const flow = await flowHarness(new ScriptAdapter([textResponse('Original connection task.')]), { persistence: true, config: { ...configuration(), upstreams: { coding: { ...solo('开发'), routerEndpoint: first.endpoint, maintainerEndpoint: first.endpoint, keyEnv: 'FIRST_TEAM_REFERENCE' } } } });
+    flow.ctx.provide('credentials', { resolve: (reference: string) => Promise.resolve({ value: reference === 'FIRST_TEAM_REFERENCE' ? oldKey : newKey, source: 'file' }) } as unknown as CredentialProvider);
+    try {
+      const handle = await flow.ctx.agents.create({ sessionId: SessionId('cold-connection'), agentOptions: { provider: 'mock', model: 'mock' } });
+      await turn(handle.agent);await handle.dispose();
+      const before = first.requests.length;const config = flow.knowledge.config;
+      await flow.fibers.knowledge.dispose();await flow.ctx.plugin(Knowledge, resolveConfig({ ...config, upstreams: { coding: { ...config.upstreams?.['coding'], routerEndpoint: second.endpoint, maintainerEndpoint: second.endpoint, keyEnv: 'SECOND_TEAM_REFERENCE' } } }));
+      const resumed = await flow.ctx.agents.resume({ resumeSessionId: SessionId('cold-connection'), agentOptions: { provider: 'mock', model: 'mock' } });
+      try {
+        const current = await flow.ctx.acnRuntime.knowledge(resumed.agent.session.header);
+        expect(flow.ctx.acnRuntime.view(resumed.agent.session.header)).toMatchObject({ key: 'coding', available: true });expect(current.config.agentId).toBe('agent-a');
+        expect(current.config.team.keyEnv).toBe('SECOND_TEAM_REFERENCE');
+        await current.team?.router.query({ scope: 'shopping', semantic_query: null });
+        expect(first.requests).toHaveLength(before);
+        expect(second.requests.at(-1)?.body).toMatchObject({ auth: { agent_id: 'agent-a', acn_key: newKey } });
+      } finally { await resumed.dispose(); }
+    } finally { await flow.close();await first.close();await second.close(); }
   });
   it('keeps the old live client after an address edit and delivers pending records with the newly started configuration', async () => {
     let failUploads = true;
@@ -237,4 +260,16 @@ describe('upstream selection and ownership', () => {
     const adapter = new ScriptAdapter([]); const flow = await flowHarness(adapter, { inbox: true, config: { ...configuration(), upstreams: { coding: solo('开发'), team: { ...solo('团队', 'agent-b'), routerEndpoint: server.endpoint, maintainerEndpoint: server.endpoint } } } });
     try { expect((await readKnowledge(flow.ctx.acnRuntime, 'team', 'claim', '', 0)).items).toEqual([]); expect(server.requests).toEqual([]); expect(adapter.requests).toEqual([]); } finally { await flow.close(); await server.close(); }
   });
+});
+
+it('explains an unexpected Inbox sync failure using visible settings and preserves local work', async () => {
+  const server = await teamServer((request) => response(request.path));
+  const { AcnInbox } = await import('../../src/inbox/service.js');
+  const request = vi.spyOn(AcnInbox.prototype, 'request').mockRejectedValue(new Error('PRIVATE_SYNC_ERROR'));
+  const flow = await flowHarness(new ScriptAdapter([]), { inbox: true, config: { ...configuration(), upstreams: { coding: { ...solo('Example'), routerEndpoint: server.endpoint, maintainerEndpoint: server.endpoint } }, team: { retryCount: 0 } } });
+  try {
+    const agent = await flow.create();await flow.ctx.acnRuntime.sync(agent.session.header);const state = flow.ctx.acnRuntime.view(agent.session.header);
+    expect(state).toMatchObject({ phase: 'failed', available: true });expect(state.message).toContain('团队鉴权密钥');expect(state.message).toContain('本地存储');expect(state.message).toContain('可继续使用本地知识');
+    expect(state.message).not.toContain('环境变量');expect(state.message).not.toContain('PRIVATE_SYNC_ERROR');
+  } finally { request.mockRestore();await flow.close();await server.close(); }
 });

@@ -16,7 +16,7 @@ DSH 继续负责 Agent 主循环、上下文压缩、会话和读写文件等默
 - **已经在使用：** [配置说明](docs/config.md)、[命令与行为参考](docs/command-reference.md)、[常见限制](docs/outstanding-issues.md)。
 - **参与开发：** [架构说明](docs/architecture.md)、[开发指南](docs/development.md)。
 
-![DSH 中的 ACN 插件设置](docs/assets/upstream-settings.png)
+![DSH 中的 ACN 插件设置](docs/assets/upstream-settings.jpg)
 
 ## 能做什么
 
@@ -27,12 +27,28 @@ DSH 继续负责 Agent 主循环、上下文压缩、会话和读写文件等默
 | 私有 Memory | 用 `MEMORY.md` / `USER.md` 保存个人经验与偏好，新会话读取冻结快照，定期复核优先保留对话信号；不直接上传团队 |
 | Dream | 清理一次性记录、整合同主题知识、追溯关联 Trace；可选工作区查证，保留有效条件与证据限制，工具参数 JSON 格式失败时有限自动重试 |
 | 团队协作 | 管理多份单人或团队工作配置，按项目最近会话或全局默认预选归属；经 Router 查找知识，经 Maintainer 接收建议，内化后才改变本地知识 |
-| 知识与活动界面 | 按身份浏览 Claim、Dispute、Trace，查看后台结果、来源会话与失败重试；浏览不触发模型 |
+| 知识与活动界面 | 按身份浏览 Claim、Dispute、Trace，查看后台结果、警告、未完成项、历史失败与投递恢复；浏览不触发模型 |
 | 持久任务与迁移 | 中断后恢复后台任务，模型失败显示分类并有界重试；只读导入已有 ACN 的 Claim、Trace 和私有文件 |
 
 单人模式无需团队服务，也不会发送团队请求。同一 upstream 下的不同项目共用知识和私有记忆，不同 upstream 独立存储。可以为原单人配置添加团队服务，继续使用原身份与知识库。后台模型和聊天模型分别选择，均可使用 DSH 中已配置的模型。
 
 ACN 后台任务默认输出上限为 32768 token，可通过 `llm.maxOutputTokens` 调整；已有显式配置保持生效，详见[配置参考](docs/config.md)。
+
+知识的形成、团队投递和接收内化是不同阶段：
+
+```mermaid
+flowchart LR
+  Work[在 DSH 完成工作] --> Recap[Recap / Finalize]
+  Recap --> Local[本地知识与 Trace]
+  Local -->|仅 Claim 与 Dispute| Upload[团队上传队列]
+  Upload --> Maintainer[Maintainer 团队知识]
+  Maintainer --> Router[Router 检索]
+  Router --> Use[成员判断适用性后复用]
+  Maintainer -->|仲裁建议：仅直接涉争持有者| Inbox[本地持久收件]
+  Inbox -->|模型内化并校验| Local
+```
+
+上图展示团队路径；单人模式只保留本地链路。Trace 与私有 Memory 不进入团队上传队列。仲裁完成或收件已确认，都不等于本地 Claim 已完成修订。
 
 ## 安装概览
 
@@ -44,6 +60,8 @@ pnpm pack --pack-destination .artifacts
 ```
 
 启动 DSH，在「插件 → 添加插件」填入生成的 `.tgz` 绝对路径，安装并启用。打开「设置 → ACN 插件设置」，在「工作配置」创建 Agent 身份，首份配置成为全局默认；在「知识与模型」选择后台模型。每份配置都能单人使用，也能在原身份上接入团队。新会话自动沿用同项目最近新建会话的配置，没有可用记录时采用全局默认，首发前可改选；无需单独设置项目默认或安装额外兼容扩展。聊天框的 **ACN** 菜单提供知识浏览、复盘和团队同步。完整步骤见[使用指南](docs/user-guide.md)。
+
+启用／停用在工作配置列表中操作；编辑期间先保存或取消，避免丢弃草稿。
 
 首次配置后，配置前的空白会话也可在 **ACN** 菜单选择配置完成初始化。团队鉴权密钥可直接粘贴、切换显隐，并随配置保存到 DSH 托管存储；插件配置只保留内部引用。
 
@@ -75,11 +93,10 @@ pnpm test
 
 `pnpm test` 会先构建插件。常规自动化测试使用临时目录和本地测试模型；团队契约测试需要独立的 ACN 源码仓库。构建、测试、打包和安装检查应串行执行，完整命令见[开发指南](docs/development.md)。
 
-## 团队使用与限制
+## 团队使用
 
-团队成员各自维护本地知识，通过 Router 发现其他成员分享的 Claim。遇到知识冲突时，可向 Maintainer 提交争议；处理建议通过 Inbox 送达成员，经各自内化后更新本地知识。
+团队成员各自维护本地知识，通过 Router 发现其他成员分享的 Claim。遇到知识冲突时，可向 Maintainer 提交争议；自动仲裁还需在服务端配置模型并启用。可采纳的裁决建议通过 Inbox 送达直接涉争 Claim 的持有者，经各自内化后才可能更新本地知识。其他成员通过 Router 查询后续共享版本，并非接收全员广播。
 
-当前建议使用**不启用 LLM 重排的 Router**；启用重排时，候选集合变化可能阻止自动仲裁采纳。知识复用依赖 Agent 的检索与应用；Claim 的证据记录和 Dream 的语义复核不能保证结论正确，使用时仍需关注适用范围与证据限制。
 
 [文档导航](docs/index.md) · [架构](docs/architecture.md) · [开发指南](docs/development.md) · [更新记录](CHANGELOG.md)
 

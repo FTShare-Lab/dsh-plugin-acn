@@ -1,6 +1,7 @@
 // 此套件必须面对真实团队服务；结构校验和 holder/receipt 边界不使用 HTTP stub。
 import { describe, expect, it, vi } from 'vitest';
 import { randomBytes } from 'node:crypto';
+import { z } from 'zod';
 import { setTimeout as delay } from 'node:timers/promises';
 import { TeamFacade } from '../../src/team/service.js';
 import { resolveConfig } from '../../src/config.js';
@@ -18,6 +19,10 @@ import { inboxFixture, teamServer } from '../team/helpers.js';
 import { newDraft, waitJob } from '../formation/helpers.js';
 import { dreamFixture, phaseBackend } from '../dream/helpers.js';
 import type { Claim } from '../../src/protocol/claim.js';
+import { ClaimSchema } from '../../src/protocol/claim.js';
+import { InboxMessageSchema } from '../../src/protocol/inbox.js';
+import { TraceStore } from '../../src/store/traces.js';
+import { DisputeStore } from '../../src/store/disputes.js';
 import { candidate, reviewSummary } from '../dream/helpers.js';
 import { calibrationDraft, calibrationReviews, evidenceFixture, material } from '../dream/evidence-helpers.js';
 import type { Receipts } from '../../src/dream/evidence.js';
@@ -31,9 +36,66 @@ async function admin(path: string, data?: unknown): Promise<unknown> {
   const password = process.env['ACN_TEST_ADMIN_CREDENTIAL']; if (!password) throw new Error('No admin credential.');
   const response = await fetch(`${maintainerEndpoint}${path}`, { method: data === undefined ? 'GET' : 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Basic ${Buffer.from(`user:${password}`).toString('base64')}` }, ...data === undefined ? {} : { body: JSON.stringify(data) } });
   if (!response.ok) throw new Error(`Admin contract request failed: ${response.status}.`);
-  return response.json();
+  return response.status === 204 ? undefined : response.json();
 }
 describe('ACN 0.3.3 live contract', () => {
+  it('delivers frozen arbitration to both holders, separates receipt from internalization, and reuploads each own revision once', async () => {
+    const input = [
+      sampleClaim({ id: ClaimIdSchema.parse('claim_00000040'), scope: 'contract/arbitration', created_at: new Date().toISOString() }),
+      sampleClaim({ id: ClaimIdSchema.parse('claim_00000041'), holder: AgentIdSchema.parse('agent-b'), scope: 'contract/arbitration', created_at: new Date().toISOString() }),
+    ];
+    const calls = [0, 0];
+    const fixtures = await Promise.all(input.map((claim, index) => inboxFixture((_route, _system, text) => {
+      calls[index] = (calls[index] ?? 0) + 1;
+      const request = z.object({ local_claims: z.array(ClaimSchema), claim_attribute_updates: z.array(z.object({ claim_attribute_update: InboxMessageSchema })) }).parse(JSON.parse(text) as unknown);
+      expect(request.local_claims.map((item) => item.id)).toEqual([claim.id]);
+      const message = request.claim_attribute_updates[0]?.claim_attribute_update;
+      if (message?.message_type !== 'claim_attribute_update' || !message.arbitration_resolution) throw new Error('Missing frozen resolution.');
+      expect(message.arbitration_resolution.direct_claim_snapshots.map((item) => item.id).sort()).toEqual(input.map((item) => item.id));
+      const draft = ClaimSchema.omit({ holder: true, created_at: true, updated_at: true }).parse(claim);
+      return Promise.resolve({ text: JSON.stringify({ new_claims: [], updated_claims: [{ ...draft, status: index === 0 ? 'deprecated' : 'active', statement: 'Use the current bounded contract.', source_claim_ids: [message.policy.id] }], new_disputes: [] }) });
+    }, { ...config, agentId: claim.holder, llm: { provider: 'mock', model: 'mock' }, team: { ...config.team, keyEnv: index === 0 ? 'ACN_TEST_TEAM_CREDENTIAL' : 'ACN_TEST_OTHER_CREDENTIAL' } })));
+    try {
+      for (const [index, f] of fixtures.entries()) {
+        const claim = input[index]; if (!claim || !f.knowledge.team) throw new Error('Missing holder fixture.');
+        await new ClaimStore(f.knowledge.context()).write(claim); await new UploadStore(f.knowledge.context()).enqueue([claim], [], true);
+        expect((await new UploadDelivery(f.knowledge.context(), f.knowledge.team).deliver()).deliveredClaims).toBe(1);
+      }
+      const first = fixtures[0]; if (!first?.knowledge.team) throw new Error('Missing reporter.');
+      const dispute = DisputeSchema.parse({ id: 'dispute_00000040', name: 'bounded_contract_conflict', claims: input.map((c) => c.id), summary: 'Retire an obsolete contract after checking both versions.', reporter_agent_id: 'agent-a', status: 'open', created_at: new Date().toISOString() });
+      await first.knowledge.team.maintainer.report(dispute);
+      await admin(`/disputes/${dispute.id}/resolve`, { resolve_note: 'The checked current contract supersedes the earlier rule.', notify_affected_agents: true, resolution_type: 'lifecycle_update', resolution_basis: 'direct_analysis', claim_assessments: input.map((c, index) => ({ claim_id: c.id, recommended_status: index === 0 ? 'deprecated' : 'active', assessment: 'Checked direct evidence.', reason: 'Use the current bounded contract.' })) });
+      for (const [index, f] of fixtures.entries()) {
+        const own = input[index]; if (!own || !f.knowledge.team) throw new Error('Missing holder.');
+        // 服务只发建议；ACK 前后都不能绕过模型直接改变本地知识。
+        expect((await new ClaimStore(f.knowledge.context()).read(own.id)).status).toBe('active');
+        const pulled = await f.knowledge.team.maintainer.pull(); expect(pulled).toHaveLength(1);
+        expect(pulled[0]).toMatchObject({ message_type: 'claim_attribute_update', arbitration_resolution: { dispute_id: dispute.id, resolved_by: 'human' } });
+      }
+      const requests = await Promise.all(fixtures.map((f) => f.inbox.request()));
+      expect(calls).toEqual([0, 0]);
+      for (const [index, f] of fixtures.entries()) {
+        expect(requests[index]).toMatchObject({ accepted: 1, acknowledged: 1 });
+        expect(await f.knowledge.team?.maintainer.pull()).toEqual([]);
+        expect((await new ClaimStore(f.knowledge.context()).list())[0]?.status).toBe('active');
+      }
+      await Promise.all(fixtures.map(async (f, index) => {
+        const worker = f.knowledge.jobs; const job = requests[index]; if (!worker || !job) throw new Error('Missing internalization.');
+        await worker.start(); expect((await waitJob(worker.queue, job.jobId)).result).toMatchObject({ handled: 1, applied: 1, uploadedClaims: 1 });
+        const local = await new ClaimStore(f.knowledge.context()).list(); expect(local).toHaveLength(1); expect(local[0]?.holder).toBe(input[index]?.holder);
+        expect(local[0]?.status).toBe(index === 0 ? 'deprecated' : 'active'); expect(local[0]?.source_claim_ids[0]).toMatch(/^policy_/);
+        await waitJob(worker.queue, (await f.inbox.enqueue()).id);
+        expect(await new TraceStore(f.knowledge.context()).list()).toHaveLength(1); expect(await new DisputeStore(f.knowledge.context()).list()).toEqual([]);
+        expect((await new UploadStore(f.knowledge.context()).read()).claims).toEqual([]);
+      }));
+      expect(calls).toEqual([1, 1]);
+      await vi.waitFor(async () => {
+        const result = await first.knowledge.team?.router.query({ scope: 'contract/arbitration', semantic_query: null });
+        expect(result?.candidate_claims.some((c) => c.id === input[0]?.id)).toBe(false);
+        expect(result?.candidate_claims.find((c) => c.id === input[1]?.id)?.statement).toBe('Use the current bounded contract.');
+      }, { timeout: 5000 });
+    } finally { await Promise.all(fixtures.map((f) => f.close())); }
+  });
   it('keeps Memory tool/review private with live team services available and creates no upload work', async () => {
     const f = await memoryFixture({ ...config, llm: { provider: 'mock', model: 'mock' }, memory: { review: { intervalTurns: 1 } } }, () => Promise.resolve({ text: '{"ops":[{"op":"add","target":"user","entry":"PRIVATE_REVIEW_CONTRACT_MARKER"}]}' }));
     const team = f.knowledge.team; if (!team) throw new Error('Missing real team.');

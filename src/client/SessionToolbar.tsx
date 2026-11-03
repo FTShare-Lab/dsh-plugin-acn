@@ -1,4 +1,6 @@
 // 会话工具栏显示固定归属、收件准备与修复入口；仅来源会话显示新产生的结果。
+import { activityState, activitySummary } from './ActivityDetails.js';
+import { displayMessage } from '../interaction-messages.js';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots';
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client';
@@ -14,7 +16,12 @@ type Props = Pick<PropsRuntime<'conversation.input.left'>, 'sessionId' | 'useSes
   openSettings: (tab?: SettingsTab) => void; openKnowledge: (key: string, activity?: boolean) => void;
   suppressed?: boolean;
 };
-export const composerBlockReason = (view: SessionView): string | undefined => !view.available || view.phase === 'blocked' || view.phase === 'syncing' && view.needsPreparation ? view.message || '等待首次团队收件同步完成。' : undefined;
+export const composerBlockReason = (view: SessionView, c: Copy = (zh) => zh): string | undefined => {
+  if (view.available && view.phase !== 'blocked' && !(view.phase === 'syncing' && view.needsPreparation)) return;
+  return displayMessage(view.message, c, view.messageInfo) || (view.phase === 'syncing'
+    ? c('等待首次团队收件同步完成。', 'Waiting for the first team Inbox sync to complete.')
+    : c('当前知识身份不可用，请在 ACN 菜单选择工作配置或检查设置。', 'The knowledge identity is unavailable. Choose a work configuration from the ACN menu or check settings.'));
+};
 // 读取不会改变草稿选择，也不会触发同步；归属由持久绑定和默认配置决定。
 async function readDraft(api: InteractionApi, sessionId: string, _c: Copy, signal?: AbortSignal) {
   return api.interact({ action: 'session', sessionId }, signal);
@@ -31,6 +38,7 @@ function SessionControls({ api, c, block, openSettings, openKnowledge, sessionId
   const [notice, setNotice] = useState<{ text: string; failed: boolean }>();
   const [loadError, setLoadError] = useState('');
   useEffect(() => { if (notice === undefined) return; const timer = setTimeout(() => { setNotice(undefined); }, notice.failed ? 9000 : 5000); return () => { clearTimeout(timer); }; }, [notice]);
+  const verified = useRef<SessionView>();
   const [view, setView] = useState<SessionView>(); const [menu, setMenu] = useState(false);
   const [busy, setBusy] = useState(false);
   const [attention, setAttention] = useState<{ key: string; count: number }>(); const [completion, setCompletion] = useState<Activity & { runtimeKey: string }>();
@@ -47,18 +55,19 @@ function SessionControls({ api, c, block, openSettings, openKnowledge, sessionId
     async function load() {
       const result = await readDraft(api, sessionId, c, controller.signal);
       if (controller.signal.aborted || generation.current !== current) return;
-      if (!result.ok || result.session === undefined) { fail(result.message); return; }
-      setView(result.session); block(sessionId, composerBlockReason(result.session));
+      if (!result.ok || result.session === undefined) { fail(displayMessage(result.message, c, result.messageInfo), result.serviceAvailable === false); return; }
+      verified.current = result.session; setView(result.session); setLoadError(''); block(sessionId, composerBlockReason(result.session, c));
     }
-    function fail(message: string) {
+    function fail(message: string, inactive = false) {
+      if (inactive) verified.current = undefined;
       setLoadError(message || c('知识服务暂不可用。', 'Knowledge service unavailable.'));
-      block(sessionId, c('无法读取 ACN 状态，请打开 ACN 菜单重试。', 'Cannot read ACN status. Open the ACN menu to retry.'));
+      block(sessionId, verified.current === undefined ? undefined : composerBlockReason(verified.current, c));
     }
     void load().catch(() => { if (!controller.signal.aborted) fail(c('知识服务暂不可用，请重试。', 'Knowledge service is unavailable. Retry.')); });
     return () => { controller.abort(); generation.current += 1; block(sessionId); };
   }, [api, sessionId, block, c]);
   useEffect(() => {
-    if (view === undefined) return;
+    if (view === undefined && !loadError) return;
     const controller = new AbortController(); let active = false;
     async function poll() {
       if (active || controller.signal.aborted || !visible) return; active = true;
@@ -66,15 +75,18 @@ function SessionControls({ api, c, block, openSettings, openKnowledge, sessionId
       try {
         const result = await api.interact({ action: 'session', sessionId }, controller.signal);
         if (controller.signal.aborted || mutation.current !== version) return;
-        if (result.session === undefined) return;
+        if (result.session === undefined) {
+          if (result.serviceAvailable === false) { verified.current = undefined; setView(undefined); block(sessionId); setLoadError(displayMessage(result.message, c, result.messageInfo)); }
+          return;
+        }
         // 首发准备中的旧读结果不能提前放行；仍显示正在同步，允许取消等待。
         if (inFlight.current && result.session.phase !== 'syncing') return;
-        setView(result.session); block(sessionId, composerBlockReason(result.session));
+        verified.current = result.session; setView(result.session); setLoadError(''); block(sessionId, composerBlockReason(result.session, c));
         if (result.session.key !== view?.key || !result.session.choices.some((item) => item.key === result.session?.key && item.agentId)) return;
         const knowledge = await api.interact({ action: 'activity', key: view?.key ?? 'personal' }, controller.signal);
         if (controller.signal.aborted || mutation.current !== version || knowledge.knowledge === undefined) return;
         const data = knowledge.knowledge;
-        setAttention({ key: data.key, count: data.pendingClaims + data.pendingDisputes + data.activities.filter((item) => item.state === 'failed' || item.state === 'paused').length });
+        setAttention({ key: data.key, count: data.attentionCount ?? data.pendingClaims + data.pendingDisputes + data.activities.filter((item) => item.state === 'failed' || item.state === 'paused').length });
         const item = data.activities.find((activity) => activity.sessionId === sessionId && activity.unseen && ['succeeded', 'failed'].includes(activity.state) && !seen.current.has(`${data.key}:${activity.id}:${activity.updatedAt}`));
         if (item !== undefined && view?.showCompletion !== false) setCompletion({ ...item, runtimeKey: data.key });
       } catch { /* 轮询失败不撤销已验证的归属；显式同步和活动页提供重试。 */ }
@@ -82,7 +94,7 @@ function SessionControls({ api, c, block, openSettings, openKnowledge, sessionId
     }
     void poll(); const timer = setInterval(() => { void poll(); }, 2500);
     return () => { controller.abort(); clearInterval(timer); };
-  }, [api, sessionId, view?.key, view?.showCompletion, visible, block]);
+  }, [api, sessionId, view?.key, view?.showCompletion, loadError, visible, block]);
   const showCompletion = visible && !inDialog && completion?.runtimeKey === view?.key && !suppressed && !menu && notice === undefined && view?.showCompletion === true;
   useEffect(() => {
     if (completion === undefined || !showCompletion) return;
@@ -98,13 +110,14 @@ function SessionControls({ api, c, block, openSettings, openKnowledge, sessionId
     try {
       const result = request.action === 'session' ? await readDraft(api, sessionId, c) : await api.interact(request);
       if (generation.current !== token || mutation.current !== version) return;
+      if (result.serviceAvailable === false) { verified.current = undefined; setView(undefined); block(sessionId); setLoadError(displayMessage(result.message, c, result.messageInfo)); }
       if (result.session !== undefined) {
-        setView(result.session); setLoadError(''); block(sessionId, composerBlockReason(result.session));
+        verified.current = result.session; setView(result.session); setLoadError(''); block(sessionId, composerBlockReason(result.session, c));
         if (result.session.key !== view?.key) { setAttention(undefined); setCompletion(undefined); }
       }
-      const text = result.message || (request.action !== 'session' ? result.session?.message : '');
+      const text = displayMessage(result.message, c, result.messageInfo) || (request.action !== 'session' ? result.session === undefined ? '' : displayMessage(result.session.message, c, result.session.messageInfo) : '');
       if (text) setNotice({ text, failed: !result.ok || result.session?.phase === 'failed' || result.session?.phase === 'blocked' });
-      if (!result.ok && view === undefined) setLoadError(result.message);
+      if (!result.ok && view === undefined) setLoadError(displayMessage(result.message, c, result.messageInfo));
     } catch {
       if (generation.current === token && mutation.current === version) {
         const text = c('无法确认操作结果，请重新读取状态。', 'Could not confirm the result. Reload the status.');
@@ -133,7 +146,7 @@ function SessionControls({ api, c, block, openSettings, openKnowledge, sessionId
       <p>{c('当前会话', 'Current session')} · <strong>{name}</strong>{view?.locked && c('（已固定）', ' (fixed)')}</p>
       {loadError && <><p role="alert">{loadError}</p><MenuItem icon="sync" disabled={busy} onClick={() => { choose({ action: 'session', sessionId }); }}>{c('重试读取状态', 'Reload status')}</MenuItem></>}
       {selected && <p>Agent ID · {selected.agentId} · {team ? c('团队', 'Team') : c('单人', 'Solo')}</p>}
-      {(trouble || syncing || view?.configurationChanged) && view?.message && <p role={trouble ? 'alert' : 'status'}>{view.message}</p>}
+      {(trouble || syncing || view?.configurationChanged) && view?.message && <p role={trouble ? 'alert' : 'status'}>{displayMessage(view.message, c, view.messageInfo)}</p>}
       {syncing && <MenuItem icon="close" onClick={() => { choose({ action: 'cancel', sessionId }); }}>{c('取消等待', 'Cancel waiting')}</MenuItem>}
       {view && !view.locked && choices.length > 0 && <>
         {view.choices.filter((item) => item.enabled && item.agentId).map((item) => <MenuItem key={item.key} icon={view.available && view.key === item.key ? 'check' : item.mode === 'solo' ? 'user' : 'network'} role="menuitemradio" aria-checked={view.available && view.key === item.key} disabled={busy || running || syncing} onClick={() => { if (view.key === item.key && view.available) { anchor.current?.focus(); close(); } else choose({ action: 'select', sessionId, key: item.key }); }}>{configurationLabel(item.name, item.agentId)}{item.key === view.defaultConnection && <small>{c('全局默认', 'Global default')}</small>}</MenuItem>)}
@@ -147,6 +160,6 @@ function SessionControls({ api, c, block, openSettings, openKnowledge, sessionId
       <hr className="acn-separator" /><MenuItem icon="settings" onClick={() => { finishMenu(() => { openSettings(team && trouble ? 'upstreams' : undefined); }); }}>{settingsLabel}</MenuItem>
     </ComposerMenu>}
     {notice && !suppressed && <Notice c={c} failed={notice.failed} close={() => { setNotice(undefined); }}>{notice.text}</Notice>}
-    {completion && showCompletion && <Notice c={c} failed={completion.state === 'failed'} close={() => { setCompletion(undefined); }}><strong>{completion.kind} · {completion.state === 'failed' ? c('未完成', 'Incomplete') : c('本地处理完成', 'Local processing complete')}</strong><p>{completion.error ?? completion.summary}</p><button type="button" className="acn-tab" onClick={() => { openKnowledge(view?.key ?? 'personal', true); setCompletion(undefined); }}>{c('查看处理活动', 'View activity')}</button></Notice>}
+    {completion && showCompletion && <Notice c={c} failed={completion.state === 'failed' || completion.requiresAttention === true} close={() => { setCompletion(undefined); }}><strong>{completion.kind} · {activityState(completion, c)}</strong><p>{completion.error ? displayMessage(completion.error, c, completion.errorInfo) : activitySummary(completion, c)}</p><button type="button" className="acn-tab" onClick={() => { openKnowledge(view?.key ?? 'personal', true); setCompletion(undefined); }}>{c('查看处理活动', 'View activity')}</button></Notice>}
   </>;
 }

@@ -61,9 +61,9 @@ function registerPage(ctx: Context): void {
     const [key, setKey] = useState<string>();
     const previous = useRef<HTMLElement | null>(null); const back = useRef<HTMLButtonElement>(null);
     useEffect(() => { if (key !== undefined) back.current?.focus(); else if (previous.current?.isConnected) previous.current.focus({ preventScroll: true }); }, [key]);
-    return <><div hidden={key !== undefined}><TeamSettingsPage initialTab={initialTab} api={api} t={t} openKnowledge={(value) => { previous.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setKey(value); }} /></div>{key !== undefined && <>
+    return <><div hidden={key !== undefined}><TeamSettingsPage initialTab={initialTab} api={api} t={t} openPlugins={ctx.get('pluginNavigation') === undefined ? undefined : () => { close?.(); ctx.get('pluginNavigation')?.openBundle('dsh-plugin-acn'); }} openKnowledge={(value) => { previous.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setKey(value); }} /></div>{key !== undefined && <>
       <button ref={back} type="button" className="acn-tab" onClick={() => { setKey(undefined); }}>{c('‹ 返回 ACN 插件设置', '‹ Back to ACN settings')}</button>
-      <KnowledgePanel api={api} initialKey={key} c={c} openSource={(id) => { openSource(id, close); }} />
+      <KnowledgePanel api={api} initialKey={key} c={c} openSettings={() => { setKey(undefined); }} openSource={(id) => { openSource(id, close); }} />
     </>}</>;
   }
   ctx.effect(() => ctx.slots.inject('plugins.bundle.config', () => ctx.slots.register({
@@ -78,7 +78,7 @@ function registerPage(ctx: Context): void {
       const title = c('知识与活动', 'Knowledge and activity');
       return <><SessionToolbar {...props} api={api} c={c} block={block} suppressed={settings !== undefined || knowledge !== undefined} openSettings={(tab = 'upstreams') => { setSettings(tab); }} openKnowledge={(key, activity = false) => { setKnowledge({ key, activity }); }} />
         {settings !== undefined && <Modal title={settingsTitle()} closeLabel={closeLabel()} close={() => { setSettings(undefined); }}><SettingsEntry initialTab={settings} close={() => { setSettings(undefined); }} /></Modal>}
-        {knowledge && <Modal title={title} closeLabel={closeLabel()} close={() => { setKnowledge(undefined); }}><KnowledgePanel api={api} initialKey={knowledge.key} initialTab={knowledge.activity ? 'activity' : 'knowledge'} c={c} openSource={(id) => { openSource(id, () => { setKnowledge(undefined); }); }} /></Modal>}
+        {knowledge && <Modal title={title} closeLabel={closeLabel()} close={() => { setKnowledge(undefined); }}><KnowledgePanel api={api} initialKey={knowledge.key} initialTab={knowledge.activity ? 'activity' : 'knowledge'} c={c} openSettings={() => { setKnowledge(undefined); setSettings('upstreams'); }} openSource={(id) => { openSource(id, () => { setKnowledge(undefined); }); }} /></Modal>}
       </>;
     }
     child.effect(() => child.slots.inject('conversation.input.left', () => child.slots.register({ name: 'conversation.input.left', id: 'acn', order: 50, locale: 'acn.configuration' }, Toolbar)));

@@ -44,7 +44,7 @@ export function arbitrationMessage(local: Claim = sampleClaim(), other: Claim = 
 export async function inboxFixture(backend: StructuredBackend = () => Promise.resolve({ text: JSON.stringify(emptyInternalize()) }), config: ConfigInput = {}) {
   const root = await fs.mkdtemp(join(tmpdir(), 'acn-inbox-'));
   const warnings: string[] = [];
-  const knowledge = new AcnKnowledge(resolveConfig({ ...config, agentId: 'agent-a', home: root, llm: { provider: 'mock', model: 'mock', ...config.llm } }), { debug() {}, warn: (text: string) => { warnings.push(text); } });
+  const knowledge = new AcnKnowledge(resolveConfig({ ...config, agentId: config.agentId || 'agent-a', home: root, llm: { provider: 'mock', model: 'mock', ...config.llm } }), { debug() {}, warn: (text: string) => { warnings.push(text); } });
   await knowledge.initialize();
   const inbox = new AcnInbox(knowledge, backend, await loadPromptRenderer());
   return { root, knowledge, inbox, warnings, close: async () => { await inbox.close(); await knowledge.jobs?.close(); await knowledge.team?.close(); await fs.rm(root, { recursive: true, force: true }); } };

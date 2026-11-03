@@ -9,7 +9,7 @@ export const JobSchema = z.strictObject({
   state: z.enum(['queued', 'running', 'succeeded', 'failed']), attempts: z.number().int().nonnegative(),
   createdAt: z.number().int().nonnegative(), updatedAt: z.number().int().nonnegative(),
   ordinal: z.number().int().nonnegative().optional(),
-  nextRunAt: z.number().int().nonnegative().optional(), lastError: z.string().optional(), result: z.json().optional(),
+  nextRunAt: z.number().int().nonnegative().optional(), lastError: z.string().optional(), lastErrorKind: z.string().optional(), result: z.json().optional(),
 });
 export type Job = z.infer<typeof JobSchema>;
 export const jobPriority: Record<JobKind, number> = { finalize: 0, recap: 1, inbox: 2, memory_review: 3, dream: 4 };

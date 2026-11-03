@@ -33,7 +33,7 @@ In DSH, open **Plugins**, add the tarball by its absolute local path, then enabl
 
 A blank conversation created before initial setup can be initialized by choosing its configuration in the ACN menu. Disabled configurations retain their key and data for restoration. Source links open exact local details with back navigation and explain missing team sources without automatic network requests.
 
-Each upstream can run solo or connect to team services. Enable team services in the existing configuration and supply both URLs and paste the Team authentication key directly. The input is masked by default; the eye button toggles visibility of the current entry. Saving the configuration also stores the key in DSH; reference names are generated internally. Connection checks use the draft key without saving it. Reopening shows only configured status; leave the field empty to keep the saved key. Plugin YAML and responses never contain the credential value. Existing environment references remain supported. Service consoles require administrator authentication; member credentials do not grant that access. The same Agent ID and local knowledge are retained. Team members use distinct IDs matching their authorization. A failed initial sync reports the problem and allows local work. Solo history is not automatically uploaded when joining. Changing team URLs keeps the pending queue, so eligible pending records may be delivered to the new service after activation. Create another upstream to isolate teams.
+Each upstream can run solo or connect to team services. Enable team services in the existing configuration and supply both URLs and paste the Team authentication key directly. The input is masked by default; the eye button toggles visibility of the current entry. Saving the configuration also stores the key in DSH; reference names are generated internally. Connection checks use the draft key without saving it. Reopening shows only configured status; leave the field empty to keep the saved key. Plugin YAML and responses never contain the credential value. Existing environment references remain supported. Change enabled state from the configuration list after saving or cancelling edits. Changing a keyed team Agent ID requires a new member key or explicit removal of the binding. Conflicting edits keep the Agent ID, URLs and key together; refresh preserves the draft and asks which complete connection to keep. Old credential references are retained for other resident instances. A cold resume keeps the upstream and Agent ID, but uses its currently saved team connection; create a separate upstream to isolate teams. Service consoles require administrator authentication; member credentials do not grant that access. The same Agent ID and local knowledge are retained. Team members use distinct IDs matching their authorization. Initial team preparation must succeed before the first message; retry or fix settings if it fails. Later sync failures in a prepared conversation still allow local work. Solo history is not automatically uploaded when joining. Changing team URLs keeps the pending queue, so eligible pending records may be delivered to the new service after activation. Create another upstream to isolate teams.
 
 Configuration edits take effect in newly started runtime instances; running sessions retain their starting clients. **Reload saved configuration** discards unsaved edits. New stores use `<home>/<upstream>/data/agents/<agentId>/`; existing installations retain their original directories through migration mappings.
 
@@ -41,11 +41,27 @@ Chat and background models are selected separately from the models configured in
 
 ACN background tasks default to a 32,768-token output limit. Explicit `llm.maxOutputTokens` settings continue to take precedence; see the [configuration reference](docs/config.md).
 
-![ACN configuration page in DSH, Chinese UI](docs/assets/upstream-settings.png)
+Knowledge formation, team delivery and local internalization are separate stages:
+
+```mermaid
+flowchart LR
+  Work[Work in DSH] --> Recap[Recap / Finalize]
+  Recap --> Local[Local knowledge and Traces]
+  Local -->|Claims and Disputes only| Upload[Team upload queue]
+  Upload --> Maintainer[Maintainer team knowledge]
+  Maintainer --> Router[Router retrieval]
+  Router --> Use[Members assess and reuse]
+  Maintainer -->|Arbitration advice to direct holders only| Inbox[Durable local inbox]
+  Inbox -->|Model internalization and validation| Local
+```
+
+Solo mode keeps the local path only. Traces and private Memory do not enter the upload queue. A completed resolution or receipt acknowledgment does not mean that local Claims have been revised.
+
+![ACN configuration page in DSH, Chinese UI](docs/assets/upstream-settings.jpg)
 
 The declared DSH version range is `>=0.2.1-rc.2 <0.3.0`, with `0.2.1-rc.2` as the compatibility baseline. The package identifier is `dsh-plugin-acn`; the Chinese display name is **ACN记忆框架**.
 
-Browse public Claims, Disputes and Traces from the conversation **Knowledge** button. The **Activity** tab shows results, source sessions and explicit retry controls. Browsing never syncs or calls a model. Local completion and team delivery are separate states. Brief result notices appear only in the visible, focused source session.
+Browse public Claims, Disputes and Traces from the conversation **ACN → Knowledge and activity** menu. The **Activity** tab shows results, source sessions and explicit retry controls. Browsing never syncs or calls a model. Local completion and team delivery are separate states. Brief result notices appear only in the visible, focused source session.
 
 ## Repository layout
 
@@ -75,9 +91,12 @@ pnpm test
 
 ## Team usage and limitations
 
-Each team member maintains local knowledge and uses Router to discover Claims shared by others. Members can submit conflicting knowledge to Maintainer as disputes. Its suggestions arrive through Inbox and update each member's local knowledge only after internalization.
+Each team member maintains local knowledge and uses Router to discover Claims shared by others. Members can submit conflicting knowledge to Maintainer as disputes. Automatic arbitration requires its own service-side model and configuration. Adopted advice goes only to direct Claim holders through Inbox, and may revise their local knowledge after internalization; other members discover subsequent shared revisions through Router. It is not a broadcast to every member.
 
 Use a **Router without LLM reranking**: changes in reranked candidate sets can block automatic arbitration adoption. Knowledge reuse depends on the agent retrieving and applying relevant Claims. Evidence records and Dream's citation checks do not guarantee factual accuracy; scope and evidence limitations still matter. Memory protection is not an operating-system sandbox.
+
+Activity distinguishes local completion, warnings, budget closure, unfinished groups and team delivery failures. Filters run before paging so older failures remain reachable. Rejected disputes remain undelivered after acknowledgment. A new Dream reads current claims. Credential replacement adopts a new managed reference only after configuration saves; failed saves retain the draft and old credentials. Existing sessions keep their startup connection. Configuration conflicts offer a refresh that preserves draft edits. An inactive knowledge component leaves ordinary chat available and links to plugin management.
+
 
 Further documentation is in Chinese: [documentation index](docs/index.md), [illustrated user guide](docs/user-guide.md), [configuration](docs/config.md), [command reference](docs/command-reference.md), [limitations](docs/outstanding-issues.md), [development](docs/development.md), [architecture](docs/architecture.md). See the [changelog](CHANGELOG.md) for version changes.
 

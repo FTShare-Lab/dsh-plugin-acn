@@ -44,6 +44,40 @@ describe('upstream settings', () => {
     expect(vi.mocked(api.save).mock.calls[0]?.[0].values).toMatchObject({ upstream: 'coding', upstreams: { coding: { name: 'coding', agentId: 'coding', routerEndpoint: '', maintainerEndpoint: '' } } });
     expect(api.interact).not.toHaveBeenCalled();
   });
+  it.each([
+    ['routerEndpoint', 'not-a-url', 'Router'],
+    ['routerEndpoint', 'ftp://router.example.org', 'Router'],
+    ['routerEndpoint', 'https://router.example.org?token=example', 'Router'],
+    ['routerEndpoint', 'https://router.example.org#section', 'Router'],
+    ['routerEndpoint', (() => { const url = new URL('https://router.example.org'); url.username = 'member'; return url.href; })(), 'Router'],
+    ['routerEndpoint', '', 'Router'],
+    ['maintainerEndpoint', 'not-a-url', 'Maintainer'],
+    ['maintainerEndpoint', '', 'Maintainer'],
+  ])('identifies an invalid %s before checking or saving a draft', async (field, value, service) => {
+    const { api } = setup({ ...snapshot, values: configurationValues({ upstream: 'coding', upstreams: { coding: { ...profile, routerEndpoint: 'https://router.example.org', maintainerEndpoint: 'https://maintainer.example.org' } } }) });
+    fireEvent.click(await screen.findByRole('button', { name: '配置' }));
+    const label = field === 'routerEndpoint' ? zh.router : zh.maintainer;
+    fireEvent.change(screen.getByLabelText(label), { target: { value } });
+    fireEvent.click(screen.getByRole('button', { name: '检查连接' }));
+    expect(screen.getByRole('alert').textContent).toContain(`有效的 ${service} 地址`);
+    expect(screen.getByRole('alert').closest('form')).toBe(screen.getByRole('button', { name: '检查连接' }).closest('form'));
+    expect(screen.getByLabelText<HTMLInputElement>(label).value).toBe(value);
+    expect(api.interact).not.toHaveBeenCalled(); expect(api.save).not.toHaveBeenCalled();
+    if (api.credential === undefined) throw new Error('Expected credential API.');
+    expect(vi.mocked(api.credential).mock.calls.some(([request]) => ['check', 'store'].includes(request.action))).toBe(false);
+  });
+  it('trims valid path-prefixed addresses for checks and retains input after a transport failure', async () => {
+    const { api } = setup({ ...snapshot, values: configurationValues({ upstream: 'coding', upstreams: { coding: { ...profile, routerEndpoint: 'https://router.example.org', maintainerEndpoint: 'https://maintainer.example.org' } } }) });
+    fireEvent.click(await screen.findByRole('button', { name: '配置' }));
+    fireEvent.change(screen.getByLabelText(zh.router), { target: { value: ' https://router.example.org/team-a/ ' } });
+    vi.mocked(api.interact).mockRejectedValueOnce(new Error('offline'));
+    fireEvent.click(screen.getByRole('button', { name: '检查连接' }));
+    await screen.findByText('未能完成连接检查，请稍后重试。本次检查不会保存配置，输入已保留。');
+    expect(vi.mocked(api.interact).mock.calls[0]?.[0]).toMatchObject({ action: 'check', connection: { routerEndpoint: 'https://router.example.org/team-a/' } });
+    expect(vi.mocked(api.interact).mock.calls[0]?.[1]).toBeInstanceOf(AbortSignal);
+    expect(screen.getByLabelText<HTMLInputElement>(zh.router).value).toBe('https://router.example.org/team-a/');
+    expect(api.save).not.toHaveBeenCalled();
+  });
   it.each([zh, en])('offers deployment help and connects the existing identity without creating another member', async (locale) => {
     const english = locale === en; const { api } = setup({ ...snapshot, values: configurationValues({ upstream: 'coding', upstreams: { coding: { ...profile, keyEnv: 'EXAMPLE_TEAM_TOKEN' } } }) }, (key) => locale[key]);
     const guide = english ? 'ACN deployment guide (GitHub)' : 'ACN 部署说明（GitHub）';
@@ -92,7 +126,7 @@ it('browses knowledge, filters activity and retries explicitly without a sync re
   const api: InteractionApi = { read: vi.fn().mockResolvedValue(snapshot), save: vi.fn(), interact };
   render(<KnowledgePanel api={api} initialKey="personal" c={c} />);
   await screen.findByText('示例知识'); fireEvent.click(screen.getByRole('tab', { name: '处理活动' })); fireEvent.click(await screen.findByRole('button', { name: '重试任务' }));
-  await waitFor(() => { expect(interact).toHaveBeenCalledWith({ action: 'retry', key: 'personal', id: 'job-a' }); });
+  await waitFor(() => { expect(interact).toHaveBeenCalledWith({ action: 'retry', key: 'personal', id: 'job-a' }, expect.any(AbortSignal)); });
   expect(interact.mock.calls.some(([r]) => r.action === 'activity')).toBe(true); expect(interact.mock.calls.every(([request]) => request.action !== 'sync')).toBe(true); expect(screen.getByText('模型暂不可用。')).toBeDefined();
 });
 
@@ -104,18 +138,18 @@ it.each(['inbox', 'dream', 'recap', 'finalize', 'memory_review'] as const)('show
   fireEvent.click(await screen.findByText(`${kind} · 处理失败`, { exact: false, selector: 'summary' }));
   expect(screen.getByRole('alert').textContent).toBe(error);
   fireEvent.click(screen.getByRole('button', { name: '重试任务' }));
-  await waitFor(() => { expect(interact).toHaveBeenCalledWith({ action: 'retry', key: 'personal', id: 'failed-model-job' }); });
+  await waitFor(() => { expect(interact).toHaveBeenCalledWith({ action: 'retry', key: 'personal', id: 'failed-model-job' }, expect.any(AbortSignal)); });
   expect(interact.mock.calls.every(([request]) => request.action !== 'sync')).toBe(true);
 });
 
-it('disables and restores the same configuration key instead of deleting a connection', async () => {
-  const { api } = setup(); fireEvent.click(await screen.findByRole('button', { name: '配置' }));
-  expect(screen.getByText(/关联会话暂停聊天和知识处理/)).toBeDefined(); expect(screen.queryByRole('button', { name: /删除/ })).toBeNull();
-  fireEvent.click(screen.getByRole('button', { name: '停用' })); await waitFor(() => { expect(api.save).toHaveBeenCalled(); });
-  expect(vi.mocked(api.save).mock.calls[0]?.[0].values).toMatchObject({ upstream: '', upstreams: { coding: { agentId: 'agent-a', enabled: false } } });
-  fireEvent.click(screen.getByRole('button', { name: '配置' })); fireEvent.click(screen.getByRole('button', { name: '恢复' }));
+it('disables and enables the saved configuration from the list without editing its fields', async () => {
+  const { api } = setup();
+  fireEvent.click(await screen.findByRole('button', { name: '停用配置 开发' }));
+  await waitFor(() => { expect(api.save).toHaveBeenCalledTimes(1); });
+  expect(vi.mocked(api.save).mock.calls[0]?.[0].values).toMatchObject({ upstream: '', upstreams: { coding: { name: '开发', agentId: 'agent-a', enabled: false } } });
+  fireEvent.click(await screen.findByRole('button', { name: '启用配置 开发' }));
   await waitFor(() => { expect(api.save).toHaveBeenCalledTimes(2); });
-  expect(vi.mocked(api.save).mock.calls[1]?.[0].values.upstreams?.['coding']).toMatchObject({ agentId: 'agent-a', enabled: true });
+  expect(vi.mocked(api.save).mock.calls[1]?.[0].values).toMatchObject({ upstream: '', upstreams: { coding: { name: '开发', agentId: 'agent-a', enabled: true } } });
 });
 
 it.each([false, true])('opens exact source details, explains missing team sources and preserves original details (local=%s)', async (local) => {
@@ -185,7 +219,7 @@ it('does not update configuration if key storage fails and explains a later conf
   const input = await screen.findByLabelText<HTMLInputElement>('团队鉴权密钥'); fireEvent.change(input, { target: { value: crypto.randomUUID() } });
   credential.mockResolvedValueOnce({ ok: false, message: '无法保存密钥。' }); fireEvent.click(screen.getByRole('button', { name: '保存配置' })); await screen.findByText('无法保存密钥。'); expect(api.save).not.toHaveBeenCalled(); expect(input.value).not.toBe('');
   vi.mocked(api.save).mockResolvedValueOnce({ ok: false, code: 'conflict', fields: [] }); fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
-  await screen.findByText(/团队鉴权密钥已保存。.*配置/); expect(input.value).toBe('');
+  await screen.findByText((text) => text.includes(zh.conflict)); expect(screen.getByRole('alert').textContent).toContain('本次密钥替换尚未生效'); expect(input.value).not.toBe(''); expect(screen.getByRole('button', { name: '刷新并保留草稿' })).toBeDefined();
 });
 
 it.each(['EXAMPLE_TEAM_TOKEN', `ACN_TEAM_${crypto.randomUUID().replaceAll('-', '').toUpperCase()}`])('retains the saved key reference through solo mode and team reactivation: %s', async (reference) => {

@@ -1,17 +1,21 @@
 // 交互 API 读取领域台账，显式操作才发起同步或模型请求，错误不回传底层配置。
 import type { Context } from '@deepseek-ai/cordis';
 import type {} from '@deepseek-ai/dsh-api-session-controller';
+import { messageInfo } from '../interaction-messages.js';
 import { SessionId } from '@deepseek-ai/dsh-session';
 import { BlockAssembler, createUserMessage } from '@deepseek-ai/dsh-llm';
 import { AcnKnowledge } from '../knowledge/service.js';
 import { InteractionRequestSchema } from '../interaction.js';
-import type { InteractionRequest, InteractionResult, KnowledgeView, Activity } from '../interaction.js';
+import type { InteractionRequest, InteractionResult, KnowledgeView } from '../interaction.js';
 import { DisputeStore } from '../store/disputes.js';
 import { TraceStore } from '../store/traces.js';
 import { ClaimStore } from '../store/claims.js';
 import { JobQueue } from '../worker/queue.js';
 import { UploadStore } from '../store/uploads.js';
 import { JobError } from '../worker/types.js';
+import { allActivities, activityPage } from '../activities.js';
+import type { ActivityPage } from '../activities.js';
+import { UploadDelivery } from '../upload/deliver.js';
 import { TeamFacade } from '../team/service.js';
 import { resolveConfig } from '../config.js';
 import { PresentationStore } from '../store/presentation.js';
@@ -34,24 +38,7 @@ export async function checkTeamConnection(ctx: Context, connection: Extract<Inte
   } finally { await team.close(); }
 }
 
-function summary(result: unknown): string {
-  if (result === null || typeof result !== 'object') return '尚无处理结果';
-  const values = result as Record<string, unknown>;
-  if (values['skipped'] === true || typeof values['skipped'] === 'string') return '没有需要新增处理的内容';
-  const labels: Record<string, string> = { claimCount: '更新 Claim', disputeCount: '形成争议', traceCount: '形成来源', applied: '更新 Claim', handled: '处理收件', uploadedClaims: '已投递 Claim', reportedDisputes: '已上报争议', modelSteps: '探索请求', wrapUpSteps: '收尾请求' };
-  const counts = Object.entries(labels).flatMap(([key, label]) => typeof values[key] === 'number' ? [`${label}: ${values[key]}`] : []);
-  if (Array.isArray(values['updatedClaimIds'])) counts.push(`更新 Claim: ${values['updatedClaimIds'].length}`);
-  if (values['changed'] === false) counts.push('没有新增记忆');
-  if (values['applied'] === true) counts.push('本地处理完成');
-  return counts.join('；') || '处理完成，可能未产生新知识';
-}
-// 空收件同步已有操作回执；仍保留活动记录，但不再补弹一次没有变化的通知。
-function emptyInbox(result: unknown): boolean {
-  if (typeof result !== 'object' || result === null) return false;
-  const r = result as Record<string, unknown>;
-  return ['pulled', 'accepted', 'acknowledged', 'applied', 'handled', 'uploadedClaims', 'reportedDisputes'].every((k) => r[k] === 0) && Array.isArray(r['warnings']) && r['warnings'].length === 0;
-}
-export async function readKnowledge(pool: RuntimePool, key: string, kind: 'claim' | 'dispute' | 'trace', query: string, offset: number, entities = true): Promise<KnowledgeView> {
+export async function readKnowledge(pool: RuntimePool, key: string, kind: 'claim' | 'dispute' | 'trace', query: string, offset: number, entities = true, activityOptions: ActivityPage = {}): Promise<KnowledgeView> {
   const config = pool.config(key, true);
   if (config === undefined || config.agentId === '') throw new JobError('connection', '请选择可用的知识身份。');
   // 浏览不启动 worker、同步或 Dream；只从当前已生效实体与任务账本读取。
@@ -62,9 +49,10 @@ export async function readKnowledge(pool: RuntimePool, key: string, kind: 'claim
     const text = query.toLocaleLowerCase();
     const matching = values.filter((item) => ('holder' in item ? item.holder === context.agentId : 'agent' in item ? item.agent === context.agentId : item.reporter_agent_id === context.agentId) && JSON.stringify(item).toLocaleLowerCase().includes(text)).sort((a, b) => a.id.localeCompare(b.id));
     const pending = await new UploadStore(context).read();
-    const presentation = await new PresentationStore(context).read();
-    const activities: Activity[] = (await new JobQueue(context).list()).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 100).map((job) => ({ id: job.id, kind: job.kind, state: job.payload['paused'] === true ? 'paused' : job.state, attempts: job.attempts, updatedAt: job.updatedAt, unseen: !(job.kind === 'inbox' && job.state === 'succeeded' && emptyInbox(job.result)) && presentation !== null && job.updatedAt >= presentation.baselineAt && presentation.seen[job.id] !== job.updatedAt, ...(job.sessionId === undefined ? {} : { sessionId: job.sessionId }), summary: summary(job.result), ...(job.lastError === undefined ? {} : { error: job.lastError }) }));
-    return { key, name: pool.choices().find((item) => item.key === key)?.name ?? key, items: matching.slice(offset, offset + 30).map((item) => ({ kind, id: item.id, name: item.name, status: 'status' in item ? String(item.status) : '', detail: JSON.stringify(item, null, 2) })), omitted: Math.max(0, matching.length - offset - 30), activities, pendingClaims: pending.claims.length, pendingDisputes: pending.disputes.length };
+    const rows = await allActivities(knowledge, (kind) => pool.supportsJob(key, kind));
+    const issues = rows.filter((item) => item.kind === 'delivery' && item.state === 'rejected' && item.requiresAttention).length;
+    const attentionCount = pending.claims.length + pending.disputes.length + issues + rows.filter((item) => item.kind !== 'delivery' && item.requiresAttention).length;
+    return { key, name: pool.choices().find((item) => item.key === key)?.name ?? key, items: matching.slice(offset, offset + 30).map((item) => ({ kind, id: item.id, name: item.name, status: 'status' in item ? String(item.status) : '', detail: JSON.stringify(item, null, 2) })), omitted: Math.max(0, matching.length - offset - 30), ...activityPage(rows, activityOptions), attentionCount, pendingClaims: pending.claims.length, pendingDisputes: pending.disputes.length };
   } finally { if (knowledge !== pool.base) await knowledge.team?.close(); }
 }
 export async function executeInteraction(ctx: Context, input: InteractionRequest, runtimePool?: RuntimePool, signal?: AbortSignal): Promise<InteractionResult> {
@@ -72,15 +60,17 @@ export async function executeInteraction(ctx: Context, input: InteractionRequest
   if (!parsed.success) return { ok: false, message: '请求字段不合法，请重新加载页面。' };
   const request = parsed.data;
   const pool = runtimePool ?? ctx.get('acnRuntime');
-  if (pool === undefined) return { ok: false, message: '知识服务尚未启用，请检查插件配置。' };
+  if (pool === undefined) return { ok: false, serviceAvailable: false, message: '知识组件尚未启用，聊天仍可继续。请在插件管理中启用 ACN 知识组件。' };
   try {
     if (request.action === 'check') return await checkTeamConnection(ctx, request.connection, teamCredentials(ctx), signal);
     if (request.action === 'probe') {
       if (!request.provider || !request.model) return { ok: true, message: '沿用会话模型；首次同步前请先选择聊天模型。' };
-      const signal = AbortSignal.timeout(20_000);
-      const call = await ctx.llm.prepareCall({ provider: request.provider, model: request.model, maxTokens: 1024 }, signal);
+      const bounded = AbortSignal.any([AbortSignal.timeout(20_000), ...signal === undefined ? [] : [signal]]);
+      bounded.throwIfAborted();
+      const call = await ctx.llm.prepareCall({ provider: request.provider, model: request.model, maxTokens: 1024 }, bounded);
       const assembler = new BlockAssembler();
-      for await (const chunk of call.stream({ ...call.config, system: 'Reply with OK.', messages: [createUserMessage({ content: [{ type: 'text', text: 'Connection check.' }], source: { kind: 'acn-formation' } })], signal })) assembler.push(chunk);
+      for await (const chunk of call.stream({ ...call.config, system: 'Reply with OK.', messages: [createUserMessage({ content: [{ type: 'text', text: 'Connection check.' }], source: { kind: 'acn-formation' } })], signal: bounded })) assembler.push(chunk);
+      bounded.throwIfAborted();
       if (assembler.finish.kind !== 'stop') return { ok: false, message: '模型未正常完成检查，保留原模型。请检查模型配置或重试。' };
       return { ok: true, message: '知识模型检查通过。' };
     }
@@ -94,19 +84,39 @@ export async function executeInteraction(ctx: Context, input: InteractionRequest
         return { ok: true, message: '', reference: { key: request.key, id: request.id, ...(item === undefined ? {} : { item: { kind: 'claim', id: item.id, name: item.name, status: String(item.status), detail: JSON.stringify(item, null, 2) } }) } };
       } finally { if (knowledge !== pool.base) await knowledge.team?.close(); }
     }
-    if (request.action === 'activity') return { ok: true, message: '', knowledge: await readKnowledge(pool, request.key, 'claim', '', 0, false) };
+    if (request.action === 'activity') return { ok: true, message: '', knowledge: await readKnowledge(pool, request.key, 'claim', '', 0, false, request) };
     if (request.action === 'ack') {
       const config = pool.config(request.key, true);
       if (config === undefined || !config.agentId) throw new JobError('connection', '知识身份不可用。');
       const knowledge = pool.isBase(request.key) ? pool.base : new AcnKnowledge(config, ctx.logger);
-      try { const job = await new JobQueue(knowledge.context()).read(request.id); if (job === null || job.updatedAt !== request.version || !['succeeded', 'failed'].includes(job.state)) return { ok: false, message: '任务状态已变化，请重新读取。' }; await new PresentationStore(knowledge.context()).acknowledge(job.id, job.updatedAt); return { ok: true, message: '' }; }
+      try { const job = await new JobQueue(knowledge.context()).read(request.id);
+        const rejected = job === null ? (await allActivities(knowledge, (kind) => pool.supportsJob(request.key, kind))).find((item) => item.id === request.id && item.state === 'rejected') : undefined;
+        if (rejected !== undefined && rejected.updatedAt === request.version) { await new PresentationStore(knowledge.context()).acknowledge(rejected.id, request.version); return { ok: true, message: '已标记知悉；该争议仍未成功投递。' }; }
+        if (job === null || job.updatedAt !== request.version || !['succeeded', 'failed'].includes(job.state)) return { ok: false, message: '任务状态已变化，请重新读取。' }; await new PresentationStore(knowledge.context()).acknowledge(job.id, job.updatedAt); return { ok: true, message: '' }; }
       finally { if (knowledge !== pool.base) await knowledge.team?.close(); }
+    }
+    if (request.action === 'retry_delivery' || request.action === 'dream_again') {
+      const config = pool.config(request.key);
+      if (config === undefined) throw new JobError('connection', '连接已停用或删除，不能重试。');
+      const knowledge = await pool.activate(request.key);
+      if (request.action === 'dream_again') {
+        const previous = await knowledge.jobs?.queue.read(request.id);
+        if (previous?.kind !== 'dream' || previous.state !== 'succeeded') throw new JobError('validation', '请先等待当前 Dream 结束，再重新整理。');
+        const dream = await pool.dreamService(request.key);
+        if (dream === undefined) throw new JobError('handler_inactive', 'Dream 组件未启用，请在插件管理中启用后重试。');
+        await dream.request(typeof previous.payload['workspace_root'] === 'string' ? previous.payload['workspace_root'] : undefined, previous.sessionId);
+        return { ok: true, message: '已创建新的 Dream 请求，将重新读取当前知识。' };
+      }
+      if (knowledge.team === null) throw new JobError('connection', '单人配置不投递团队知识，请在设置中恢复团队连接。');
+      const report = await new UploadDelivery(knowledge.context(), knowledge.team).deliver(signal);
+      return { ok: report.warnings.length === 0, message: report.warnings.length > 0 ? '团队投递未全部完成，请查看活动中的具体原因。' : report.pendingClaims + report.pendingDisputes > 0 ? '仍有投递正在进行或等待依赖，待投记录已保留。' : '本轮团队投递已完成。' };
     }
     if (request.action === 'retry') {
       const config = pool.config(request.key);
       if (config === undefined) throw new JobError('connection', '连接已停用或删除，不能重试。');
       const knowledge = await pool.activate(request.key);
       const job = await knowledge.jobs?.queue.read(request.id);
+      if (job !== null && job !== undefined && !knowledge.jobs?.supports(job.kind)) throw new JobError('handler_inactive', '对应后台组件未启用，请在插件管理中启用后重试。');
       if (job?.kind === 'dream' && job.payload['paused'] === true) { await knowledge.jobs?.queue.pauseDream(false); knowledge.jobs?.wake(true); }
       else await knowledge.jobs?.retry(request.id);
       return { ok: true, message: '任务已重新入队。' };
@@ -131,6 +141,6 @@ export async function executeInteraction(ctx: Context, input: InteractionRequest
     const job = await services.formation?.recap(session.id);
     return { ok: services.formation !== undefined, message: services.formation === undefined ? '知识形成组件未启用。' : job == null ? '没有可复盘的新增内容。' : '复盘已入队，可在处理活动中查看。' };
   } catch (error) {
-    return { ok: false, message: error instanceof JobError ? error.message : '操作未完成。请检查连接、知识模型和本地存储后重试。' };
+    return { ok: false, message: error instanceof JobError ? error.message : '操作未完成。请检查连接、知识模型和本地存储后重试。', ...(error instanceof JobError ? { messageInfo: messageInfo(error.message, error.kind) } : {}) };
   }
 }

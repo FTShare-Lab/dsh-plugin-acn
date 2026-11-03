@@ -1,5 +1,6 @@
 // 配置写入交给宿主的 profile 锁、原子持久化和 Loader 重载，防止覆盖其他页面的修改。
 import { createHash } from 'node:crypto';
+import { messageInfo } from '../interaction-messages.js';
 import { access, stat } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -10,7 +11,7 @@ import type {} from '@deepseek-ai/dsh-llm';
 import { TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol';
 import type {} from '@deepseek-ai/dsh-agent';
 import type {} from '@deepseek-ai/dsh-tools';
-import { configurationBusy } from './session-binding.js';
+import { configurationBusy, runningConfiguration } from './session-binding.js';
 import { ConfigError, resolveConfig } from '../config.js';
 import { configurationValues, mergeConfiguration, SaveConfigurationSchema } from '../configuration.js';
 import type { ConfigurationSnapshot, ConfigurationResult, ModelChoice, SaveConfiguration } from '../configuration.js';
@@ -56,7 +57,25 @@ async function checkDirectory(path: string): Promise<void> {
 
 export class ConfigurationService extends TypertRemoteService {
   pending = 0;
+  private mutationTail: Promise<void> = Promise.resolve();
+  // 仅回收本服务新建且从未采用的引用；重启后宁可保留，不能误删旧实例凭据。
+  private readonly stagedCredentials = new Set<string>();
+  private protectCredentials(raw: Record<string, unknown>): void {
+    const config = resolveConfig(raw);
+    this.stagedCredentials.delete(config.team.keyEnv);
+    for (const item of Object.values(upstreamsOf(config))) this.stagedCredentials.delete(item.keyEnv);
+  }
+  private async serialize<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.mutationTail; let release: (() => void) | undefined;
+    this.mutationTail = new Promise<void>((resolve) => { release = resolve; });
+    await previous;
+    try { return await operation(); } finally { release?.(); }
+  }
   async credential(request: CredentialRequest, signal?: AbortSignal): Promise<CredentialResult> {
+    const result = request.action !== 'check' ? await this.serialize(() => this.credentialOperation(request, signal)) : await this.credentialOperation(request, signal);
+    return { ...result, messageInfo: result.messageInfo ?? messageInfo(result.message) };
+  }
+  private async credentialOperation(request: CredentialRequest, signal?: AbortSignal): Promise<CredentialResult> {
     const parsed = CredentialRequestSchema.safeParse(request);
     if (!parsed.success) return { ok: false, message: '请检查团队配置，并填写有效的鉴权密钥。' };
     if (parsed.data.action === 'check') {
@@ -67,26 +86,40 @@ export class ConfigurationService extends TypertRemoteService {
       } catch { return { ok: false, message: '检查未完成，请核对团队配置后重试。' }; }
     }
     const provider = this.ctx.get('credentials');
-    if (provider === undefined) return { ok: false, message: '当前宿主未启用凭据托管。请在启动 DSH 前设置同名环境变量，随后重新启动应用。' };
+    if (provider === undefined) return { ok: false, message: '当前 DSH 未提供凭据托管，无法在此页保存新密钥。仍可输入临时密钥检查连接；保存新密钥需使用支持凭据托管的 DSH。已有环境变量引用可继续沿用，高级配置方法见插件配置文档。', writable: false };
     try {
       const reference = credentialReference(parsed.data.reference);
+      if (parsed.data.action === 'discard') {
+        if (!this.stagedCredentials.has(reference)) return { ok: false, message: '密钥已被配置或会话使用，保留现有凭据。' };
+        const config = this.ctx.get('configEditor') === undefined ? this.ctx.get('acnRuntime')?.base.config : resolveConfig(entryConfig(this.entry()));
+        const inUse = config !== undefined && (config.team.keyEnv === reference || Object.values(upstreamsOf(config)).some((item) => item.keyEnv === reference))
+          || this.ctx.agents.list().some((agent) => runningConfiguration(agent.session.header)?.team.keyEnv === reference);
+        if (inUse) { this.stagedCredentials.delete(reference); return { ok: false, message: '密钥已被配置或会话使用，保留现有凭据。' }; }
+        await provider.unset(reference);
+        this.stagedCredentials.delete(reference);
+        return { ok: true, message: '' };
+      }
       if (parsed.data.action === 'store') {
         const info = await provider.describe(reference);
         if (!info.writable) return { ok: false, message: '当前密钥存储只读，无法保存新密钥；仍可检查连接，或留空保留现有密钥。', configured: info.configured, writable: false };
+        // 保存使用不可变的新引用，失败不能改变旧客户端或其他工作配置的密钥。
+        if (info.configured) return { ok: false, message: '已有密钥引用不能覆盖，请重新输入并保存为新引用。' };
         await provider.set(reference, parsed.data.value);
+        this.stagedCredentials.add(reference);
       }
       const info = await provider.describe(reference);
-      return { ok: true, message: parsed.data.action === 'store' ? '凭据已保存到 DSH 托管存储，下次团队请求生效。' : '', configured: info.configured, writable: info.writable };
+      return { ok: true, message: parsed.data.action === 'store' ? '凭据已保存到 DSH 托管存储，完成配置保存后，新启动的会话才会采用；已有会话保留原连接。' : '', configured: info.configured, writable: info.writable };
     } catch {
       this.ctx.logger.warn('Team credential operation could not complete.');
       return { ok: false, message: '凭据操作未完成，请检查宿主凭据服务后重试。' };
     }
   }
   async interact(request: InteractionRequest, signal?: AbortSignal): Promise<InteractionResult> {
-    if (this.pending > 0 && ['select', 'sync', 'retry'].includes(request.action)) return Promise.resolve({ ok: false, message: configurationBusy });
+    if (this.pending > 0 && ['select', 'sync', 'retry', 'retry_delivery', 'dream_again'].includes(request.action)) return Promise.resolve({ ok: false, message: configurationBusy });
     // Gateway 调用会重绑定 Service tracker；领域实例必须从配置行自己的隔离作用域取。
-    const pool = this.entry().fiber?.ctx.acnRuntime;
-    return executeInteraction(pool?.ctx ?? this.ctx, request, pool, signal);
+    const pool = this.entry().fiber?.ctx.get('acnRuntime');
+    const result = await executeInteraction(pool?.ctx ?? this.ctx, request, pool, signal);
+    return { ...result, messageInfo: result.messageInfo ?? messageInfo(result.message), ...(result.session === undefined ? {} : { session: { ...result.session, messageInfo: messageInfo(result.session.message) } }) };
   }
   constructor(ctx: Context) {
     super(ctx, 'acnConfiguration');
@@ -139,12 +172,16 @@ export class ConfigurationService extends TypertRemoteService {
     return { revision: configurationRevision(raw), values, models, active: entry.fiber?.state === activeState, dataDirectory: selected?.agentId ? agentHomePath(selected.home, selected.agentId) : '', upstreamPending };
   }
 
-  async save(request: SaveConfiguration): Promise<ConfigurationResult> {
+  save(request: SaveConfiguration): Promise<ConfigurationResult> {
+    return this.serialize(() => this.saveOperation(request));
+  }
+  private async saveOperation(request: SaveConfiguration): Promise<ConfigurationResult> {
     const parsed = SaveConfigurationSchema.safeParse(request);
     if (!parsed.success) return { ok: false, code: 'invalid', fields: [...new Set(parsed.error.issues.map((issue) => issue.path.join('.')))] };
     const { revision, values } = parsed.data;
     try {
       const entry = this.entry();
+      this.protectCredentials(entryConfig(entry));
       if (configurationRevision(entryConfig(entry)) !== revision) return { ok: false, code: 'conflict', fields: [] };
       if (values.upstreams === undefined && values.agentId === '') throw new ConfigError(['agentId']);
       if (values.mode === 'team' && (!values.routerEndpoint || !values.maintainerEndpoint)) throw new ConfigError(['team']);
@@ -175,6 +212,8 @@ export class ConfigurationService extends TypertRemoteService {
         }
         this.checkIdle();
         const next = mergeConfiguration(current, values);
+        // 在交给持久化之前停止回收；即使响应失败，也可能已经落盘。
+        this.protectCredentials(next);
         if (values.upstreams === undefined && identity(previous) !== identity(values)) next.sessionEpoch = epoch();
         return next;
       }); } finally { this.pending -= 1; }

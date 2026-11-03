@@ -9,6 +9,7 @@ import { InboxStore } from '../../src/store/inbox.js';
 import { ClaimStore } from '../../src/store/claims.js';
 import { TraceStore } from '../../src/store/traces.js';
 import { DisputeStore } from '../../src/store/disputes.js';
+import { AgentIdSchema, ClaimIdSchema } from '../../src/protocol/ids.js';
 import { ReportedSetStore } from '../../src/store/reported-sets.js';
 import { InboxMessageSchema } from '../../src/protocol/inbox.js';
 import { writeYamlAtomic, readYaml } from '../../src/store/yaml.js';
@@ -23,6 +24,36 @@ import { newDraft, waitJob } from '../formation/helpers.js';
 import { inboxFixture, inboxMessage, arbitrationMessage, emptyInternalize, teamServer } from '../team/helpers.js';
 
 describe('Inbox sync and worker', () => {
+  it.each(['syntax', 'ownership'] as const)('keeps an ACKed notification recoverable after %s failure and applies exactly once after retry', async (failure) => {
+    const message = arbitrationMessage(); let received = false; let fixed = false; let calls = 0;
+    const foreign = sampleClaim({ id: ClaimIdSchema.parse('claim_00000002'), holder: AgentIdSchema.parse('agent-b') });
+    const server = await teamServer((request) => {
+      if (request.path === '/inbox/pull') return { body: received ? [] : [message] };
+      if (request.path === '/inbox/ack') received = true;
+      return {};
+    });
+    const fixture = await inboxFixture(() => {
+      calls += 1;
+      if (!fixed && failure === 'syntax') return Promise.resolve({ text: '{"new_claims":[' });
+      if (!fixed) return Promise.resolve({ text: JSON.stringify({ ...emptyInternalize(), updated_claims: [{ ...newDraft(), id: foreign.id, status: 'deprecated', source_claim_ids: [message.policy.id] }] }) });
+      return Promise.resolve({ text: JSON.stringify({ ...emptyInternalize(), new_claims: [{ ...newDraft(), source_claim_ids: [message.policy.id] }] }) });
+    }, { llm: { structuredRetries: 2 }, team: { routerEndpoint: server.endpoint, maintainerEndpoint: server.endpoint, retryCount: 0 } });
+    try {
+      const context = fixture.knowledge.context(); const worker = fixture.knowledge.jobs; if (!worker) throw new Error('Missing worker.');
+      const local = sampleClaim(); await new ClaimStore(context).write(local); await worker.start();
+      const job = await fixture.inbox.enqueue(); const failed = await waitJob(worker.queue, job.id, 'failed');
+      expect(received).toBe(true); expect(calls).toBe(2); expect(failed.lastError).toContain('连续 2 次');
+      expect((await new InboxStore(context).listPending()).map((m) => m.id)).toEqual([message.id]);
+      expect(await new ClaimStore(context).list()).toEqual([local]); expect(await new TraceStore(context).list()).toEqual([]);
+      expect((await new UploadStore(context).read()).claims).toEqual([]);
+      fixed = true; await worker.retry(job.id); const completed = await waitJob(worker.queue, job.id);
+      expect(completed.result).toMatchObject({ accepted: 0, handled: 1, applied: 1 }); expect(calls).toBe(3);
+      expect(await new InboxStore(context).hasUnfinished()).toBe(false); expect(await new TraceStore(context).list()).toHaveLength(1);
+      expect(await new ClaimStore(context).read(local.id)).toEqual(local); expect((await new ClaimStore(context).list()).every((c) => c.holder === 'agent-a')).toBe(true);
+      await waitJob(worker.queue, (await fixture.inbox.enqueue()).id); expect(calls).toBe(3);
+      expect(server.requests.filter((request) => request.path === '/inbox/ack')).toHaveLength(1);
+    } finally { await fixture.close(); await server.close(); }
+  });
   it('reuploads an already-deprecated Policy dependent without a model call, new revision or Trace', async () => {
     const server = await teamServer(() => ({}));
     const fixture = await inboxFixture(() => Promise.reject(new Error('Policy withdrawal must be deterministic.')), { team: { routerEndpoint: server.endpoint, maintainerEndpoint: server.endpoint, retryCount: 0 } });

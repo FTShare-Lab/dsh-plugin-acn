@@ -2,13 +2,14 @@
 import type { StoreContext } from '../store/context.js';
 import { acquireFileLease } from '../store/lock.js';
 import { LockTimeoutError } from '../store/errors.js';
+import { DeliveryStatusStore } from '../store/delivery-status.js';
 import { ClaimStore } from '../store/claims.js';
 import { withFileLock } from '../store/lock.js';
 import { ensureKnowledgeReady, KnowledgeBusy, sameClaim } from '../knowledge/alignment.js';
 import { relatedIds, consolidationReady } from './consolidation.js';
 import { UploadStore } from '../store/uploads.js';
 import { ReportedSetStore, reportedClaimSetKey } from '../store/reported-sets.js';
-import { RejectedDisputeStore } from '../store/rejected-disputes.js';
+import { RejectedDisputeStore, disputeVersion } from '../store/rejected-disputes.js';
 import { TeamError } from '../team/errors.js';
 import type { TeamFacade } from '../team/service.js';
 import { nowSeconds } from '../protocol/time.js';
@@ -20,7 +21,7 @@ export class UploadDelivery {
     const report: DeliveryReport = { deliveredClaims: 0, deliveredDisputes: 0, pendingClaims: 0, pendingDisputes: 0, warnings: [] };
     const team = this.team;
     if (team === null || this.context.mode === 'solo') return report;
-    const queue = new UploadStore(this.context);
+    const queue = new UploadStore(this.context); const status = new DeliveryStatusStore(this.context);
     let snapshot = await queue.read();
     if (snapshot.claims.length === 0 && snapshot.disputes.length === 0) return report;
     let lease;
@@ -41,13 +42,13 @@ export class UploadDelivery {
           const claim = pending.claims.find((claim) => claim.id === queued.id); if (claim === undefined) continue;
           if (attempted.has(claim.id)) continue;
           // 单人期间的修改没有团队授权，也可能包含尚未交付的整合；保留旧项待确认。
-          if (!current.some((value) => sameClaim(value, claim))) { report.warnings.push(`Claim ${claim.id} 的待上传版本与本地不一致，已暂停该项；请在团队模式确认修订后重试。`); continue; }
-          if (relatedIds(pending.consolidations ?? []).has(claim.id) && !consolidationReady(claim, pending.consolidations ?? [], pending.acknowledgements ?? [], current)) continue;
+          if (!current.some((value) => sameClaim(value, claim))) { await status.record({ kind: 'claim', id: claim.id, reason: 'version' }); report.warnings.push(`Claim ${claim.id} 的待上传版本与本地不一致，已暂停该项；请在团队模式确认修订后重试。`); continue; }
+          if (relatedIds(pending.consolidations ?? []).has(claim.id) && !consolidationReady(claim, pending.consolidations ?? [], pending.acknowledgements ?? [], current)) { await status.record({ kind: 'claim', id: claim.id, reason: 'dependency' }); continue; }
           attempted.add(claim.id); progressed = true;
           try {
             await team.request('maintainer', () => team.maintainer.upload(claim, signal));
-            lease.check(); await queue.removeDeliveredClaims([claim]); report.deliveredClaims += 1;
-          } catch (error) { if (!(error instanceof TeamError)) throw error; report.warnings.push(error.message); if (error.kind === 'auth' || error.kind === 'cancelled') { stopped = true; break; } }
+            lease.check(); await queue.removeDeliveredClaims([claim]); report.deliveredClaims += 1; await status.clear('claim', claim.id);
+          } catch (error) { if (!(error instanceof TeamError)) throw error; if (error.kind !== 'cancelled') await status.record({ kind: 'claim', id: claim.id, reason: error.kind === 'legacy_route' ? 'client' : error.kind, ...(error.status === undefined ? {} : { status: error.status }) }); report.warnings.push(error.message); if (error.kind === 'auth' || error.kind === 'cancelled') { stopped = true; break; } }
         }
         if (!progressed) break;
       }
@@ -63,16 +64,21 @@ export class UploadDelivery {
             await team.request('maintainer', () => team.maintainer.report(dispute, signal));
             lease.check(); await ledger.record(dispute.claims, dispute.id, nowSeconds()); report.deliveredDisputes += 1;
           }
-          await queue.removeDeliveredDisputes([dispute]);
+          await queue.removeDeliveredDisputes([dispute]); await status.clear('dispute', dispute.id);
         } catch (error) {
           if (!(error instanceof TeamError)) throw error;
           if (error.kind === 'client' && error.status === 409) {
             // 明确冲突（如直接 Claim 已废弃）不会因重试恢复；本地争议仍保留供检查。
-            lease.check(); await rejected.record(dispute);
+            lease.check(); const previous = (await status.read()).issues[`dispute-${dispute.id}`];
+            await rejected.record(dispute, (previous?.version === disputeVersion(dispute) ? previous.attempts : 0) + 1);
+            await status.record({ kind: 'dispute', id: dispute.id, version: disputeVersion(dispute), reason: 'rejected', status: 409 });
             const warning = `Dispute ${dispute.id} 被团队服务以 409 拒绝，已停止自动重试；本地记录保留，请核对当前 Claim。`;
             report.warnings.push(warning); this.context.logger.warn(warning);
             await queue.removeDeliveredDisputes([dispute]);
-          } else report.warnings.push(error.message);
+          } else {
+            if (error.kind !== 'cancelled') await status.record({ kind: 'dispute', id: dispute.id, version: disputeVersion(dispute), reason: error.kind === 'legacy_route' ? 'client' : error.kind, ...(error.status === undefined ? {} : { status: error.status }) });
+            report.warnings.push(error.message);
+          }
           if (error.kind === 'auth' || error.kind === 'cancelled') break;
         }
       }

@@ -52,7 +52,7 @@ export class KnowledgeSessions {
           state.catalog.text = renderCatalog(snapshot.claims, { ...this.knowledge.config.catalog, maxChars: Math.max(1, total - overviewBudget) });
           const remaining = Math.max(0, total - Array.from(state.catalog.text).length);
           state.catalog.text += Array.from(overviewText).slice(0, remaining).join('');
-        } catch { signal?.throwIfAborted(); state.catalog.text = Array.from(`${state.catalog.text}\n\n团队概览不可用。可通过 consult_router mode=overview 重试。`).slice(0, this.knowledge.config.catalog.maxChars).join(''); }
+        } catch { signal?.throwIfAborted(); state.catalog.text = Array.from(`${state.catalog.text}\n\n团队概览不可用。可调用 consult_router，参数为 {"mode":"overview"}，重新获取概览。`).slice(0, this.knowledge.config.catalog.maxChars).join(''); }
       }
     }
     signal?.throwIfAborted();

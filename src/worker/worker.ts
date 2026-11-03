@@ -28,6 +28,7 @@ export class DurableWorker {
       if (this.active?.job.kind === kind && !this.active.prepared) this.active.abort.abort(new JobError('suspended', '后台处理器已暂停，任务保留。'));
     };
   }
+  supports(kind: JobKind): boolean { return this.handlers.has(kind); }
   canRun(job: Job): boolean { return runnableJob(job, this.handlers); }
   async start(): Promise<void> {
     if (this.started || this.closed) return;
@@ -94,13 +95,14 @@ export class DurableWorker {
         await this.queue.settle(job, 'succeeded', result === undefined ? {} : { result });
       } catch (error) {
         const reason: unknown = active.abort.signal.aborted ? active.abort.signal.reason : error;
-        if (active.prepared) await this.queue.settle(job, job.attempts < 5 ? 'queued' : 'failed', { lastError: '本地提交待 checkpoint 恢复；请检查存储后重试任务。', nextRunAt: Date.now() + 1000 });
+        if (active.prepared) await this.queue.settle(job, job.attempts < 5 ? 'queued' : 'failed', { lastErrorKind: 'storage', lastError: '本地提交待 checkpoint 恢复；请检查存储后重试任务。', nextRunAt: Date.now() + 1000 });
         else if (reason instanceof DreamStopped || reason instanceof DreamYield) await this.queue.settle(job, 'queued', { attempts: Math.max(0, job.attempts - 1) });
         else if (this.closed || reason instanceof JobError && reason.kind === 'suspended') await this.queue.settle(job, 'queued');
         else if (reason instanceof Preempted) await this.queue.settle(job, 'succeeded', { result: { skipped: 'superseded' } });
         else {
           const retryable = reason instanceof JobError && reason.retryable && job.attempts < 5;
           await this.queue.settle(job, retryable ? 'queued' : 'failed', {
+            lastErrorKind: reason instanceof JobError ? reason.kind : 'storage',
             lastError: reason instanceof JobError ? reason.message + (reason.retryable && !retryable ? ' 已达到自动重试上限，请修正原因后手动重试任务。' : '') : '后台任务失败；请检查本地存储和模型路由后重试。',
             ...(retryable ? { nextRunAt: Date.now() + Math.max((this.options.retryBaseMs ?? 500) * 2 ** (job.attempts - 1), reason instanceof JobError ? reason.retryAfterMs ?? 0 : 0) } : {}),
           });

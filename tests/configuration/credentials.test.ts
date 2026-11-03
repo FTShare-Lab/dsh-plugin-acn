@@ -27,15 +27,15 @@ it('resolves managed references for connection checks and live clients without c
     const service = new ConfigurationService(flow.ctx);
     expect(await service.credential({ action: 'describe', reference: 'EXAMPLE_TEAM_TOKEN' })).toMatchObject({ ok: true, configured: false, writable: true });
     const result = await service.credential({ action: 'store', reference: 'EXAMPLE_TEAM_TOKEN', value: first });
-    expect(result).toMatchObject({ ok: true, configured: true }); expect(JSON.stringify(result)).not.toContain(first);
+    expect(result).toMatchObject({ ok: true, configured: true }); expect(result.message).toContain('完成配置保存后'); expect(result.message).not.toContain('下次团队请求'); expect(JSON.stringify(result)).not.toContain(first);
     const connection = { name: '开发', agentId: 'agent-a', routerEndpoint: `${server.endpoint}/team-a`, maintainerEndpoint: `${server.endpoint}/team-a`, keyEnv: 'EXAMPLE_TEAM_TOKEN' };
     expect((await executeInteraction(flow.ctx, { action: 'check', connection })).ok).toBe(true);
     await flow.fibers.knowledge.dispose(); await flow.ctx.plugin(Knowledge, resolveConfig({ ...flow.knowledge.config, upstream: 'coding', upstreams: { coding: connection }, team: { retryCount: 0 } }));
     const agent = await flow.create(); const knowledge = await flow.ctx.acnRuntime.knowledge(agent.session.header);
     await knowledge.team?.router.query({ scope: 'service', semantic_query: null });
-    await service.credential({ action: 'store', reference: 'EXAMPLE_TEAM_TOKEN', value: second });
+    expect((await service.credential({ action: 'store', reference: 'EXAMPLE_TEAM_TOKEN', value: second })).ok).toBe(false);
     await knowledge.team?.router.query({ scope: 'service', semantic_query: null });
-    expect(server.requests.filter((request) => request.path.endsWith('/query')).map((request) => (request.body as { auth: { acn_key: string } }).auth.acn_key)).toEqual([first, second]);
+    expect(server.requests.filter((request) => request.path.endsWith('/query')).map((request) => (request.body as { auth: { acn_key: string } }).auth.acn_key)).toEqual([first, first]);
     expect(server.requests.every((request) => request.path.startsWith('/team-a/'))).toBe(true);
     expect(JSON.stringify(knowledge.config)).not.toContain(second);
     provider.resolve.mockRejectedValueOnce(new Error(second));
@@ -49,7 +49,7 @@ it('rejects blank values and invalid references before touching the credential p
   try {
     const service = new ConfigurationService(flow.ctx);
     expect((await service.credential({ action: 'store', reference: 'INVALID-NAME', value: ' ' })).ok).toBe(false);
-    expect((await service.credential({ action: 'describe', reference: 'EXAMPLE_TEAM_TOKEN' })).message).toContain('重新启动应用');
+    const unsupported = await service.credential({ action: 'describe', reference: 'EXAMPLE_TEAM_TOKEN' }); expect(unsupported).toMatchObject({ ok: false, writable: false, messageInfo: { code: 'key_unmanaged' } }); expect(unsupported.message).toContain('无法在此页保存新密钥'); expect(unsupported.message).not.toContain('同名环境变量');
   } finally { await flow.close(); }
 });
 
@@ -91,4 +91,21 @@ it.each(['draft', 'saved'])('cancels both pending team requests for a %s key che
     expect(await result).toMatchObject({ ok: false, message: '检查已取消。' });
     await vi.waitFor(() => { expect(closed).toBe(2); }); expect(server.requests.every((request) => request.path === '/health')).toBe(true);
   } finally { controller.abort(); await flow.close(); await server.close(); }
+});
+
+it('discards only references staged in this lifecycle and permanently protects adopted references', async () => {
+  const flow = await flowHarness(new ScriptAdapter([])); const reference = `ACN_TEAM_${crypto.randomUUID().replaceAll('-', '').toUpperCase()}`;
+  const unset = vi.fn().mockResolvedValue(undefined);
+  flow.ctx.provide('credentials', { describe: () => Promise.resolve({ configured: false, writable: true }), set: () => Promise.resolve(), unset } as unknown as CredentialProvider);
+  try {
+    const service = new ConfigurationService(flow.ctx);
+    expect((await service.credential({ action: 'discard', reference })).ok).toBe(false);expect(unset).not.toHaveBeenCalled();
+    await service.credential({ action: 'store', reference, value: randomBytes(24).toString('hex') });
+    expect((await service.credential({ action: 'discard', reference })).ok).toBe(true); expect(unset).toHaveBeenCalledWith(reference); unset.mockClear();
+    await service.credential({ action: 'store', reference, value: randomBytes(24).toString('hex') });
+    await flow.fibers.knowledge.dispose(); const replacement = await flow.ctx.plugin(Knowledge, resolveConfig({ ...flow.knowledge.config, team: { keyEnv: reference } }));
+    expect((await service.credential({ action: 'discard', reference })).ok).toBe(false); expect(unset).not.toHaveBeenCalled();
+    await replacement.dispose();await flow.ctx.plugin(Knowledge, resolveConfig({ ...flow.knowledge.config, team: { keyEnv: '' } }));
+    expect((await service.credential({ action: 'discard', reference })).ok).toBe(false); expect(unset).not.toHaveBeenCalled();
+  } finally { await flow.close(); }
 });
