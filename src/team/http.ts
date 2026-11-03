@@ -1,10 +1,14 @@
-// 请求时读取环境凭据；回环直连，其他地址沿用环境代理，重试与响应校验有界。
+// 请求时解析凭据引用；回环直连，其他地址沿用环境代理，重试与响应校验有界。
 import { setTimeout as delay } from 'node:timers/promises';
 import { Agent, EnvHttpProxyAgent, fetch } from 'undici';
 import type { z } from 'zod';
 import type { ResolvedConfig } from '../config.js';
 import type { AgentId } from '../protocol/ids.js';
 import { TeamError } from './errors.js';
+import { abortable } from '../llm/structured.js';
+
+export type CredentialResolver = (reference: string) => Promise<string | undefined>;
+const environmentCredential: CredentialResolver = (reference) => Promise.resolve(process.env[reference]);
 
 export function bypassProxy(endpoint: string): boolean {
   return ['localhost', '127.0.0.1', '::1', '[::1]'].includes(new URL(endpoint).hostname.toLowerCase());
@@ -18,10 +22,10 @@ export function teamUrl(endpoint: string, path: string): string {
 export class TeamHttp {
   private readonly dispatcher: Agent | EnvHttpProxyAgent;
   private readonly stop = new AbortController();
-  constructor(readonly service: 'router' | 'maintainer', readonly endpoint: string, readonly agentId: AgentId, readonly config: ResolvedConfig['team']) {
+  constructor(readonly service: 'router' | 'maintainer', readonly endpoint: string, readonly agentId: AgentId, readonly config: ResolvedConfig['team'], private readonly credential: CredentialResolver = environmentCredential) {
     this.dispatcher = bypassProxy(endpoint) ? new Agent() : new EnvHttpProxyAgent();
   }
-  credentialConfigured(): boolean { return this.config.keyEnv !== '' && Boolean(process.env[this.config.keyEnv]); }
+  async credentialConfigured(): Promise<boolean> { return this.config.keyEnv !== '' && Boolean(await this.credential(this.config.keyEnv)); }
   async post<T>(path: string, data: unknown, schema: z.ZodType<T>, signal?: AbortSignal): Promise<T>;
   async post(path: string, data: unknown, schema?: undefined, signal?: AbortSignal): Promise<void>;
   async post<T>(path: string, data: unknown, schema?: z.ZodType<T>, signal?: AbortSignal): Promise<T | void> {
@@ -32,10 +36,11 @@ export class TeamHttp {
       let failure: TeamError;
       try {
         if (combined.aborted) throw new TeamError(timeout.aborted ? 'retryable' : 'cancelled', this.service, operation);
+        const key = this.config.keyEnv ? await abortable(this.credential(this.config.keyEnv), combined) ?? '' : '';
         const response = await fetch(teamUrl(this.endpoint, path), {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, dispatcher: this.dispatcher,
           redirect: 'error', signal: combined,
-          body: JSON.stringify({ auth: { agent_id: this.agentId, acn_key: this.config.keyEnv ? process.env[this.config.keyEnv] ?? '' : '' }, data }),
+          body: JSON.stringify({ auth: { agent_id: this.agentId, acn_key: key }, data }),
         });
         if (response.ok) {
           if (schema === undefined) { await response.body?.cancel(); return; }

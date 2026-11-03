@@ -19,6 +19,7 @@ import { SessionToolbar } from '../client/SessionToolbar.js';
 import { interactionStyles } from '../client/interaction-styles.js';
 import { Modal } from '../client/interaction-ui.js';
 import { InteractionResultSchema } from '../interaction.js';
+import { CredentialResultSchema } from '../credentials.js';
 import { en, zh } from '../client/locales.js';
 import type { ConfigurationText } from '../client/locales.js';
 
@@ -49,6 +50,7 @@ function registerPage(ctx: Context): void {
     read: async (signal) => ConfigurationSnapshotSchema.parse(await invoke('acnConfiguration/read', {}, signal)),
     save: async (request) => ConfigurationResultSchema.parse(await invoke('acnConfiguration/save', { request })),
     interact: async (request, signal) => InteractionResultSchema.parse(await invoke('acnConfiguration/interact', { request }, signal)),
+    credential: async (request, signal) => CredentialResultSchema.parse(await invoke('acnConfiguration/credential', { request }, signal)),
   };
   const t = ctx.locale.bind('acn.configuration');
   const c = (chinese: string, english: string) => t('title') === 'Configuration' ? english : chinese;

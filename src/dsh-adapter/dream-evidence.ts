@@ -8,7 +8,7 @@ import { SessionId } from '@deepseek-ai/dsh-session';
 import { defineTool } from '@deepseek-ai/dsh-tools';
 import { EvidenceTools, type EvidenceTool } from '../dream/evidence-store.js';
 import { DreamValidationError } from '../dream/schema.js';
-import { abortable } from '../llm/structured.js';
+import { abortable, transportError } from '../llm/structured.js';
 import { JobError } from '../worker/types.js';
 import type { EvidenceExplorer } from '../dream/service.js';
 import { toolParameters } from './tool-schema.js';
@@ -17,7 +17,9 @@ const allowed = (name: string): name is EvidenceTool => Object.hasOwn(EvidenceTo
 export function restrictedExplorer(ctx: Context, system: string): EvidenceExplorer {
   return async ({ store, claims, route, config, signal }) => {
     const manifest = await store.read(); if (manifest === null) throw new JobError('evidence_permission', '缺少受限查证授权。');
-    const timeout = AbortSignal.timeout(config.timeoutMs); const bounded = AbortSignal.any([signal, timeout]); let completed = false;
+    signal.throwIfAborted();
+    if (manifest.completed || manifest.model_steps >= manifest.limits.steps) { await store.complete(signal); return; }
+    const timeout = AbortSignal.timeout(config.timeoutMs); const bounded = AbortSignal.any([signal, timeout]); let completed = false; let stepError: JobError | undefined; let budgetExhausted = false;
     const handle = await ctx.agents.create({ sessionId: SessionId(`acn-evidence-${randomUUID()}`), meta: { cwd: manifest.workspace_root, origin: 'subagent', delegationDepth: 1, agentPreset: 'acn-evidence' }, agentOptions: { ...route, maxTokens: config.maxOutputTokens }, signal: bounded, setup: (child) => {
       child.tools.restrict({ allow: [] }); child.tools.presentAs('native');
       child.tools.guard((execution) => !allowed(execution.name) || !EvidenceTools[execution.name].safeParse(execution.arguments).success ? '受限查证只允许工作区只读 read/grep/glob 和候选 claim list/read。' : undefined);
@@ -37,8 +39,23 @@ export function restrictedExplorer(ctx: Context, system: string): EvidenceExplor
         for (const context of assembly.contexts) if (!shadowed.has(context.name)) { child.systemPrompt.context({ name: context.name, order: 0, text: '', interpolate: false }); shadowed.add(context.name); }
         return { ...assembly, contexts: [], variables: {}, tools: assembly.tools.filter((tool) => allowed(tool.name)) };
       });
-      child.on('agent/pre-step', async (_payload, next) => { bounded.throwIfAborted(); await store.admitStep(bounded); return next(); });
-      child.on('session/event', (_session, event) => { if (event.type === 'turn/end') completed = event.data.reason.kind === 'completed'; });
+      child.on('agent/request', async (payload, next) => {
+        bounded.throwIfAborted();
+        try { await store.admitStep(AbortSignal.any([bounded, payload.signal])); }
+        catch (error) {
+          const current = error instanceof DreamValidationError ? await store.read() : null;
+          budgetExhausted = current !== null && current.model_steps >= current.limits.steps;
+          stepError = error instanceof DreamValidationError ? new JobError('evidence_budget', error.message) : new JobError('evidence_step', '受限查证请求准入失败，请检查本地存储；已有回执保留。'); throw stepError;
+        }
+        return next();
+      });
+      child.on('session/event', (_session, event) => {
+        if (event.type !== 'turn/end') return;
+        const reason = event.data.reason; completed = reason.kind === 'completed';
+        if (stepError !== undefined) return;
+        if (reason.kind === 'error') { const failure = transportError(reason.error); stepError = new JobError(failure.kind, `受限查证模型调用失败：${failure.message} 已有回执和预算保留。`); }
+        if (reason.kind === 'max-tokens') stepError = new JobError('evidence_output_limit', '受限查证模型输出达到 token 上限（MAX_TOKENS），已有回执和预算保留；请调整输出上限后重试。');
+      });
     } });
     const cancel = () => { handle.agent.cancel({ kind: 'parent' }); };
     bounded.addEventListener('abort', cancel, { once: true });
@@ -46,7 +63,9 @@ export function restrictedExplorer(ctx: Context, system: string): EvidenceExplor
       bounded.throwIfAborted();
       handle.agent.followup(createUserMessage({ content: [{ type: 'text', text: JSON.stringify({ task: '查证候选，读取有版本的直接材料；缺少证据则结束并保持原样。不要写入或请求扩大权限。', claims, workspace_root: manifest.workspace_root, limits: manifest.limits }) }], source: { kind: 'acn-formation' } }));
       await abortable(handle.agent.whenIdle(), bounded); bounded.throwIfAborted();
-      if (!completed) throw new JobError('evidence_incomplete', '受限查证未完整结束；已有回执和预算保留，未授权 Claim 变更。');
+      // 不续发新请求，也不让耗尽的旧清单永远失败；父流程只使用已取得的安全回执。
+      if (budgetExhausted) { await store.complete(bounded); return; }
+      if (!completed) throw stepError ?? new JobError('evidence_incomplete', '受限查证未完整结束；已有回执和预算保留，未授权 Claim 变更。');
     } catch (error) { signal.throwIfAborted(); if (timeout.aborted) throw new JobError('evidence_timeout', '受限查证超时，已停止子会话。', true); throw error; }
     finally { bounded.removeEventListener('abort', cancel); await handle.dispose(); }
   };

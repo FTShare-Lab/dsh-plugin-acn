@@ -8,6 +8,9 @@ import { flowHarness, turn, callTool } from '../flow/harness.js';
 import { ScriptAdapter, textResponse } from '../flow/adapter.js';
 import { teamServer } from '../team/helpers.js';
 import { sampleClaim } from '../knowledge-fixtures.js';
+import { EntityStore } from '../../src/store/entities.js';
+import { ClaimSchema } from '../../src/protocol/claim.js';
+import { ClaimIdSchema } from '../../src/protocol/ids.js';
 import { ClaimStore } from '../../src/store/claims.js';
 import { readYaml } from '../../src/store/yaml.js';
 import { RouteSchema } from '../../src/formation/transcript.js';
@@ -191,4 +194,20 @@ describe('session team interaction', () => {
       await vi.waitFor(async () => { expect((await knowledge.jobs?.queue.list())?.some((job) => job.kind === 'inbox' && job.payload['synchronize'] === true && job.sessionId === 'cold-team')).toBe(true); });
     } finally { await flow.close(); await server.close(); }
   });
+});
+
+it('resolves a source by exact local ID without crossing holder or upstream boundaries', async () => {
+  const server = await teamServer((request) => reply(request.path)); const adapter = new ScriptAdapter([]);
+  const flow = await flowHarness(adapter, { config: config(server.endpoint) });
+  try {
+    const store = new EntityStore(flow.knowledge.context(), flow.knowledge.context().paths.claims, ClaimSchema, ClaimIdSchema);
+    await store.write(sampleClaim({ id: ClaimIdSchema.parse('claim_00000002'), holder: AgentIdSchema.parse('agent-b') }));
+    const local = await executeInteraction(flow.ctx, { action: 'reference', key: 'personal', id: 'claim_00000001' });
+    expect(local).toMatchObject({ ok: true, reference: { id: 'claim_00000001', item: { id: 'claim_00000001' } } });
+    for (const [key, id] of [['personal', 'claim_00000002'], ['personal', 'claim_deadbeef'], ['team-a', 'claim_00000001']] as const) {
+      const result = await executeInteraction(flow.ctx, { action: 'reference', key, id });
+      expect(result).toMatchObject({ ok: true, reference: { key, id } }); expect(result.reference?.item).toBeUndefined();
+    }
+    expect(server.requests).toEqual([]); expect(adapter.requests).toEqual([]);
+  } finally { await flow.close(); await server.close(); }
 });

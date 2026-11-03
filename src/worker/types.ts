@@ -14,7 +14,7 @@ export const JobSchema = z.strictObject({
 export type Job = z.infer<typeof JobSchema>;
 export const jobPriority: Record<JobKind, number> = { finalize: 0, recap: 1, inbox: 2, memory_review: 3, dream: 4 };
 export class JobError extends Error {
-  constructor(readonly kind: string, message: string, readonly retryable = false) { super(message); }
+  constructor(readonly kind: string, message: string, readonly retryable = false, readonly retryAfterMs?: number) { super(message); }
 }
 export class Preempted extends JobError { constructor() { super('preempted', 'Recap superseded by Finalize before prepared.'); } }
 export class DreamStopped extends JobError { constructor() { super('dream_stopped', 'Dream 已停在可恢复边界，已生效修改保留。'); } }

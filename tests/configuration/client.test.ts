@@ -44,6 +44,19 @@ it('mounts and injects its namespace before the page calls the real client Remot
     const request = { revision: snapshot.revision, values: { ...snapshot.values, agentId: 'agent-a' } };
     expect((await api.save(request)).ok).toBe(true);
     expect(call.mock.calls.at(-1)?.[2]).toEqual({ args: { request } });
+    if (api.credential === undefined) throw new Error('Expected credential API.');
+    const controller = new AbortController();
+    call.mockResolvedValueOnce({ ok: true, value: { ok: true, message: '', configured: false, writable: true } });
+    await api.credential({ action: 'describe', reference: 'EXAMPLE_TEAM_TOKEN' }, controller.signal);
+    const credentialSignal: unknown = call.mock.calls.at(-1)?.[3];
+    if (!(credentialSignal instanceof AbortSignal)) throw new Error('Expected a transport signal.');
+    controller.abort(); expect(credentialSignal.aborted).toBe(true);
+    const checking = new AbortController();
+    call.mockResolvedValueOnce({ ok: true, value: { ok: true, message: '' } });
+    await api.interact({ action: 'check', connection: { agentId: 'agent-a', routerEndpoint: 'https://router.example.org', maintainerEndpoint: 'https://maintainer.example.org' } }, checking.signal);
+    const checkingSignal: unknown = call.mock.calls.at(-1)?.[3];
+    if (!(checkingSignal instanceof AbortSignal)) throw new Error('Expected a transport signal.');
+    checking.abort(); expect(checkingSignal.aborted).toBe(true);
     await fiber.dispose();
     expect(component).toBeUndefined();
   } finally { await ctx.fiber.dispose(); }

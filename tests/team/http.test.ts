@@ -95,3 +95,16 @@ describe('team HTTP', () => {
     } finally { vi.unstubAllEnvs(); await remote.close(); await direct.close(); await local.close(); await new Promise<void>((resolve) => { proxy.close(() => { resolve(); }); proxy.closeAllConnections(); }); }
   });
 });
+
+it.each(['timeout', 'cancel', 'close'] as const)('bounds a stalled credential resolver on %s without issuing HTTP', async (cause) => {
+  const server = await teamServer(() => ({ body: {} })); const controller = new AbortController();
+  let release: ((value: string | undefined) => void) | undefined;
+  const pending = new Promise<string | undefined>((resolve) => { release = resolve; });
+  const client = new TeamHttp('router', server.endpoint, agentId, config(server.endpoint, { keyEnv: 'EXAMPLE_TEAM_TOKEN', timeoutMs: 30, retryCount: 0 }), () => pending);
+  try {
+    const result = client.post('/claims/query', {}, undefined, controller.signal);
+    const expected = expect(result).rejects.toMatchObject({ kind: cause === 'timeout' ? 'retryable' : 'cancelled' });
+    if (cause === 'cancel') controller.abort(); else if (cause === 'close') await client.close();
+    await expected; release?.(''); await Promise.resolve(); expect(server.requests).toEqual([]);
+  } finally { release?.(''); await client.close(); await server.close(); }
+});

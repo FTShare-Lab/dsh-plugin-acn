@@ -15,13 +15,16 @@ import { ConfigError, resolveConfig } from '../config.js';
 import { configurationValues, mergeConfiguration, SaveConfigurationSchema } from '../configuration.js';
 import type { ConfigurationSnapshot, ConfigurationResult, ModelChoice, SaveConfiguration } from '../configuration.js';
 import { AgentPaths, agentHomePath } from '../store/paths.js';
-import { executeInteraction } from './interaction-service.js';
+import { checkTeamConnection, executeInteraction } from './interaction-service.js';
 import { upstreamsOf, resolveUpstream } from '../upstreams.js';
 import { PendingUploadsSchema } from '../store/uploads.js';
 import { withFileLock } from '../store/lock.js';
 import { readYamlOr, writeYamlAtomic } from '../store/yaml.js';
 import { z } from 'zod';
 import type { InteractionRequest, InteractionResult } from '../interaction.js';
+import { credentialReference } from './team-credentials.js';
+import { CredentialRequestSchema } from '../credentials.js';
+import type { CredentialRequest, CredentialResult } from '../credentials.js';
 
 declare module '@deepseek-ai/cordis' { interface Context { acnConfiguration: ConfigurationService } }
 
@@ -53,11 +56,37 @@ async function checkDirectory(path: string): Promise<void> {
 
 export class ConfigurationService extends TypertRemoteService {
   pending = 0;
-  async interact(request: InteractionRequest): Promise<InteractionResult> {
+  async credential(request: CredentialRequest, signal?: AbortSignal): Promise<CredentialResult> {
+    const parsed = CredentialRequestSchema.safeParse(request);
+    if (!parsed.success) return { ok: false, message: '请检查团队配置，并填写有效的鉴权密钥。' };
+    if (parsed.data.action === 'check') {
+      try {
+        // 草稿密钥只用于此次检查，不覆盖已保存的密钥或配置。
+        const { connection, value } = parsed.data;
+        return await checkTeamConnection(this.ctx, { ...connection, keyEnv: connection.keyEnv || 'ACN_TEAM_DRAFT' }, () => Promise.resolve(value), signal);
+      } catch { return { ok: false, message: '检查未完成，请核对团队配置后重试。' }; }
+    }
+    const provider = this.ctx.get('credentials');
+    if (provider === undefined) return { ok: false, message: '当前宿主未启用凭据托管。请在启动 DSH 前设置同名环境变量，随后重新启动应用。' };
+    try {
+      const reference = credentialReference(parsed.data.reference);
+      if (parsed.data.action === 'store') {
+        const info = await provider.describe(reference);
+        if (!info.writable) return { ok: false, message: '当前密钥存储只读，无法保存新密钥；仍可检查连接，或留空保留现有密钥。', configured: info.configured, writable: false };
+        await provider.set(reference, parsed.data.value);
+      }
+      const info = await provider.describe(reference);
+      return { ok: true, message: parsed.data.action === 'store' ? '凭据已保存到 DSH 托管存储，下次团队请求生效。' : '', configured: info.configured, writable: info.writable };
+    } catch {
+      this.ctx.logger.warn('Team credential operation could not complete.');
+      return { ok: false, message: '凭据操作未完成，请检查宿主凭据服务后重试。' };
+    }
+  }
+  async interact(request: InteractionRequest, signal?: AbortSignal): Promise<InteractionResult> {
     if (this.pending > 0 && ['select', 'sync', 'retry'].includes(request.action)) return Promise.resolve({ ok: false, message: configurationBusy });
     // Gateway 调用会重绑定 Service tracker；领域实例必须从配置行自己的隔离作用域取。
     const pool = this.entry().fiber?.ctx.acnRuntime;
-    return executeInteraction(pool?.ctx ?? this.ctx, request, pool);
+    return executeInteraction(pool?.ctx ?? this.ctx, request, pool, signal);
   }
   constructor(ctx: Context) {
     super(ctx, 'acnConfiguration');

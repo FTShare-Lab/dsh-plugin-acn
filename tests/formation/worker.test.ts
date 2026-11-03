@@ -70,7 +70,7 @@ describe('persistent worker', () => {
     worker.register('finalize', () => { if (failed) return Promise.reject(new JobError('transport', 'Retryable service failure.', true)); return Promise.resolve({ done: true }); });
     try {
       const job = await worker.enqueue('finalize', {}); await worker.start();
-      expect(await waitJob(worker.queue, job.id, 'failed')).toMatchObject({ attempts: 5, lastError: 'Retryable service failure.' });
+      expect(await waitJob(worker.queue, job.id, 'failed')).toMatchObject({ attempts: 5, lastError: 'Retryable service failure. 已达到自动重试上限，请修正原因后手动重试任务。' });
       failed = false; await worker.retry(job.id); expect(await waitJob(worker.queue, job.id)).toMatchObject({ attempts: 1 });
     } finally { await worker.close(); await fs.rm(root, { recursive: true, force: true }); }
   });

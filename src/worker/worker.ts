@@ -101,8 +101,8 @@ export class DurableWorker {
         else {
           const retryable = reason instanceof JobError && reason.retryable && job.attempts < 5;
           await this.queue.settle(job, retryable ? 'queued' : 'failed', {
-            lastError: reason instanceof JobError ? reason.message : '后台任务失败；请检查本地存储和模型路由后重试。',
-            ...(retryable ? { nextRunAt: Date.now() + (this.options.retryBaseMs ?? 500) * 2 ** (job.attempts - 1) } : {}),
+            lastError: reason instanceof JobError ? reason.message + (reason.retryable && !retryable ? ' 已达到自动重试上限，请修正原因后手动重试任务。' : '') : '后台任务失败；请检查本地存储和模型路由后重试。',
+            ...(retryable ? { nextRunAt: Date.now() + Math.max((this.options.retryBaseMs ?? 500) * 2 ** (job.attempts - 1), reason instanceof JobError ? reason.retryAfterMs ?? 0 : 0) } : {}),
           });
         }
       } finally { clearInterval(monitor); this.active = undefined; }

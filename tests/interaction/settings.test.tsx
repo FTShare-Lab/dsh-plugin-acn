@@ -8,6 +8,7 @@ import { configurationValues } from '../../src/configuration.js';
 import type { ConfigurationSnapshot, SaveConfiguration, ConfigurationResult } from '../../src/configuration.js';
 import type { InteractionResult } from '../../src/interaction.js';
 import { en, zh } from '../../src/client/locales.js';
+import { ClaimIdSchema } from '../../src/protocol/ids.js';
 import { KnowledgePanel } from '../../src/client/KnowledgePanel.js';
 afterEach(cleanup);
 const t = (key: keyof typeof zh) => zh[key];
@@ -15,7 +16,7 @@ const c = (chinese: string) => chinese;
 const profile = { name: '开发', agentId: 'agent-a' };
 const snapshot: ConfigurationSnapshot = { revision: 'first', values: configurationValues({ upstream: 'coding', upstreams: { coding: profile }, llm: { provider: 'example', model: 'old-model' } }), models: [{ provider: 'example', providerName: 'Example', id: 'old-model', name: 'Old model' }, { provider: 'example', providerName: 'Example', id: 'new-model', name: 'New model' }], active: true, dataDirectory: '', upstreamPending: { coding: 3 } };
 function setup(current = snapshot, translate = t) {
-  const api: InteractionApi = { read: vi.fn().mockResolvedValue(current), save: vi.fn((request: SaveConfiguration): Promise<ConfigurationResult> => Promise.resolve({ ok: true, snapshot: { ...current, revision: 'next', values: request.values } })), interact: vi.fn().mockResolvedValue({ ok: true, message: '检查通过。' }) };
+  const api: InteractionApi = { read: vi.fn().mockResolvedValue(current), save: vi.fn((request: SaveConfiguration): Promise<ConfigurationResult> => Promise.resolve({ ok: true, snapshot: { ...current, revision: 'next', values: request.values } })), interact: vi.fn().mockResolvedValue({ ok: true, message: '检查通过。' }), credential: vi.fn().mockResolvedValue({ ok: true, message: '', configured: true, writable: true }) };
   const open = vi.fn(); render(<TeamSettingsPage api={api} t={translate} openKnowledge={open} />); return { api, open };
 }
 describe('upstream settings', () => {
@@ -44,13 +45,13 @@ describe('upstream settings', () => {
     expect(api.interact).not.toHaveBeenCalled();
   });
   it.each([zh, en])('offers deployment help and connects the existing identity without creating another member', async (locale) => {
-    const english = locale === en; const { api } = setup(snapshot, (key) => locale[key]);
+    const english = locale === en; const { api } = setup({ ...snapshot, values: configurationValues({ upstream: 'coding', upstreams: { coding: { ...profile, keyEnv: 'EXAMPLE_TEAM_TOKEN' } } }) }, (key) => locale[key]);
     const guide = english ? 'ACN deployment guide (GitHub)' : 'ACN 部署说明（GitHub）';
     const link = await screen.findByRole('link', { name: guide }); expect(link.getAttribute('href')).toBe('https://github.com/FTShare-Lab/agent-claim-network'); expect(link.getAttribute('rel')).toContain('noreferrer');
     fireEvent.click(screen.getByRole('button', { name: english ? 'Configure' : '配置' }));
     fireEvent.click(screen.getByRole('switch', { name: english ? 'Connect team services' : '连接团队服务' }));
     expect(screen.getAllByLabelText('Agent ID')).toHaveLength(1);
-    for (const [label, value] of [[locale.router, 'https://router.example.org'], [locale.maintainer, 'https://maintainer.example.org'], [locale.keyEnv, 'EXAMPLE_TEAM_TOKEN']]) fireEvent.change(screen.getByLabelText(label ?? ''), { target: { value } });
+    for (const [label, value] of [[locale.router, 'https://router.example.org'], [locale.maintainer, 'https://maintainer.example.org']]) fireEvent.change(screen.getByLabelText(label ?? ''), { target: { value } });
     fireEvent.click(screen.getByRole('link', { name: guide }));
     expect(screen.getByLabelText<HTMLInputElement>(locale.router).value).toBe('https://router.example.org'); expect(api.save).not.toHaveBeenCalled(); expect(api.interact).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: english ? 'Save configuration' : '保存配置' }));
@@ -93,4 +94,119 @@ it('browses knowledge, filters activity and retries explicitly without a sync re
   await screen.findByText('示例知识'); fireEvent.click(screen.getByRole('tab', { name: '处理活动' })); fireEvent.click(await screen.findByRole('button', { name: '重试任务' }));
   await waitFor(() => { expect(interact).toHaveBeenCalledWith({ action: 'retry', key: 'personal', id: 'job-a' }); });
   expect(interact.mock.calls.some(([r]) => r.action === 'activity')).toBe(true); expect(interact.mock.calls.every(([request]) => request.action !== 'sync')).toBe(true); expect(screen.getByText('模型暂不可用。')).toBeDefined();
+});
+
+it.each(['inbox', 'dream', 'recap', 'finalize', 'memory_review'] as const)('shows the persisted model failure and an explicit retry action for %s', async (kind) => {
+  const error = '后台模型返回的响应格式无效（MALFORMED_RESPONSE）；可稍后重试或更换知识处理模型。';
+  const interact = vi.fn<InteractionApi['interact']>().mockResolvedValue({ ok: true, message: '', knowledge: { key: 'personal', name: '示例配置', items: [], omitted: 0, activities: [{ id: 'failed-model-job', kind, state: 'failed', attempts: 1, updatedAt: 1, unseen: true, summary: '', error }], pendingClaims: 0, pendingDisputes: 0 } });
+  const api: InteractionApi = { read: vi.fn().mockResolvedValue(snapshot), save: vi.fn(), interact };
+  render(<KnowledgePanel api={api} initialKey="personal" initialTab="activity" c={c} />);
+  fireEvent.click(await screen.findByText(`${kind} · 处理失败`, { exact: false, selector: 'summary' }));
+  expect(screen.getByRole('alert').textContent).toBe(error);
+  fireEvent.click(screen.getByRole('button', { name: '重试任务' }));
+  await waitFor(() => { expect(interact).toHaveBeenCalledWith({ action: 'retry', key: 'personal', id: 'failed-model-job' }); });
+  expect(interact.mock.calls.every(([request]) => request.action !== 'sync')).toBe(true);
+});
+
+it('disables and restores the same configuration key instead of deleting a connection', async () => {
+  const { api } = setup(); fireEvent.click(await screen.findByRole('button', { name: '配置' }));
+  expect(screen.getByText(/关联会话暂停聊天和知识处理/)).toBeDefined(); expect(screen.queryByRole('button', { name: /删除/ })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: '停用' })); await waitFor(() => { expect(api.save).toHaveBeenCalled(); });
+  expect(vi.mocked(api.save).mock.calls[0]?.[0].values).toMatchObject({ upstream: '', upstreams: { coding: { agentId: 'agent-a', enabled: false } } });
+  fireEvent.click(screen.getByRole('button', { name: '配置' })); fireEvent.click(screen.getByRole('button', { name: '恢复' }));
+  await waitFor(() => { expect(api.save).toHaveBeenCalledTimes(2); });
+  expect(vi.mocked(api.save).mock.calls[1]?.[0].values.upstreams?.['coding']).toMatchObject({ agentId: 'agent-a', enabled: true });
+});
+
+it.each([false, true])('opens exact source details, explains missing team sources and preserves original details (local=%s)', async (local) => {
+  const origin = { kind: 'trace' as const, id: 'trace_00000001', name: '来源任务', status: '', detail: JSON.stringify({ task: '保留原详情', input_claims: ['claim_00000002'] }) };
+  const interact = vi.fn<InteractionApi['interact']>().mockImplementation((request) => Promise.resolve(request.action === 'reference' ? { ok: true, message: '', reference: { key: 'coding', id: ClaimIdSchema.parse(request.id), ...(local ? { item: { kind: 'claim', id: request.id, name: '本地来源', status: 'active', detail: JSON.stringify({ statement: '来源正文' }) } } : {}) } } : { ok: true, message: '', knowledge: { key: 'coding', name: '开发', items: [origin], omitted: 0, activities: [], pendingClaims: 0, pendingDisputes: 0 } }));
+  render(<KnowledgePanel api={{ read: vi.fn().mockResolvedValue(snapshot), save: vi.fn(), interact }} initialKey="coding" c={c} />);
+  const name = await screen.findByText('来源任务', { selector: 'strong' }); const details = name.closest('details'); if (!details) throw new Error('Expected origin details.'); fireEvent.click(name); details.open = true;
+  fireEvent.click(screen.getByRole('button', { name: 'claim_00000002' }));
+  if (local) await screen.findByText('来源正文'); else await screen.findByText(/尚未内化的团队知识/);
+  expect(screen.queryByText('暂无符合条件的知识。')).toBeNull();
+  expect(interact.mock.calls.filter(([request]) => request.action === 'reference')).toHaveLength(1);
+  fireEvent.click(screen.getByRole('button', { name: '返回上一条详情' }));
+  expect(details.open).toBe(true); expect(screen.getByText('保留原详情')).toBeDefined();
+  expect(interact.mock.calls.every(([request]) => ['knowledge', 'reference'].includes(request.action))).toBe(true);
+});
+
+it('saves the knowledge directory before creating the first identity', async () => {
+  const { api } = setup({ ...snapshot, values: configurationValues({}) });
+  fireEvent.click(await screen.findByRole('tab', { name: '知识与模型' }));
+  fireEvent.change(screen.getByLabelText('知识目录'), { target: { value: '/tmp/example/first-knowledge' } });
+  fireEvent.click(screen.getByRole('button', { name: '保存目录' }));
+  await waitFor(() => { expect(api.save).toHaveBeenCalled(); });
+  expect(vi.mocked(api.save).mock.calls[0]?.[0].values).toMatchObject({ home: '/tmp/example/first-knowledge', upstream: '', upstreams: {} });
+});
+
+it.each([zh, en])('accepts the key directly with visibility controls and saves only a generated reference to YAML', async (locale) => {
+  const english = locale === en; const value = crypto.randomUUID(); let stored = false;
+  const credential = vi.fn<NonNullable<InteractionApi['credential']>>().mockImplementation((request) => { if (request.action === 'store') stored = true; return Promise.resolve({ ok: true, message: '', configured: stored, writable: true }); });
+  const api: InteractionApi = { read: vi.fn().mockResolvedValue(snapshot), save: vi.fn().mockImplementation((request: SaveConfiguration) => Promise.resolve({ ok: true, snapshot: { ...snapshot, values: request.values } })), interact: vi.fn(), credential };
+  render(<TeamSettingsPage api={api} t={(key) => locale[key]} openKnowledge={vi.fn()} />);
+  fireEvent.click(await screen.findByRole('button', { name: english ? 'Configure' : '配置' })); fireEvent.click(screen.getByRole('switch', { name: english ? 'Connect team services' : '连接团队服务' }));
+  const input = await screen.findByLabelText<HTMLInputElement>(english ? 'Team authentication key' : '团队鉴权密钥'); expect(input.type).toBe('password');
+  expect(screen.queryByLabelText(locale.keyEnv)).toBeNull();
+  fireEvent.change(input, { target: { value } });
+  fireEvent.click(screen.getByRole('button', { name: english ? 'Show key' : '显示密钥' })); expect(input.type).toBe('text'); expect(input.value).toBe(value);
+  fireEvent.click(screen.getByRole('button', { name: english ? 'Hide key' : '隐藏密钥' })); expect(input.type).toBe('password');
+  fireEvent.change(screen.getByLabelText(locale.router), { target: { value: 'https://router.example.org/team-a' } }); fireEvent.change(screen.getByLabelText(locale.maintainer), { target: { value: 'https://maintainer.example.org/team-a' } });
+  fireEvent.click(screen.getByRole('button', { name: english ? 'Save configuration' : '保存配置' })); await waitFor(() => { expect(api.save).toHaveBeenCalled(); });
+  const reference = vi.mocked(api.save).mock.calls[0]?.[0].values.upstreams?.['coding']?.keyEnv;
+  expect(reference).toMatch(/^ACN_TEAM_[0-9A-F]{32}$/); expect(credential).toHaveBeenCalledWith({ action: 'store', reference, value });
+  expect(JSON.stringify(vi.mocked(api.save).mock.calls)).not.toContain(value);
+  fireEvent.click(screen.getByRole('button', { name: english ? 'Configure' : '配置' }));
+  const reopened = await screen.findByLabelText<HTMLInputElement>(english ? 'Team authentication key' : '团队鉴权密钥');
+  await waitFor(() => { expect(reopened.placeholder).toContain('••••'); }); expect(reopened.value).toBe(''); expect(reopened.type).toBe('password');
+  expect(screen.getByRole<HTMLButtonElement>('button', { name: english ? 'Show key' : '显示密钥' }).disabled).toBe(true);
+});
+
+it('checks a draft key without storing it and retains the saved key when the field is empty', async () => {
+  const { api } = setup({ ...snapshot, values: configurationValues({ upstream: 'coding', upstreams: { coding: { ...profile, routerEndpoint: 'https://router.example.org', maintainerEndpoint: 'https://maintainer.example.org', keyEnv: 'EXAMPLE_TEAM_TOKEN' } } }) });
+  if (api.credential === undefined) throw new Error('Expected credential API.');
+  const credential = vi.mocked(api.credential);
+  fireEvent.click(await screen.findByRole('button', { name: '配置' })); const input = await screen.findByLabelText('团队鉴权密钥'); const value = crypto.randomUUID();
+  fireEvent.change(input, { target: { value } }); fireEvent.click(screen.getByRole('button', { name: '检查连接' }));
+  await waitFor(() => { expect(api.credential).toHaveBeenCalledWith(expect.objectContaining({ action: 'check', value }), expect.any(AbortSignal)); });
+  expect(credential.mock.calls.some(([request]) => request.action === 'store')).toBe(false); expect(api.save).not.toHaveBeenCalled();
+  await waitFor(() => { expect(screen.getByRole<HTMLButtonElement>('button', { name: '保存配置' }).disabled).toBe(false); });
+  fireEvent.change(input, { target: { value: '' } }); fireEvent.click(screen.getByRole('button', { name: '保存配置' })); await waitFor(() => { expect(api.save).toHaveBeenCalled(); });
+  expect(vi.mocked(api.save).mock.calls[0]?.[0].values.upstreams?.['coding']?.keyEnv).toBe('EXAMPLE_TEAM_TOKEN');
+});
+
+it('does not update configuration if key storage fails and explains a later configuration conflict', async () => {
+  const { api } = setup();
+  if (api.credential === undefined) throw new Error('Expected credential API.');
+  const credential = vi.mocked(api.credential);
+  fireEvent.click(await screen.findByRole('button', { name: '配置' })); fireEvent.click(screen.getByRole('switch', { name: '连接团队服务' }));
+  fireEvent.change(screen.getByLabelText(zh.router), { target: { value: 'https://router.example.org' } }); fireEvent.change(screen.getByLabelText(zh.maintainer), { target: { value: 'https://maintainer.example.org' } });
+  const input = await screen.findByLabelText<HTMLInputElement>('团队鉴权密钥'); fireEvent.change(input, { target: { value: crypto.randomUUID() } });
+  credential.mockResolvedValueOnce({ ok: false, message: '无法保存密钥。' }); fireEvent.click(screen.getByRole('button', { name: '保存配置' })); await screen.findByText('无法保存密钥。'); expect(api.save).not.toHaveBeenCalled(); expect(input.value).not.toBe('');
+  vi.mocked(api.save).mockResolvedValueOnce({ ok: false, code: 'conflict', fields: [] }); fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
+  await screen.findByText(/团队鉴权密钥已保存。.*配置/); expect(input.value).toBe('');
+});
+
+it.each(['EXAMPLE_TEAM_TOKEN', `ACN_TEAM_${crypto.randomUUID().replaceAll('-', '').toUpperCase()}`])('retains the saved key reference through solo mode and team reactivation: %s', async (reference) => {
+  const { api } = setup({ ...snapshot, values: configurationValues({ upstream: 'coding', upstreams: { coding: { ...profile, routerEndpoint: 'https://router.example.org', maintainerEndpoint: 'https://maintainer.example.org', keyEnv: reference } } }) });
+  fireEvent.click(await screen.findByRole('button', { name: '配置' })); fireEvent.click(screen.getByRole('switch', { name: '连接团队服务' })); fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
+  await waitFor(() => { expect(api.save).toHaveBeenCalledTimes(1); });
+  expect(vi.mocked(api.save).mock.calls[0]?.[0].values.upstreams?.['coding']).toMatchObject({ routerEndpoint: '', maintainerEndpoint: '', keyEnv: reference });
+  fireEvent.click(screen.getByRole('button', { name: '配置' })); fireEvent.click(screen.getByRole('switch', { name: '连接团队服务' }));
+  const input = await screen.findByLabelText<HTMLInputElement>('团队鉴权密钥'); await waitFor(() => { expect(input.placeholder).toContain('••••'); });
+  fireEvent.change(screen.getByLabelText(zh.router), { target: { value: 'https://router.example.org' } }); fireEvent.change(screen.getByLabelText(zh.maintainer), { target: { value: 'https://maintainer.example.org' } });
+  fireEvent.click(screen.getByRole('button', { name: '保存配置' })); await waitFor(() => { expect(api.save).toHaveBeenCalledTimes(2); });
+  expect(vi.mocked(api.save).mock.calls[1]?.[0].values.upstreams?.['coding']?.keyEnv).toBe(reference);
+  if (api.credential === undefined) throw new Error('Expected credential API.');
+  expect(vi.mocked(api.credential).mock.calls.some(([request]) => request.action === 'store')).toBe(false);
+});
+
+it.each(['readonly', 'describe-failed', 'unmanaged'])('allows a draft connection check when credential storage is %s', async (mode) => {
+  const { api } = setup(); if (api.credential === undefined) throw new Error('Expected credential API.');
+  vi.mocked(api.credential).mockImplementation((request) => Promise.resolve(request.action === 'describe' ? mode === 'readonly' ? { ok: true, message: '', configured: false, writable: false } : { ok: false, message: '托管状态不可用。' } : { ok: true, message: '临时检查通过。' }));
+  fireEvent.click(await screen.findByRole('button', { name: '配置' })); fireEvent.click(screen.getByRole('switch', { name: '连接团队服务' }));
+  const input = await screen.findByLabelText<HTMLInputElement>('团队鉴权密钥'); await screen.findByText(/仍可输入密钥检查连接/); expect(input.disabled).toBe(false);
+  fireEvent.change(screen.getByLabelText(zh.router), { target: { value: 'https://router.example.org' } }); fireEvent.change(screen.getByLabelText(zh.maintainer), { target: { value: 'https://maintainer.example.org' } }); fireEvent.change(input, { target: { value: crypto.randomUUID() } });
+  fireEvent.click(screen.getByRole('button', { name: '检查连接' })); await screen.findByText('临时检查通过。'); expect(api.save).not.toHaveBeenCalled();
 });

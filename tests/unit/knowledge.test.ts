@@ -14,7 +14,7 @@ import { ClaimStore } from '../../src/store/claims.js';
 import { TraceStore } from '../../src/store/traces.js';
 import { TraceSchema } from '../../src/protocol/trace.js';
 import { SessionStateStore } from '../../src/store/session-state.js';
-import { withFileLock } from '../../src/store/lock.js';
+import { acquireFileLease } from '../../src/store/lock.js';
 import { statusCommand } from '../../src/commands/status.js';
 import { claimCommand } from '../../src/commands/claim.js';
 import { executeClaim } from '../../src/tools/claim.js';
@@ -147,12 +147,13 @@ describe('Claim and Trace domain behavior', () => {
     await expect(fs.access(knowledge.context().paths.uploads)).rejects.toMatchObject({ code: 'ENOENT' });
     await expect(fs.access(knowledge.context().paths.claimEditPending)).rejects.toMatchObject({ code: 'ENOENT' });
   });
-  it('does not wait for the knowledge lock on ordinary reads', async () => {
+  it('cancels a read waiting for the knowledge lock and reads normally after release', async () => {
     const { knowledge, claim } = await service();
-    await withFileLock(knowledge.context().paths.knowledgeLock, async () => {
-      expect((await knowledge.readClaim(claim.id)).claim).toEqual(claim);
-      expect((await knowledge.listClaims()).items).toHaveLength(1);
-    });
+    const lease = await acquireFileLease(knowledge.context().paths.knowledgeLock);
+    const controller = new AbortController(); const reason = new Error('Read cancelled.');
+    try { const reading = knowledge.readClaim(claim.id, controller.signal); controller.abort(reason); await expect(reading).rejects.toBe(reason); }
+    finally { await lease.release(); }
+    expect((await knowledge.readClaim(claim.id)).claim).toEqual(claim); expect((await knowledge.listClaims()).items).toHaveLength(1);
   });
   it('paginates Trace tasks by Unicode character and filters input/output relations', async () => {
     const { knowledge, claim } = await service();

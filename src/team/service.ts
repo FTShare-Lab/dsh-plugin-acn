@@ -5,6 +5,7 @@ import { nowSeconds } from '../protocol/time.js';
 import type { StoreLogger } from '../store/context.js';
 import { TeamError } from './errors.js';
 import { TeamHttp } from './http.js';
+import type { CredentialResolver } from './http.js';
 import { RouterClient } from './router-client.js';
 import { MaintainerClient } from './maintainer-client.js';
 
@@ -15,9 +16,9 @@ export class TeamFacade {
   readonly maintainer: MaintainerClient;
   private readonly states: TeamStatus = { mode: 'team', router: { state: 'unknown' }, maintainer: { state: 'unknown' } };
   private readonly warned = new Set<string>();
-  constructor(config: ResolvedConfig['team'], agentId: AgentId, private readonly logger: StoreLogger) {
-    this.router = new RouterClient(new TeamHttp('router', config.routerEndpoint, agentId, config));
-    this.maintainer = new MaintainerClient(new TeamHttp('maintainer', config.maintainerEndpoint, agentId, config));
+  constructor(config: ResolvedConfig['team'], agentId: AgentId, private readonly logger: StoreLogger, credential?: CredentialResolver) {
+    this.router = new RouterClient(new TeamHttp('router', config.routerEndpoint, agentId, config, credential));
+    this.maintainer = new MaintainerClient(new TeamHttp('maintainer', config.maintainerEndpoint, agentId, config, credential));
   }
   status(): TeamStatus { return structuredClone(this.states); }
   async request<T>(service: 'router' | 'maintainer', action: () => Promise<T>): Promise<T> {
@@ -30,7 +31,7 @@ export class TeamFacade {
       const warning = error.kind === 'auth' ? 'auth' : `${service}:${error.kind}`;
       if (!this.warned.has(warning)) {
         this.warned.add(warning);
-        this.logger.warn(`${error.message}${error.kind === 'auth' && !this.router.http.credentialConfigured() ? ' 鉴权未配置，请设置 team.keyEnv 指定的环境变量。' : ''}`);
+        this.logger.warn(error.message);
       }
       throw error;
     }

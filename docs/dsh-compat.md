@@ -20,6 +20,7 @@
 | `sessionController.inspect` / `resolveAgent` | 只读历史与显式恢复分离，不因浏览启动同步 |
 | Typert Remote / Gateway、`configEditor.edit` | 宿主认证、严格入参、profile 文件锁、原子写和普通字段重载 |
 | `workspaceRegistry.archiveSession`、`archivedSessionIds` | 归档前冻结范围，归档后暂停；包裹公开方法，卸载时恢复。宿主升级需重验普通及停止归档 |
+| `credentials.resolve/describe/set` | 每次团队请求解析引用，设置页只回传可用状态；密码独立写入宿主托管存储 |
 | `commands.register` | 命令不进入普通模型历史，贡献随依赖卸载撤销 |
 | fs 路径解析、写 / 编辑意图 | 已知文件工具的私有路径保护；没有通用读取前 hook |
 

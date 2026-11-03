@@ -88,7 +88,7 @@ export class FormationStore {
       await this.write(checkpoint);
       await this.applyLocked(checkpoint);
       return { applied: true, warnings: checkpoint.warnings, claimCount: checkpoint.appliedClaims.length, disputeCount: checkpoint.disputes.length, traceCount: checkpoint.trace === null ? 0 : 1 };
-    }, { timeoutMs: this.context.lockTimeoutMs });
+    }, { timeoutMs: this.context.lockTimeoutMs, signal: control.signal });
   }
   private async applyLocked(checkpoint: FormationCheckpoint): Promise<void> {
     await ensureKnowledgeReady(this.context.paths.root);

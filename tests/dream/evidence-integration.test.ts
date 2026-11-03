@@ -15,6 +15,21 @@ import { calibrationDraft, calibrationReviews, evidenceFixture, material } from 
 import { waitJob } from '../formation/helpers.js';
 
 describe('Dream calibration pipeline', () => {
+  it('keeps unsupported Claims and completes the parent job when evidence requests are exhausted', async () => {
+    const input = claims(1); let calls = 0;
+    const f = await evidenceFixture({ input, config: { dream: { evidenceMaxSteps: 1 } }, backend: (_route, _system, text) => {
+      calls += 1; const phase = z.object({ phase: z.string() }).parse(JSON.parse(text)).phase;
+      if (phase !== 'candidates') throw new Error('No model draft is needed without new evidence.');
+      return Promise.resolve({ text: JSON.stringify({ review: reviewSummary, candidates: [candidate(input, 'evidence')], sync_candidates: [] }) });
+    }, explore: async ({ store, signal }) => { await store.admitStep(signal); } });
+    try {
+      await f.start(); const job = await f.dream.request(f.workspace); await waitJob(f.worker.queue, job.id);
+      expect(calls).toBe(1); expect((await f.knowledge.dreamStore().progress(job.id))?.entries[0]).toMatchObject({ status: 'kept', reason: '查证模型轮数已耗尽且未取得直接证据，保持原样。' });
+      expect(await new ClaimStore(f.knowledge.context()).list()).toEqual(input);
+      const manifest = await new EvidenceStore(f.knowledge.context(), job.id, 'group-a').read();
+      expect(manifest).toMatchObject({ completed: true, model_steps: 1, receipts: {} });
+    } finally { await f.close(); }
+  });
   it.each(['valid', 'no-evidence', 'changed-after-read', 'changed-after-review', 'kept-for-uncertainty'])('integrates calibration with the shared worker: %s', async (mode) => {
     const input = claims(1); let workspace = ''; let explored = 0;
     const backend: StructuredBackend = async (_route, _system, text) => {

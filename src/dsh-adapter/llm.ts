@@ -15,14 +15,16 @@ export function structuredBackend(ctx: Context): StructuredBackend {
     signal.throwIfAborted();
     const finish = assembler.finish;
     if (finish.kind === 'error' || finish.kind === 'aborted') {
-      const error = new Error('Auxiliary model stream failed.') as Error & { code: string; status?: number };
+      const error = new Error('Auxiliary model stream failed.') as Error & { code: string; status?: number; providerRetryAfterMs?: number };
       error.code = finish.failure.code;
       if (finish.failure.status !== undefined) error.status = finish.failure.status;
+      if (finish.failure.providerRetryAfterMs !== undefined) error.providerRetryAfterMs = finish.failure.providerRetryAfterMs;
       throw error;
     }
-    if (finish.kind !== 'stop') throw new JobError('structured_output', '后台模型输出未完整结束；请检查输出 token 上限并重试任务。');
+    if (finish.kind === 'max-tokens') throw new JobError('structured_output_limit', '后台模型输出达到 token 上限（MAX_TOKENS），JSON 可能被截断；请精简输出或提高输出上限。');
     const blocks = assembler.blocks();
-    if (blocks.some((block) => block.type === 'tool-call' || block.type === 'image')) throw new JobError('structured_output', '后台模型应返回 JSON 文本，不应调用工具或返回附件。');
+    if (blocks.some((block) => block.type === 'tool-call' || block.type === 'image')) throw new JobError('structured_output_content', '后台模型应返回 JSON 文本，不应调用工具或返回附件。');
+    if (finish.kind !== 'stop') throw new JobError('structured_output', '后台模型输出未完整结束；请重新提交完整 JSON 对象。');
     return { text: structuredResponseText(blocks.filter((block) => block.type === 'text').map((block) => block.text).join('')), ...(assembler.usage === undefined ? {} : { usage: assembler.usage }) };
   };
 }

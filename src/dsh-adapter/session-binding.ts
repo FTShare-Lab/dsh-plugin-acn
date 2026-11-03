@@ -81,7 +81,8 @@ export function sessionAllowed(ctx: Context, config: ResolvedConfig, header: Ses
   if (config.team.routerEndpoint && !config.legacyEnabled) return false;
   const identity = identityOf(config);
   const selected = sessionSelection(ctx, header);
-  if (selected !== undefined && selected.identity !== identity) return false;
+  // 显式选择已由空白会话门禁验证并持久化，允许宿主复用配置前创建的空白草稿。
+  if (selected !== undefined) return selected.identity === identity;
   const bound = bindings.get(header);
   if (bound !== identity) return false;
   if (config.sessionEpoch === 0) return true;

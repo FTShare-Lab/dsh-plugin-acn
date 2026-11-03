@@ -156,7 +156,7 @@
 | `formation.finalizeIdleMinutes` | 0 | 旧版定时 Finalize 兼容项；0 关闭，显式开启会增加独立触发 |
 | `formation.finalizeOnDispose` | false | 旧版释放会话收尾兼容项；默认不因关闭或重启立即收尾 |
 | `team.routerEndpoint` / `team.maintainerEndpoint` | 空 | 旧版全局连接的 HTTP(S) 服务，可带路径前缀；网页新会话仍默认单人 |
-| `team.keyEnv` | 空 | 每次请求从该环境变量读取团队凭据 |
+| `team.keyEnv` | 空 | 每次请求经 DSH 凭据服务解析引用；无该服务时兼容同名环境变量 |
 | `team.timeoutMs` | 15000 | 每次 HTTP 尝试（含响应正文）的总超时 |
 | `team.retryCount` | 3 | 首次请求后的重试次数 |
 | `team.retryBaseDelayMs` / `team.retryMaxDelayMs` | 500 / 8000 | 指数退避起点与上限，带 ±20% 抖动 |
@@ -195,13 +195,13 @@
 
 文件校准可在同一知识行的完整自定义配置中加入 `dream: { evidenceCalibration: true }`。`/dream` 使用命令会话的 cwd；自动任务使用最近普通会话 cwd，缺省为宿主启动 cwd，创建任务后冻结工作区。查证不提供命令或 Web 工具；独立证据限于带版本的文件读取。限额写入每组清单，失败、暂停与重启不返还已用额度；修改配置不会扩大原组授权。已经 prepared 的提交仍按固定目标和版本依赖恢复。
 
-在启动宿主的环境中提供对应凭据。每次请求读取环境变量，轮换后无需重建客户端。回环地址直连；其他地址遵循 HTTP(S)_PROXY 与 NO_PROXY。两个服务在启用时各做一次异步 health；失败会显示在 `/acn-status`，不会撤销本地知识服务。鉴权错误每次服务生命周期只警告一次。
+可在工作配置中直接输入团队鉴权密钥并保存，也可在启动宿主的环境中提供对应凭据。每次请求重新解析宿主托管值或兼容的环境变量，同一引用的密钥轮换无需重建客户端。回环地址直连；其他地址遵循 HTTP(S)_PROXY 与 NO_PROXY。两个服务在启用时各做一次异步 health；失败会显示在 `/acn-status`，不会撤销本地知识服务。鉴权错误每次服务生命周期只警告一次。
 
 Memory review 使用自身会话路由，或显式 `llm.provider` / `llm.model`，不会借用其他会话的路由。关闭 review 保留已排队任务，重新启用后继续。关闭 Memory 或单独禁用其行都会撤销工具、快照和 review；知识行仍保护普通文件工具访问私有 Agent 数据。已持久化的双文件事务会在知识服务启动时恢复。
 
 配置校验要求团队 endpoint 同时为空或同时为 HTTP(S) URL，不接受内嵌用户名、密码、query 或 fragment；`llm.provider`/`model` 必须成对；数值必须处于规定范围。配置错误只报告字段名。
 
-团队凭据只允许配置环境变量名 `team.keyEnv`，不接受密钥正文。各插件可以按行 id 单独禁用，例如：
+`team.keyEnv` 和 `upstreams.<标识>.keyEnv` 是内部凭据引用，不接受密钥正文。正常使用时在「团队鉴权密钥」直接输入 key，引用由界面自动生成。字段默认掩码显示，右侧按钮切换本次输入的显隐；保存配置时写入 DSH 托管存储，检查连接时只临时使用。已保存密钥只返回可用状态，留空保留原值。旧环境变量引用继续兼容，托管值优先。没有宿主凭据服务时须在启动应用前设置同名环境变量，再重启应用。各插件可以按行 id 单独禁用，例如：
 
 ```yaml
 - id: acn-tools

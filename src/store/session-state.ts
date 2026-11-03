@@ -16,12 +16,13 @@ export class VersionedFileStore {
 }
 export class SessionStateStore extends VersionedFileStore {
   constructor(context: StoreContext) { super(context, (id) => context.paths.sessionState(id)); }
-  async update(id: string, change: (current: VersionedDocument | null) => VersionedDocument | Promise<VersionedDocument>): Promise<VersionedDocument> {
+  async update(id: string, change: (current: VersionedDocument | null) => VersionedDocument | Promise<VersionedDocument>, signal?: AbortSignal): Promise<VersionedDocument> {
     const path = this.context.paths.sessionState(id);
     return withFileLock(`${path}.lock`, async () => {
       const next = VersionedDocumentSchema.parse(await change(await this.read(id)));
+      signal?.throwIfAborted();
       await writeYamlAtomic(path, next, VersionedDocumentSchema, this.context.logger);
       return next;
-    }, { timeoutMs: this.context.lockTimeoutMs });
+    }, { timeoutMs: this.context.lockTimeoutMs, signal });
   }
 }

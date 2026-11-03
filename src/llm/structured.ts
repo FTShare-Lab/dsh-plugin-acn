@@ -14,8 +14,8 @@ import { KnowledgeError } from '../knowledge/errors.js';
 
 export interface StructuredResponse { text: string; usage?: object }
 export type StructuredPhase = 'candidates' | 'draft' | 'review' | 'sync_review' | 'compaction';
-type InvalidKind = 'json_syntax' | 'schema' | 'reference' | 'incomplete';
-const invalidLabels: Record<InvalidKind, string> = { json_syntax: 'JSON 语法', schema: '字段结构', reference: '引用或领域约束', incomplete: '输出未完整结束或包含非文本内容' };
+type InvalidKind = 'json_syntax' | 'schema' | 'reference' | 'incomplete' | 'output_limit' | 'non_text';
+const invalidLabels: Record<InvalidKind, string> = { json_syntax: 'JSON 语法', schema: '字段结构', reference: '引用或领域约束', incomplete: '输出未完整结束', output_limit: '输出 token 上限（MAX_TOKENS）', non_text: '缺少 JSON 文本或返回了工具调用、附件' };
 export type StructuredBackend = (route: Route, system: string, input: string, maxTokens: number, signal: AbortSignal) => Promise<StructuredResponse>;
 export function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -37,9 +37,22 @@ export function transportError(error: unknown): JobError {
   const record = typeof error === 'object' && error !== null ? error : {};
   const code = 'code' in record && typeof record.code === 'string' ? record.code : '';
   const status = 'status' in record && typeof record.status === 'number' ? record.status : 0;
-  if (code === 'CONTEXT_WINDOW_EXCEEDED') return new JobError('context_limit', '会话投影超过模型上下文容量；请配置更大上下文的模型后重试任务。');
-  const retryable = status === 429 || status >= 500 && status <= 599 || /^(?:TIMEOUT|RATE_LIMIT|SERVER|NETWORK|TRANSPORT|SERVER_ERROR|NETWORK_ERROR|CONNECTION_ERROR|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EMPTY_RESPONSE)$/.test(code);
-  return new JobError(retryable ? 'transport' : 'route', retryable ? '后台模型调用暂时失败或超时，将按退避策略重试。' : '后台模型调用不可用。请检查 llm.provider、llm.model、适配器及凭据配置后重试任务。', retryable);
+  const delay = 'providerRetryAfterMs' in record ? record.providerRetryAfterMs : undefined;
+  const retryAfterMs = typeof delay === 'number' && Number.isFinite(delay) && delay > 0 && delay <= 2_147_483_647 ? Math.ceil(delay) : undefined;
+  const retry = (kind: string, message: string) => new JobError(kind, message + (retryAfterMs === undefined ? '' : ` 提供商要求至少等待 ${Math.ceil(retryAfterMs / 1000)} 秒。`), true, retryAfterMs);
+  if (code === 'CONTEXT_WINDOW_EXCEEDED') return new JobError('context_limit', '后台模型输入超过上下文容量（CONTEXT_WINDOW_EXCEEDED）；请配置更大上下文的模型后重试任务。');
+  // 只公开已知分类与固定建议，不转发提供商错误正文或任意 code。
+  if (/^(?:AUTH|AUTH_FAILED|INVALID_CREDENTIAL|MISSING_CREDENTIAL)$/.test(code) || status === 401 || status === 403) return new JobError('model_auth', '后台模型鉴权失败（AUTH）；请在 DSH 模型设置中检查提供商的凭据配置后重试。');
+  if (code === 'QUOTA' || code === 'ACCOUNT_QUOTA' || status === 402) return new JobError('model_quota', '后台模型额度不足（QUOTA）；请检查提供商额度或更换知识处理模型后重试。');
+  if (code === 'MALFORMED_RESPONSE') return new JobError('model_response', '后台模型返回的响应格式无效（MALFORMED_RESPONSE）；可稍后重试或更换知识处理模型。');
+  if (code === 'NO_ADAPTER') return new JobError('route', '后台模型适配器不可用（NO_ADAPTER）；请检查 DSH 中的提供商与知识处理模型配置。');
+  if (code === 'INVALID_REQUEST' || status === 400 || status === 413) return new JobError('model_request', '后台模型拒绝请求（INVALID_REQUEST）；请检查所选模型支持的参数和上下文、输出上限。');
+  if (code === 'EMPTY_RESPONSE') return retry('model_empty', '后台模型返回空响应（EMPTY_RESPONSE）；可稍后重试或更换知识处理模型。');
+  if (code === 'RATE_LIMIT' || code === 'RATE_LIMITED' || status === 429) return retry('model_rate_limit', '后台模型请求受限（RATE_LIMIT）；请稍后重试或检查提供商并发限制。');
+  if (code === 'TIMEOUT' || code === 'ETIMEDOUT' || code === 'HTTP_408' || status === 408) return retry('timeout', '后台模型调用超时（TIMEOUT）；请检查网络和模型服务，或调整超时后重试。');
+  if (code === 'SERVER' || code === 'SERVER_ERROR' || status >= 500 && status <= 599) return retry('model_server', '后台模型服务暂时不可用（SERVER）；请稍后重试或更换知识处理模型。');
+  if (/^(?:NETWORK|TRANSPORT|NETWORK_ERROR|CONNECTION_ERROR|ECONNRESET|ECONNREFUSED)$/.test(code)) return retry('transport', '后台模型网络连接失败（TRANSPORT）；请检查网络和模型服务后重试。');
+  return new JobError('route', '后台模型调用不可用。请检查 llm.provider、llm.model、适配器及凭据配置后重试任务。');
 }
 export async function structuredCall<T>(options: {
   backend: StructuredBackend; context: StoreContext; config: ResolvedConfig['llm']; route: Route; jobId: string;
@@ -64,9 +77,10 @@ export async function structuredCall<T>(options: {
           response = await abortable(backend(route, `${options.system}\n只输出一个 JSON 对象，不调用工具。必须符合此 JSON schema：\n${schema}${feedback}`, options.input, config.maxOutputTokens, callSignal), callSignal);
         } catch (error) {
           signal.throwIfAborted();
-          if (error instanceof JobError && error.kind === 'structured_output') { outcome = 'invalid'; lastInvalid = 'incomplete'; invalid = { kind: lastInvalid }; feedback = `\n上次响应未通过校验：${error.message}\n请重新提交完整 JSON 对象。`; break; }
-          const failure = timeout.aborted ? new JobError('timeout', '后台模型调用超时，将按退避策略重试。', true) : transportError(error);
-          if (!failure.retryable || transport === 3) throw failure;
+          if (error instanceof JobError && ['structured_output', 'structured_output_limit', 'structured_output_content'].includes(error.kind)) { outcome = 'invalid'; lastInvalid = error.kind === 'structured_output_limit' ? 'output_limit' : error.kind === 'structured_output_content' ? 'non_text' : 'incomplete'; invalid = { kind: lastInvalid }; feedback = `\n上次响应未通过校验：${error.message}\n请重新提交完整 JSON 对象。`; break; }
+          const failure = timeout.aborted ? transportError({ code: 'TIMEOUT' }) : transportError(error);
+          // 服务要求等待时交给现有持久队列调度，不在这里连发或占住 worker 等待。
+          if (!failure.retryable || transport === 3 || failure.retryAfterMs !== undefined) throw failure;
           continue;
         }
         try {

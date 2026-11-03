@@ -12,7 +12,8 @@ import type { Job } from '../worker/types.js';
 import { JobError, DreamStopped, DreamYield, jobPriority } from '../worker/types.js';
 import type { JobControl } from '../worker/worker.js';
 import { nowSeconds } from '../protocol/time.js';
-import { sameClaim } from '../knowledge/alignment.js';
+import { KnowledgeBusy, sameClaim } from '../knowledge/alignment.js';
+import { LockTimeoutError } from '../store/errors.js';
 import { UploadDelivery } from '../upload/deliver.js';
 import { UploadStore } from '../store/uploads.js';
 import { DiscoverySchema, DraftResponseSchema, ProgressSchema, ReviewResponseSchema, SemanticReviewSchema, requireDream, DreamValidationError } from './schema.js';
@@ -32,6 +33,7 @@ export interface DreamOptions { workspace?: () => Promise<string>; explore?: Evi
 export class AcnDream {
   private readonly unregister: () => void;
   private readonly timers = new Set<ReturnType<typeof setTimeout>>();
+  private eligibilityRetry: ReturnType<typeof setTimeout> | undefined;
   private pending = Promise.resolve(); private stopped = false; private closed = false;
   private active: Promise<Job['result']> | undefined;
   constructor(readonly knowledge: AcnKnowledge, private readonly backend: StructuredBackend, private readonly render: (name: string, context: object) => string, private readonly beforeCall?: () => Promise<void>, private readonly options: DreamOptions = {}) {
@@ -59,7 +61,21 @@ export class AcnDream {
   async check(): Promise<void> {
     if (this.closed || this.stopped || !this.knowledge.config.dream.enabled) return;
     const worker = this.knowledge.jobs; if (worker === null || (await worker.queue.list()).some((job) => job.kind === 'dream' && (job.state === 'queued' || job.state === 'running'))) return;
-    if (dreamEligible(this.knowledge.config.dream, await this.knowledge.dreamStore().state(), (await this.knowledge.snapshot()).claims, this.knowledge.context().agentId, false)) await worker.enqueue('dream', { manual: false, workspace_root: await this.workspace() });
+    const eligible = await this.eligible(false);
+    if (this.closed || this.stopped) return;
+    if (eligible === null) {
+      // 一次提交争用不能推迟整个检查周期；只保留一个短重试，关闭时由 timers 统一清理。
+      if (this.eligibilityRetry === undefined) {
+        const timer = setTimeout(() => { this.timers.delete(timer); this.eligibilityRetry = undefined; this.trigger(); }, 1000);
+        timer.unref(); this.timers.add(timer); this.eligibilityRetry = timer;
+      }
+    } else if (eligible) await worker.enqueue('dream', { manual: false, workspace_root: await this.workspace() });
+  }
+  private async eligible(manual: boolean): Promise<boolean | null> {
+    try {
+      const snapshot = await this.knowledge.snapshot(undefined, 0);
+      return dreamEligible(this.knowledge.config.dream, await this.knowledge.dreamStore().state(), snapshot.claims, this.knowledge.context().agentId, manual);
+    } catch (error) { if (error instanceof KnowledgeBusy || error instanceof LockTimeoutError) return null; throw error; }
   }
   private async workspace(input?: string): Promise<string> { return fs.realpath(input ?? await this.options.workspace?.() ?? process.cwd()); }
   async request(workspace?: string, sessionId?: string): Promise<Job> {
@@ -67,10 +83,11 @@ export class AcnDream {
     const worker = this.knowledge.jobs; if (worker === null) throw new JobError('unconfigured', '请先配置 agentId。');
     this.stopped = false; const pending = await worker.queue.pauseDream(false); worker.wake(true);
     if (pending[0] !== undefined) return pending[0];
-    if (!dreamEligible(this.knowledge.config.dream, await this.knowledge.dreamStore().state(), (await this.knowledge.snapshot()).claims, this.knowledge.context().agentId, true)) throw new JobError('empty', '没有可整理的自身 active/stale Claim。');
+    // 预检遇忙不阻塞手动入队；worker 在可取消的初始快照锁内重检资格，不使用半批知识。
+    if (await this.eligible(true) === false) throw new JobError('empty', '没有可整理的自身 active/stale Claim。');
     return worker.enqueue('dream', { manual: true, workspace_root: await this.workspace(workspace) }, sessionId);
   }
-  async stop(): Promise<number> { this.stopped = true; const worker = this.knowledge.jobs; if (worker === null) return 0; const jobs = await worker.queue.pauseDream(true); worker.cancelDream(new DreamStopped()); return jobs.length; }
+  async stop(): Promise<number> { this.stopped = true; if (this.eligibilityRetry !== undefined) { clearTimeout(this.eligibilityRetry); this.timers.delete(this.eligibilityRetry); this.eligibilityRetry = undefined; } const worker = this.knowledge.jobs; if (worker === null) return 0; const jobs = await worker.queue.pauseDream(true); worker.cancelDream(new DreamStopped()); return jobs.length; }
   private async boundary(job: Job, control: JobControl): Promise<void> {
     control.signal.throwIfAborted();
     const jobs = await this.knowledge.jobs?.queue.list() ?? [];
@@ -129,6 +146,7 @@ export class AcnDream {
           await this.boundary(job, control); await evidence.complete(control.signal); manifest = await evidence.read() ?? manifest;
         }
         receipts = z.record(z.string(), z.json()).parse(manifest.receipts);
+        if (manifest.model_steps >= manifest.limits.steps && Object.keys(receipts).length === 0) { entry.status = 'kept'; entry.reason = '查证模型轮数已耗尽且未取得直接证据，保持原样。'; await store.saveProgress(job.id, progress); continue; }
       }
       let repairs = 0;
       while (entry.status === 'pending') {

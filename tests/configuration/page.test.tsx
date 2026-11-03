@@ -54,7 +54,7 @@ describe('configuration page', () => {
     fireEvent.change(screen.getByLabelText(/^运行模式/), { target: { value: 'team' } });
     fireEvent.change(screen.getByLabelText('Router 地址'), { target: { value: 'http://127.0.0.1:8101' } });
     fireEvent.change(screen.getByLabelText('Maintainer 地址'), { target: { value: 'http://127.0.0.1:8102' } });
-    fireEvent.change(screen.getByLabelText(/^团队认证环境变量名/), { target: { value: 'EXAMPLE_TEAM_TOKEN' } });
+    fireEvent.change(screen.getByLabelText(/^团队凭据引用名/), { target: { value: 'EXAMPLE_TEAM_TOKEN' } });
     fireEvent.click(screen.getByRole('button', { name: zh.save }));
     await screen.findByText(zh.saved);
     const request = vi.mocked(api.save).mock.calls[0]?.[0];

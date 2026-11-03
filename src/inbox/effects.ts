@@ -142,7 +142,7 @@ export class InboxEffectStore {
       control.signal.throwIfAborted(); control.prepared();
       await this.write(effect); await this.references(effect); await this.applyLocked(effect);
       return { applied: effect.appliedClaims.length, warnings: effect.warnings };
-    }, { timeoutMs: this.context.lockTimeoutMs });
+    }, { timeoutMs: this.context.lockTimeoutMs, signal: control.signal });
   }
   private async applyLocked(effect: InboxEffect): Promise<void> {
     await ensureKnowledgeReady(this.context.paths.root);

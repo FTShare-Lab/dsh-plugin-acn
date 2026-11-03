@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { ClaimStore } from '../../src/store/claims.js';
 import { TraceStore } from '../../src/store/traces.js';
 import { UploadStore } from '../../src/store/uploads.js';
-import { withFileLock } from '../../src/store/lock.js';
+import { acquireFileLease, withFileLock } from '../../src/store/lock.js';
 import { DreamStopped } from '../../src/worker/types.js';
 import { ValidationSchema } from '../../src/dream/schema.js';
 import { nowSeconds } from '../../src/protocol/time.js';
@@ -17,6 +17,25 @@ import { claims, candidate, dreamFixture, phaseBackend, prepared, qualityDraft, 
 
 const control = () => ({ signal: new AbortController().signal, prepared() {} });
 describe('Dream concurrency and stop boundaries', () => {
+  it('rechecks automatic eligibility shortly after a contended commit finishes', async () => {
+    const input = claims(); const f = await dreamFixture(phaseBackend(input), { dream: { minChangedClaims: 1 } });
+    const lease = await acquireFileLease(f.knowledge.context().paths.knowledgeLock); let released = false;
+    try {
+      await f.start(); expect(await f.worker.queue.list()).toEqual([]); await lease.release(); released = true;
+      await until(async () => (await f.worker.queue.list()).some((job) => job.kind === 'dream'));
+      const job = (await f.worker.queue.list()).find((item) => item.kind === 'dream'); if (!job) throw new Error('Missing automatic Dream.');
+      await waitJob(f.worker.queue, job.id);
+    } finally { if (!released) await lease.release(); await f.close(); }
+  });
+  it.each(['stop', 'close'] as const)('cancels a pending eligibility retry on %s', async (action) => {
+    const f = await dreamFixture(phaseBackend(claims()), { dream: { minChangedClaims: 1 } });
+    const lease = await acquireFileLease(f.knowledge.context().paths.knowledgeLock); let released = false;
+    try {
+      await f.start(); if (action === 'stop') await f.dream.stop(); else await f.dream.close();
+      await lease.release(); released = true; await new Promise<void>((resolve) => { setTimeout(resolve, 1100); });
+      expect(await f.worker.queue.list()).toEqual([]);
+    } finally { if (!released) await lease.release(); await f.close(); }
+  });
   it.each(['provider', 'prepared'])('honors an independent process pause during %s and resumes the same job', async (mode) => {
     const input = claims(); const backend = phaseBackend(input); const ready = deferred(); const release = deferred(); let paused = false; let calls = 0;
     const f = await dreamFixture((...args) => { calls += 1; if (mode === 'provider' && !paused && (JSON.parse(args[2]) as { phase: string }).phase === 'review') { paused = true; ready.resolve(); return new Promise(() => {}); } return backend(...args); });

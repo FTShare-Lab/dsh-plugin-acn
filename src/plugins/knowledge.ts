@@ -7,6 +7,7 @@ import { UploadScheduler } from '../upload/scheduler.js';
 import { bindSession, sessionChanged, observeSelection, runningConfiguration, rememberConfiguration, sessionAllowed } from '../dsh-adapter/session-binding.js';
 import { protectMemoryPaths } from '../dsh-adapter/memory-paths.js';
 import { RuntimePool } from '../dsh-adapter/runtime-pool.js';
+import { teamCredentials } from '../dsh-adapter/team-credentials.js';
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -40,7 +41,7 @@ export const Config: Schema = Schema.object({
 
 export async function apply(ctx: Context, input: unknown = {}): Promise<void> {
   const config = resolveConfig(input);
-  const knowledge = new AcnKnowledge(config.upstreams === undefined ? config : { ...config, agentId: '' }, ctx.logger);
+  const knowledge = new AcnKnowledge(config.upstreams === undefined ? config : { ...config, agentId: '' }, ctx.logger, teamCredentials(ctx));
   await knowledge.initialize();
   ctx.provide('acnKnowledge', knowledge);
   const pool = new RuntimePool(ctx, knowledge);

@@ -5,12 +5,16 @@ import type { ConfigurationSnapshot, ConfigurationValues } from '../configuratio
 import { resolveConfig, UpstreamNameSchema, UpstreamSchema, upstreamsOf } from '../config.js';
 import type { Upstream } from '../config.js';
 import type { InteractionRequest, InteractionResult } from '../interaction.js';
+import type { CredentialRequest, CredentialResult } from '../credentials.js';
+import { TeamCredentialField } from './TeamCredentialField.js';
 import type { ConfigurationText } from './locales.js';
 import { Button, Row, Select, Tabs, configurationLabel, inputStyle, muted } from './interaction-ui.js';
-export interface InteractionApi extends ConfigurationApi { interact: (request: InteractionRequest, signal?: AbortSignal) => Promise<InteractionResult> }
+export interface InteractionApi extends ConfigurationApi { interact: (request: InteractionRequest, signal?: AbortSignal) => Promise<InteractionResult>; credential?: (request: CredentialRequest, signal?: AbortSignal) => Promise<CredentialResult> }
 export type SettingsTab = 'upstreams' | 'knowledge';
 export interface TeamSettingsProps { api: InteractionApi; t: (key: ConfigurationText) => string; openKnowledge: (key: string) => void; initialTab?: SettingsTab }
-type Draft = { key: string; existing: boolean; team: boolean; value: Omit<Upstream, 'agentId'> & { agentId: string } };
+type Draft = { key: string; existing: boolean; team: boolean; value: Omit<Upstream, 'agentId'> & { agentId: string }; secret: string; reference: string };
+// 引用名属于存储接口；新配置自动分配，避免不同 upstream 意外共用密钥。
+const newCredentialReference = () => `ACN_TEAM_${Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, '0')).join('').toUpperCase()}`;
 export function settingsUpstreams(values: ConfigurationValues) {
   return upstreamsOf(resolveConfig({ agentId: values.agentId, home: values.home, team: { routerEndpoint: values.routerEndpoint, maintainerEndpoint: values.maintainerEndpoint, keyEnv: values.keyEnv, timeoutMs: values.timeoutMs }, connections: values.connections, legacyEnabled: values.legacyEnabled, upstreams: values.upstreams, upstream: values.upstream }));
 }
@@ -21,18 +25,21 @@ export function TeamSettingsPage({ api, t, openKnowledge, initialTab = 'upstream
   const [editor, setEditor] = useState<Draft>(); const [home, setHome] = useState('');
   const [message, setMessage] = useState(''); const [error, setError] = useState(false);
   const [busy, setBusy] = useState(false); const [probing, setProbing] = useState(false);
+  const [credentialRefresh, setCredentialRefresh] = useState(0);
   const [checks, setChecks] = useState<InteractionResult['checks']>(); const probe = useRef<AbortController>();
   const feedback = (text: string, failed = false) => { setMessage(text); setError(failed); };
   useEffect(() => { const controller = new AbortController(); void api.read(controller.signal).then((value) => { if (!controller.signal.aborted) { setSnapshot(value); setHome(value.values.home); } }, () => { if (!controller.signal.aborted) { setMessage(t('errorLoad')); setError(true); } }); return () => { controller.abort(); probe.current?.abort(); }; }, [api, t]);
-  async function persist(values: ConfigurationValues): Promise<boolean> {
+  async function persist(values: ConfigurationValues, prefix = ''): Promise<boolean> {
     if (snapshot === undefined) return false;
     setBusy(true);
     try {
-      const result = await api.save({ revision: snapshot.revision, values });
-      if (!result.ok) { feedback(t(result.code === 'inactive' ? 'activation' : result.code), true); return false; }
+      // 首次建身份前也能保存知识目录和模型，避免必须先向默认目录写入数据。
+      const next = values.upstreams === undefined && values.agentId === '' && (values.connections?.length ?? 0) === 0 ? { ...values, upstreams: {}, upstream: '' } : values;
+      const result = await api.save({ revision: snapshot.revision, values: next });
+      if (!result.ok) { feedback(prefix + t(result.code === 'inactive' ? 'activation' : result.code), true); return false; }
       setSnapshot(result.snapshot); setHome((draft) => draft === snapshot.values.home || draft === values.home ? result.snapshot.values.home : draft);
-      feedback(c('已保存。新启动的会话使用新配置，现有会话保留启动时的连接。', 'Saved. Newly started sessions use the new configuration; running sessions retain their connection.')); return true;
-    } catch { feedback(t('errorTransport'), true); return false; } finally { setBusy(false); }
+      feedback((prefix ? c('配置与团队鉴权密钥已保存。', 'Configuration and team authentication key saved. ') : c('已保存。', 'Saved. ')) + c('新启动的会话使用新配置，现有会话保留启动时的连接。', 'Newly started sessions use the new configuration; running sessions retain their connection.')); return true;
+    } catch { feedback(prefix + t('errorTransport'), true); return false; } finally { setBusy(false); }
   }
   async function reload() {
     setBusy(true);
@@ -55,23 +62,39 @@ export function TeamSettingsPage({ api, t, openKnowledge, initialTab = 'upstream
   const values = snapshot.values; const profiles = settingsUpstreams(values); const disabled = busy || probing;
   const defaultKey = values.upstream ?? (profiles['personal'] === undefined ? '' : 'personal');
   const withProfiles = (next: Record<string, Upstream>, upstream = defaultKey): ConfigurationValues => ({ ...values, upstreams: next, upstream });
-  const add = () => { setEditor({ key: '', existing: false, team: false, value: { name: '', agentId: '', enabled: true, routerEndpoint: '', maintainerEndpoint: '', keyEnv: '', timeoutMs: 15000 } }); setChecks(undefined); feedback(''); };
+  const add = () => { setEditor({ key: '', existing: false, team: false, secret: '', reference: newCredentialReference(), value: { name: '', agentId: '', enabled: true, routerEndpoint: '', maintainerEndpoint: '', keyEnv: '', timeoutMs: 15000 } }); setChecks(undefined); feedback(''); };
   async function saveProfile() {
     if (editor === undefined) return;
-    const parsed = UpstreamSchema.safeParse({ ...editor.value, name: editor.value.name.trim() || editor.value.agentId, routerEndpoint: editor.team ? editor.value.routerEndpoint.trim() : '', maintainerEndpoint: editor.team ? editor.value.maintainerEndpoint.trim() : '', keyEnv: editor.team ? editor.value.keyEnv.trim() : '' });
+    const parsed = UpstreamSchema.safeParse({ ...editor.value, name: editor.value.name.trim() || editor.value.agentId, routerEndpoint: editor.team ? editor.value.routerEndpoint.trim() : '', maintainerEndpoint: editor.team ? editor.value.maintainerEndpoint.trim() : '', keyEnv: editor.team && editor.secret !== '' ? editor.reference : editor.value.keyEnv.trim() });
     let key = editor.key.trim() || editor.value.agentId;
     if (!editor.existing && editor.key.trim() === '') { let suffix = 2; while (profiles[key] !== undefined) key = `${editor.value.agentId}-${suffix++}`; }
     if (!parsed.success || !UpstreamNameSchema.safeParse(key).success || !editor.existing && profiles[key] !== undefined) { feedback(c('请检查 Agent ID、配置标识和团队地址。两项地址需同时填写或留空。', 'Check the Agent ID, configuration key, and team URLs. Both URLs must be set or empty.'), true); return; }
-    if (await persist(withProfiles({ ...profiles, [key]: parsed.data }, Object.keys(profiles).length === 0 ? key : defaultKey))) { setEditor(undefined); setChecks(undefined); }
+    let prefix = '';
+    setBusy(true);
+    try {
+      if (editor.team && editor.secret !== '') {
+        if (api.credential === undefined) { feedback(c('密钥托管接口不可用，请更新或重新打开插件。', 'Key storage is unavailable; update or reopen the plugin.'), true); return; }
+        const result = await api.credential({ action: 'store', reference: editor.reference, value: editor.secret });
+        if (!result.ok) { feedback(result.message, true); return; }
+        prefix = c('团队鉴权密钥已保存。', 'Team authentication key saved. ');
+        setEditor({ ...editor, secret: '', value: { ...editor.value, keyEnv: editor.reference } }); setCredentialRefresh((value) => value + 1);
+      }
+      if (await persist(withProfiles({ ...profiles, [key]: parsed.data }, Object.keys(profiles).length === 0 ? key : defaultKey), prefix)) { setEditor(undefined); setChecks(undefined); }
+    } catch { feedback(c('无法确认密钥保存结果，配置未更新；请重新检查后保存。', 'Could not confirm the key save; configuration was not updated. Check and save again.'), true); }
+    finally { setBusy(false); }
   }
   async function checkProfile() {
     if (editor === undefined) return;
     const controller = new AbortController(); probe.current = controller; setProbing(true); setChecks(undefined);
-    try { const result = await api.interact({ action: 'check', connection: { ...editor.value, name: editor.value.name || editor.value.agentId } }, controller.signal); if (!controller.signal.aborted) { setChecks(result.checks); feedback(result.message, !result.ok); } }
+    try {
+      const connection = { ...editor.value, name: editor.value.name || editor.value.agentId };
+      const result = editor.secret === '' ? await api.interact({ action: 'check', connection }, controller.signal) : api.credential === undefined ? { ok: false, message: c('密钥检查接口不可用，请重新打开插件。', 'Key check is unavailable; reopen the plugin.') } : await api.credential({ action: 'check', connection, value: editor.secret }, controller.signal);
+      if (!controller.signal.aborted) { setChecks('checks' in result ? result.checks : undefined); feedback(result.message, !result.ok); }
+    }
     catch { if (!controller.signal.aborted) feedback(c('检查未完成，可先保存。', 'Check failed. You can save offline.'), true); }
     finally { if (probe.current === controller) { probe.current = undefined; setProbing(false); } }
   }
-  const guide = <p style={muted}>{c('还没有 Router 和 Maintainer 地址？可向团队管理员索取，或参考原 ACN 仓库部署这两个服务。', 'Need Router and Maintainer URLs? Ask your team administrator or deploy both services using the original ACN repository.')} <a href="https://github.com/FTShare-Lab/agent-claim-network" target="_blank" rel="noopener noreferrer">{c('ACN 部署说明（GitHub）', 'ACN deployment guide (GitHub)')}</a></p>;
+  const guide = <p style={muted}>{c('向团队管理员索取 Router、Maintainer 地址及成员凭据。尚未部署时，可参考原 ACN 仓库。服务管理台仅供管理员使用，成员凭据不能代替管理员登录。', 'Ask your team administrator for Router and Maintainer URLs and a member credential, or deploy services using the original ACN repository. Service consoles require administrator credentials; member credentials do not grant administrator access.')} <a href="https://github.com/FTShare-Lab/agent-claim-network" target="_blank" rel="noopener noreferrer">{c('ACN 部署说明（GitHub）', 'ACN deployment guide (GitHub)')}</a></p>;
   const original = editor === undefined ? undefined : profiles[editor.key];
   const changingTeam = editor?.existing && original !== undefined && Boolean(original.routerEndpoint) && (original.routerEndpoint !== (editor.team ? editor.value.routerEndpoint : '') || original.maintainerEndpoint !== (editor.team ? editor.value.maintainerEndpoint : ''));
   const pendingCount = editor === undefined ? 0 : snapshot.upstreamPending?.[editor.key];
@@ -85,7 +108,7 @@ export function TeamSettingsPage({ api, t, openKnowledge, initialTab = 'upstream
       {editor === undefined ? <>
         {Object.entries(profiles).map(([key, item]) => <Row key={key} title={item.name || key} description={`${item.agentId} · ${item.enabled ? item.routerEndpoint ? c('团队', 'Team') : c('单人', 'Solo') : c('已停用', 'Disabled')}${key === defaultKey ? c(' · 全局默认', ' · Global default') : ''}${snapshot.upstreamPending?.[key] === null ? c(' · 待投记录读取失败', ' · Pending queue unreadable') : ''}`}>
           <Button disabled={disabled} onClick={() => { openKnowledge(key); }}>{c('知识与活动', 'Knowledge and activity')}</Button>
-          <Button disabled={disabled} onClick={() => { setEditor({ key, existing: true, team: Boolean(item.routerEndpoint), value: { ...item } }); setChecks(undefined); feedback(''); }}>{c('配置', 'Configure')}</Button>
+          <Button disabled={disabled} onClick={() => { setEditor({ key, existing: true, team: Boolean(item.routerEndpoint), secret: '', reference: item.keyEnv || newCredentialReference(), value: { ...item } }); setChecks(undefined); feedback(''); }}>{c('配置', 'Configure')}</Button>
         </Row>)}
         <div className="acn-actions"><Button primary disabled={disabled} onClick={add}>{c('新建工作配置', 'New configuration')}</Button></div>
         <Row title={c('全局默认配置', 'Global default')} description={c('项目没有可用历史时采用。新会话优先沿用同项目最近新建会话的配置，首发前可改选。', 'Used when the project has no valid history. New sessions inherit its most recently created conversation configuration and can change it before the first message.')}><Select aria-label={c('全局默认配置', 'Global default')} disabled={disabled} value={defaultKey} onChange={(event) => { void persist(withProfiles(profiles, event.target.value)); }}><option value="">{c('不设全局默认', 'No global default')}</option>{Object.entries(profiles).filter(([, item]) => item.enabled).map(([key, item]) => <option key={key} value={key}>{configurationLabel(item.name || key, item.agentId)}</option>)}</Select></Row>
@@ -97,12 +120,12 @@ export function TeamSettingsPage({ api, t, openKnowledge, initialTab = 'upstream
         <p style={muted}>{c('使用小写字母、数字、下划线或连字符。单人使用可自取固定名称，接入团队继续使用此 ID。', 'Use lowercase letters, numbers, underscores or hyphens. Choose a stable ID for solo use; the same ID is used when joining a team.')}</p>
         {original !== undefined && original.agentId !== editor.value.agentId && <p role="status">{c('修改 Agent ID 将使用另一份知识库，原数据保留。旧会话需要恢复原 ID 后继续。', 'Changing the Agent ID selects a different store. Original data is retained; restore the original ID to continue old sessions.')}</p>}
         <details><summary>{c('配置标识（upstream）', 'Configuration key (upstream)')}</summary><input aria-label={c('配置标识', 'Configuration key')} style={inputStyle} disabled={disabled || editor.existing} value={editor.key} placeholder={editor.value.agentId || 'coding'} onChange={(event) => { setEditor({ ...editor, key: event.target.value }); }} /><p style={muted}>{c('新建时留空将按 Agent ID 生成。创建后固定，显示名称仍可修改。', 'Generated from the Agent ID when empty. The key is fixed after creation; the display name can be changed.')}</p></details>
-        <Row title={c('连接团队服务', 'Connect team services')} description={c('关闭时使用本地知识。开启后填写两个服务地址，Agent ID 保持同一个。', 'Use local knowledge when off. When on, enter both service URLs; the Agent ID stays the same.')}><input type="checkbox" role="switch" aria-label={c('连接团队服务', 'Connect team services')} checked={editor.team} disabled={disabled} onChange={(event) => { setEditor({ ...editor, team: event.target.checked }); setChecks(undefined); }} /></Row>
-        {editor.team && <>{guide}<div className="acn-connection-fields">{([['routerEndpoint', t('router')], ['maintainerEndpoint', t('maintainer')], ['keyEnv', t('keyEnv')]] as const).map(([field, label]) => <label key={field} className="acn-field">{label}<input style={inputStyle} required={field !== 'keyEnv'} type={field === 'keyEnv' ? 'text' : 'url'} autoComplete="off" disabled={disabled} value={editor.value[field]} onChange={(event) => { setEditor({ ...editor, value: { ...editor.value, [field]: event.target.value } }); setChecks(undefined); }} /></label>)}<label className="acn-field">{t('timeout')}<input type="number" min="1" style={inputStyle} value={editor.value.timeoutMs} disabled={disabled} onChange={(event) => { setEditor({ ...editor, value: { ...editor.value, timeoutMs: Number(event.target.value) } }); }} /></label></div><p style={muted}>{t('keyHint')}</p><p style={muted}>{c('单人期间的历史 Claim 可继续本地使用，接入团队后不会整库补传。', 'Solo claims remain available locally and are not automatically uploaded when joining.')}</p></>}
+        <Row title={c('连接团队服务', 'Connect team services')} description={c('关闭时使用本地知识。开启后填写两个服务地址，Agent ID 保持同一个。', 'Use local knowledge when off. When on, enter both service URLs; the Agent ID stays the same.')}><input type="checkbox" role="switch" aria-label={c('连接团队服务', 'Connect team services')} checked={editor.team} disabled={disabled} onChange={(event) => { setEditor({ ...editor, team: event.target.checked, secret: event.target.checked ? editor.secret : '' }); setChecks(undefined); }} /></Row>
+        {editor.team && <>{guide}<div className="acn-connection-fields">{([['routerEndpoint', t('router')], ['maintainerEndpoint', t('maintainer')]] as const).map(([field, label]) => <label key={field} className="acn-field">{label}<input style={inputStyle} required type="url" autoComplete="off" disabled={disabled} value={editor.value[field]} onChange={(event) => { setEditor({ ...editor, value: { ...editor.value, [field]: event.target.value } }); setChecks(undefined); }} /></label>)}<label className="acn-field">{t('timeout')}<input type="number" min="1" style={inputStyle} value={editor.value.timeoutMs} disabled={disabled} onChange={(event) => { setEditor({ ...editor, value: { ...editor.value, timeoutMs: Number(event.target.value) } }); }} /></label></div><TeamCredentialField reference={editor.reference} api={api.credential} c={c} disabled={disabled} value={editor.secret} refresh={credentialRefresh} change={(secret) => { setEditor({ ...editor, secret }); setChecks(undefined); }} /><p style={muted}>{c('单人期间的历史 Claim 可继续本地使用，接入团队后不会整库补传。', 'Solo claims remain available locally and are not automatically uploaded when joining.')}</p></>}
         {changingTeam && <p role="status">{c('修改地址会沿用当前知识库。', 'Changing URLs keeps this knowledge store.')}{pendingText}{c('新配置启动后，符合重试条件的记录可能发往新地址。需要隔离团队时请新建工作配置。', 'Eligible pending records may be sent to the new URLs after activation. Create another configuration to isolate teams.')}</p>}
         <div className="acn-actions">{editor.team && <Button disabled={disabled} onClick={() => { void checkProfile(); }}>{c('检查连接', 'Check connection')}</Button>}<Button primary disabled={disabled} type="submit">{c('保存配置', 'Save configuration')}</Button><Button disabled={busy} onClick={() => { probe.current?.abort(); setEditor(undefined); setChecks(undefined); feedback(''); }}>{c('取消编辑', 'Cancel editing')}</Button></div>
         {checks?.map((item) => <p key={item.service} role={item.state === 'failed' ? 'alert' : 'status'}>{item.service} · {item.message}</p>)}
-        {editor.existing && original !== undefined && <Row title={editor.value.enabled ? c('停用配置', 'Disable configuration') : c('恢复配置', 'Enable configuration')} description={c('停用会暂停此配置的知识访问，数据保留，可以恢复。', 'Disabling pauses knowledge access and retains data. You can restore it.')}><Button disabled={disabled} onClick={() => { const next = { ...profiles, [editor.key]: { ...original, enabled: !editor.value.enabled } }; void persist(withProfiles(next, defaultKey === editor.key ? '' : defaultKey)).then((ok) => { if (ok) setEditor(undefined); }); }}>{editor.value.enabled ? c('停用', 'Disable') : c('恢复', 'Enable')}</Button></Row>}
+        {editor.existing && original !== undefined && <Row title={editor.value.enabled ? c('停用配置', 'Disable configuration') : c('恢复配置', 'Enable configuration')} description={c('停用后，关联会话暂停聊天和知识处理，仍可浏览已有知识。数据与配置标识保留，点击恢复后可继续。', 'Disabling pauses chat and knowledge processing in associated sessions. Existing knowledge remains browsable; restore this configuration to continue.')}><Button disabled={disabled} onClick={() => { const next = { ...profiles, [editor.key]: { ...original, enabled: !editor.value.enabled } }; void persist(withProfiles(next, defaultKey === editor.key ? '' : defaultKey)).then((ok) => { if (ok) setEditor(undefined); }); }}>{editor.value.enabled ? c('停用', 'Disable') : c('恢复', 'Enable')}</Button></Row>}
       </form>}
     </>}
     {tab === 'knowledge' && <>

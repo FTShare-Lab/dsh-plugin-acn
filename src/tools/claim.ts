@@ -5,6 +5,8 @@ import { ClaimStatusSchema, ConfidenceSchema } from '../protocol/claim.js';
 import type { AcnKnowledge } from '../knowledge/service.js';
 import { KnowledgeError, RevisionConflict } from '../knowledge/errors.js';
 import { ClaimUpdateSchema } from '../knowledge/types.js';
+import { KnowledgeBusy } from '../knowledge/alignment.js';
+import { LockTimeoutError } from '../store/errors.js';
 
 const text = z.string();
 const id = text.describe('claim id for read/update, or trace id for read_trace');
@@ -31,16 +33,18 @@ export async function executeClaim(knowledge: AcnKnowledge, input: unknown, sign
       : input;
     const args = ClaimToolArgsSchema.parse(normalized);
     switch (args.action) {
-      case 'list': return await knowledge.listClaims({ ...(args.query === undefined ? {} : { query: args.query }), ...(args.include_deprecated === undefined ? {} : { includeDeprecated: args.include_deprecated }), ...(args.offset === undefined ? {} : { offset: args.offset }), ...(args.limit === undefined ? {} : { limit: args.limit }) });
-      case 'read': return await knowledge.readClaim(ClaimIdSchema.parse(args.id));
+      case 'list': return await knowledge.listClaims({ ...(args.query === undefined ? {} : { query: args.query }), ...(args.include_deprecated === undefined ? {} : { includeDeprecated: args.include_deprecated }), ...(args.offset === undefined ? {} : { offset: args.offset }), ...(args.limit === undefined ? {} : { limit: args.limit }) }, signal);
+      case 'read': return await knowledge.readClaim(ClaimIdSchema.parse(args.id), signal);
       case 'update': {
         const update = ClaimUpdateSchema.parse(Object.fromEntries(Object.entries(args).filter(([key]) => key !== 'action')));
         return await knowledge.updateClaim(update, signal);
       }
-      case 'traces': return await knowledge.listTraces({ ...(args.claim_id === undefined ? {} : { claimId: ClaimIdSchema.parse(args.claim_id) }), ...(args.offset === undefined ? {} : { offset: args.offset }), ...(args.limit === undefined ? {} : { limit: args.limit }) });
-      case 'read_trace': return await knowledge.readTrace(TraceIdSchema.parse(args.id), { ...(args.task_offset === undefined ? {} : { taskOffset: args.task_offset }), ...(args.task_limit === undefined ? {} : { taskLimit: args.task_limit }) });
+      case 'traces': return await knowledge.listTraces({ ...(args.claim_id === undefined ? {} : { claimId: ClaimIdSchema.parse(args.claim_id) }), ...(args.offset === undefined ? {} : { offset: args.offset }), ...(args.limit === undefined ? {} : { limit: args.limit }) }, signal);
+      case 'read_trace': return await knowledge.readTrace(TraceIdSchema.parse(args.id), { ...(args.task_offset === undefined ? {} : { taskOffset: args.task_offset }), ...(args.task_limit === undefined ? {} : { taskLimit: args.task_limit }) }, signal);
     }
   } catch (error) {
+    signal?.throwIfAborted();
+    if (error instanceof KnowledgeBusy || error instanceof LockTimeoutError) return { error: { kind: 'knowledge_busy', message: '知识库暂时忙碌，请稍后重试当前知识操作。', retryable: true } };
     if (error instanceof RevisionConflict) return { conflict: true as const, current_revision: error.currentRevision };
     if (error instanceof KnowledgeError) return { error: { kind: error.kind, message: error.message } };
     if (error instanceof z.ZodError) return { error: { kind: 'validation', message: 'Invalid claim action, fields, identifier or pagination.' } };

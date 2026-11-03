@@ -22,6 +22,7 @@ import { UploadScheduler } from '../upload/scheduler.js';
 import { loadPromptRenderer } from '../prompt/render.js';
 import { isSubagent, isEvidenceAgent } from '../tools/subagent.js';
 import { structuredBackend } from './llm.js';
+import { teamCredentials } from './team-credentials.js';
 import { autonomousDreamRunner } from './dream-agent.js';
 import { compactionEnd, projectEvent } from './formation.js';
 import { identityOf, sessionAllowed, sessionSelection, restoreSessionBinding, rememberConfiguration, runningConfiguration, forgetConfiguration, configurationActivation } from './session-binding.js';
@@ -31,6 +32,7 @@ import { withFileLock } from '../store/lock.js';
 import { agentHomePath } from '../store/paths.js';
 import { RouteSchema } from '../formation/transcript.js';
 import { JobError } from '../worker/types.js';
+import { abortable } from '../llm/structured.js';
 import type { SessionView } from '../interaction.js';
 import { recentProjectSelection } from './project-upstream.js';
 import { upstreamsOf, resolveUpstream, defaultUpstream } from '../upstreams.js';
@@ -155,6 +157,12 @@ export class RuntimePool {
     const session = this.ctx.sessions.get(header.id);
     return session === undefined || session.snapshotEvents().some((event) => event.type === 'user/message' && event.data.source.kind === 'user');
   }
+  private selectionLocked(header: SessionHeader, events?: readonly SessionEvent[]): boolean {
+    const history = events ?? this.ctx.sessions.get(header.id)?.snapshotEvents();
+    // 空白草稿可初始化；派生历史和已经发起的工作不能借初始化绕过身份边界。
+    return history === undefined || header.isSeeded === true || header.parentSession !== undefined || isSubagent(header) || history.some((event) =>
+      event.type === 'request/header' || event.type === 'assistant/message' || event.type === 'tool/result' || event.type === 'turn/start' || event.type === 'user/message' && event.data.source.kind === 'user');
+  }
   view(header: SessionHeader, events?: readonly SessionEvent[]): SessionView {
     if (events !== undefined) restoreSessionBinding(header, events);
     const state = this.syncs.get(header.id);
@@ -163,13 +171,13 @@ export class RuntimePool {
     const active = this.forSession(header); const current = this.config(key);
     const configurationChanged = active !== undefined && current !== undefined && JSON.stringify(active.team) !== JSON.stringify(current.team);
     let message = state?.message ?? '';
-    if (!available) message = key === '' ? '请从 ACN 菜单选择工作配置，或在插件设置中新建配置。' : '工作配置已停用、缺失或 Agent ID 已改变；恢复原配置后可继续此会话。';
+    if (!available) message = !this.selectionLocked(header, events) ? '请从 ACN 菜单选择可用的工作配置，初始化当前空白会话。' : '工作配置已停用、缺失或 Agent ID 已改变；请在设置中恢复同一配置及原 Agent ID，或使用新会话。';
     else if (configurationChanged && message === '') message = '已保存新连接，当前会话仍使用启动时的配置。';
     else if (message === '' && this.selected(header)?.prepared === false) message = '上次同步未完成，可继续本地工作或重试同步。';
     return {
       sessionId: header.id, key, name: this.choices().find((item) => item.key === key)?.name ?? '选择工作配置',
       activeMode: active?.team.routerEndpoint ? 'team' : 'solo', configurationChanged, available,
-      locked: (events === undefined ? this.hasUser(header) : events.some((event) => event.type === 'user/message' && event.data.source.kind === 'user')) || header.parentSession !== undefined || isSubagent(header),
+      locked: this.selectionLocked(header, events),
       explicitSelection: this.selected(header) !== undefined, needsPreparation: this.syncTasks.has(header.id),
       phase: !available ? 'blocked' : this.syncTasks.has(header.id) ? 'syncing' : state?.phase ?? (this.selected(header)?.prepared === false ? 'failed' : 'ready'), message,
       choices: this.choices(), defaultConnection: this.defaultFor(),
@@ -178,7 +186,7 @@ export class RuntimePool {
   }
   async select(header: SessionHeader, key: string): Promise<SessionView> {
     await this.pending;
-    if (this.hasUser(header) || header.parentSession !== undefined || isSubagent(header)) throw new JobError('bound', '会话开始后不能切换知识归属，请新建会话。');
+    if (this.selectionLocked(header)) throw new JobError('bound', '会话开始后不能切换知识归属，请新建会话。');
     if (this.syncs.get(header.id)?.phase === 'syncing') throw new JobError('busy', '收件同步仍在进行，可取消等待后重试。');
     const config = this.config(key);
     if (config === undefined || config.agentId === '') throw new JobError('connection', '请先配置可用身份和团队连接。');
@@ -292,7 +300,7 @@ export class RuntimePool {
     return creating;
   }
   private async create(config: ResolvedConfig, workspace?: string, current = true): Promise<Runtime> {
-    const knowledge = new AcnKnowledge(config, this.ctx.logger); await knowledge.initialize();
+    const knowledge = new AcnKnowledge(config, this.ctx.logger, teamCredentials(this.ctx)); await knowledge.initialize();
     if (workspace !== undefined) await writeYamlAtomic(knowledge.context().paths.dreamWorkspace, workspace, z.string(), knowledge.logger);
     const render = await loadPromptRenderer(); this.render = render; const backend = structuredBackend(this.ctx);
     const catalog = new KnowledgeSessions(knowledge); const memory = new AcnMemory(knowledge);
@@ -381,15 +389,17 @@ export class RuntimePool {
     const config = this.config(selection.key);
     if (config !== undefined && identityOf(config) === selection.identity && runningConfiguration(header) === undefined) rememberConfiguration(header, config);
   }
-  private async attach(header: SessionHeader, source: 'startup' | 'clear' | 'resume' | 'compact', synchronize = true): Promise<void> {
+  private async attach(header: SessionHeader, source: 'startup' | 'clear' | 'resume' | 'compact', synchronize = true, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
     if (!this.allowed(header) || this.isBase(this.key(header)) || isEvidenceAgent(header)) return;
-    const runtime = await this.ensure(this.key(header), header.cwd, this.forSession(header));
+    const ready = this.ensure(this.key(header), header.cwd, this.forSession(header));
+    const runtime = signal === undefined ? await ready : await abortable(ready, signal);
     if (synchronize && this.base.config.upstreams !== undefined && (source === 'startup' || source === 'resume') && !isSubagent(header) && runtime.components.has('inbox') && runtime.knowledge.config.inbox.pullOnSessionStart) {
       await this.sync(header);
       if (!this.hasUser(header)) return;
     }
     await this.freezeInstructions(header, runtime.knowledge);
-    if (runtime.components.has('prompt')) await runtime.catalog.freeze(header.id, source, header.parentSession, this.syncs.get(header.id)?.phase !== 'failed');
+    if (runtime.components.has('prompt')) await runtime.catalog.freeze(header.id, source, header.parentSession, this.syncs.get(header.id)?.phase !== 'failed', signal);
     if (!isSubagent(header)) {
       if (runtime.components.has('memory') && runtime.knowledge.config.memory.enabled) { await runtime.memories.freeze(header.id, source, header.parentSession); await runtime.review.attach(header.id, source); }
       if (runtime.components.has('formation')) { runtime.formation.attach(header.id); if (this.ctx.agents.get(header.id)?.status === 'running') runtime.formation.running(header.id); }
@@ -398,17 +408,20 @@ export class RuntimePool {
     }
     this.attached.set(header.id, this.runtimeId(this.key(header), runtime.knowledge.config));
   }
-  private async prepareSession(header: SessionHeader): Promise<void> {
-    await this.pending;
-    await this.syncTasks.get(header.id);
+  private async prepareSession(header: SessionHeader, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
+    const preparing = Promise.all([this.pending, this.syncTasks.get(header.id)]);
+    if (signal === undefined) await preparing; else await abortable(preparing, signal);
+    signal?.throwIfAborted();
     if (!this.allowed(header)) throw new JobError('identity', '会话的知识归属不可用，请恢复原连接或新建会话。');
     const state = this.syncs.get(header.id);
     if (state?.phase === 'syncing') throw new JobError('sync', '收件同步仍在进行，可取消等待后继续本地工作。');
     if (!this.isBase(this.key(header))) {
-      const runtime = await this.ensure(this.key(header), header.cwd, this.forSession(header));
-      if (this.attached.get(header.id) !== this.runtimeId(this.key(header), runtime.knowledge.config)) await this.attach(header, 'resume', false);
+      const ready = this.ensure(this.key(header), header.cwd, this.forSession(header));
+      const runtime = signal === undefined ? await ready : await abortable(ready, signal);
+      if (this.attached.get(header.id) !== this.runtimeId(this.key(header), runtime.knowledge.config)) await this.attach(header, 'resume', false, signal);
       // 领域组件可能在 Agent 存活期间重载；请求准入前从持久快照恢复缺失缓存。
-      if (runtime.components.has('prompt') && runtime.catalog.catalog(header.id) === '') await runtime.catalog.freeze(header.id, 'resume', header.parentSession);
+      if (runtime.components.has('prompt') && runtime.catalog.catalog(header.id) === '') await runtime.catalog.freeze(header.id, 'resume', header.parentSession, true, signal);
       if (runtime.components.has('memory') && !isSubagent(header) && runtime.memories.text(header.id) === '') { await runtime.memories.freeze(header.id, 'resume', header.parentSession); await runtime.review.attach(header.id, 'resume'); }
     }
   }
@@ -425,7 +438,7 @@ export class RuntimePool {
     ctx.on('system-prompt/assemble', async (_assembly, context, next) => {
       const header = context.agent?.session.header;
       if (header === undefined || isEvidenceAgent(header) || !this.allowed(header)) return next();
-      await this.prepareSession(header); context.signal?.throwIfAborted();
+      await this.prepareSession(header, context.signal); context.signal?.throwIfAborted();
       const assembly = await next();
       const baseSections = this.isBase(this.key(header)) ? Object.assign({}, ...[...this.baselineRenderers.values()].map((render) => render(header))) as Record<string, string> : {};
       return { ...assembly, sections: assembly.sections.map((section) => {
@@ -434,17 +447,17 @@ export class RuntimePool {
         return definition === undefined ? section : { ...section, text: typeof definition.text === 'function' ? definition.text(context) : definition.text };
       }) };
     });
-    ctx.on('agent/created', async ({ agent, source }) => { await this.bind(agent.session.header); this.prefer(agent.session.header); await this.attach(agent.session.header, source); if (source === 'resume') this.resumed.add(agent.session.id); });
+    ctx.on('agent/created', async ({ agent, source, signal }) => { await this.bind(agent.session.header); this.prefer(agent.session.header); await this.attach(agent.session.header, source, true, signal); if (source === 'resume') this.resumed.add(agent.session.id); });
     ctx.on('agent/pre-step', async ({ agent, signal }, next) => {
       if (isEvidenceAgent(agent.session.header)) return next();
-      await this.prepareSession(agent.session.header);
+      await this.prepareSession(agent.session.header, signal);
       if (this.resumed.delete(agent.session.id) && this.base.config.upstreams === undefined && !isSubagent(agent.session.header) && !this.isBase(this.key(agent.session.header))) {
         const runtime = await this.ensure(this.key(agent.session.header), agent.session.header.cwd, this.forSession(agent.session.header));
         if (runtime.components.has('inbox') && runtime.knowledge.mode === 'team' && runtime.knowledge.config.inbox.pullOnSessionStart) await runtime.inbox.enqueue(true, agent.session.id);
       }
       const decision = await next();
       if (decision.kind === 'reject' || this.isBase(this.key(agent.session.header))) return decision;
-      const runtime = await this.ensure(this.key(agent.session.header), agent.session.header.cwd, this.forSession(agent.session.header)); const notice = runtime.components.has('prompt') ? await runtime.catalog.prepare(agent.session.id) : null; signal.throwIfAborted();
+      const runtime = await this.ensure(this.key(agent.session.header), agent.session.header.cwd, this.forSession(agent.session.header)); const notice = runtime.components.has('prompt') ? await runtime.catalog.prepare(agent.session.id, signal) : null; signal.throwIfAborted();
       if (notice === null) return decision;
       const message = createUserMessage({ content: [{ type: 'text', text: notice.text }], source: { kind: 'acn-claim-changes' } });
       this.admissions.set(message.id, { id: agent.session.id, runtime, notice });

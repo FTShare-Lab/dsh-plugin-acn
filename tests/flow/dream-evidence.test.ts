@@ -22,6 +22,33 @@ import { flowHarness } from './harness.js';
 
 function requestText(request: GenerateOptions): string { return request.messages.flatMap((message) => message.content).filter((block) => block.type === 'text').map((block) => block.text).join(''); }
 describe('restricted evidence child in the host', () => {
+  it.each(['AUTH', 'MALFORMED_RESPONSE', 'MAX_TOKENS'])('reports a safe model failure category for evidence: %s', async (code) => {
+    const f = await evidenceFixture();
+    const adapter = new ScriptAdapter([[{ type: 'finish', reason: code === 'MAX_TOKENS' ? { kind: 'max-tokens' } : { kind: 'error', failure: { code, message: 'PRIVATE_PROVIDER_FAILURE_MARKER' } } }]]);
+    const host = await flowHarness(adapter);
+    try {
+      const run = restrictedExplorer(host.ctx, (await loadPromptRenderer())('dream_evidence.j2', {}))({ store: f.store, claims: f.initial, route: { provider: 'mock', model: 'mock' }, config: f.knowledge.config.llm, signal: new AbortController().signal });
+      const failure: unknown = await run.catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(Error); if (!(failure instanceof Error)) throw new Error('Missing model error.');
+      expect(failure.message).toContain(code); expect(failure.message).not.toContain('PRIVATE_');
+      expect(adapter.requests).toHaveLength(1); expect((await f.store.read())?.model_steps).toBe(1); expect((await f.store.read())?.completed).toBe(false);
+      expect(await new ClaimStore(f.knowledge.context()).list()).toEqual(f.initial);
+    } finally { await host.close(); await f.close(); }
+  });
+  it.each(['failure', 'receipt'] as const)('finishes safely at the evidence budget without renewing it: %s', async (mode) => {
+    const f = await evidenceFixture({ config: { dream: { evidenceMaxSteps: 1 } } });
+    const adapter = new ScriptAdapter([mode === 'failure' ? [{ type: 'finish', reason: { kind: 'error', failure: { code: 'SERVER', message: 'Transient provider failure.' } } }] : toolResponse('read', 'read', { path: 'source.txt', claim_ids: f.initial.map((claim) => claim.id) }), textResponse('A retry must not bypass the budget.')]);
+    const host = await flowHarness(adapter);
+    try {
+      host.ctx.on('agent/request-error', () => Promise.resolve({ kind: 'retry' }));
+      const explore = restrictedExplorer(host.ctx, (await loadPromptRenderer())('dream_evidence.j2', {}));
+      const input = { store: f.store, claims: f.initial, route: { provider: 'mock', model: 'mock' }, config: f.knowledge.config.llm, signal: new AbortController().signal };
+      await explore(input); await explore(input);
+      expect(adapter.requests).toHaveLength(1); expect((await f.store.read())?.model_steps).toBe(1);
+      expect((await f.store.read())?.completed).toBe(true); expect(Object.keys((await f.store.read())?.receipts ?? {})).toHaveLength(mode === 'receipt' ? 1 : 0);
+      expect(await new ClaimStore(f.knowledge.context()).list()).toEqual(f.initial);
+    } finally { await host.close(); await f.close(); }
+  });
   it('runs the full enabled plugin pipeline in the command session workspace', async () => {
     const workspace = await fs.realpath(await fs.mkdtemp(join(tmpdir(), 'acn-host-evidence-'))); await fs.writeFile(join(workspace, 'source.txt'), material);
     const adapter = new ScriptAdapter([
@@ -85,7 +112,7 @@ describe('restricted evidence child in the host', () => {
       const a = await left.store.read(); const b = await right.store.read(); expect(Object.values(a?.receipts ?? {})[0]?.output.content).toBe(material); expect(Object.values(b?.receipts ?? {})[0]?.output.content).toBe('A distinct workspace source.'); expect(a?.workspace_root).not.toBe(b?.workspace_root);
     } finally { await host.close(); await left.close(); await right.close(); }
   });
-  it.each(['timeout', 'stop', 'steps'] as const)('stops and drains the child on %s without a completed manifest', async (mode) => {
+  it.each(['timeout', 'stop', 'steps'] as const)('stops and drains the child on %s, completing only a budget stop', async (mode) => {
     const f = await evidenceFixture({ config: { dream: { evidenceMaxSteps: 1 } } });
     const adapter = new ScriptAdapter(mode === 'steps' ? [toolResponse('read-a', 'read', { path: 'source.txt', claim_ids: f.initial.map((claim) => claim.id) })] : [async (request) => { await new Promise<void>((done) => { request.signal?.addEventListener('abort', () => { done(); }, { once: true }); }); return textResponse('Cancelled.'); }]);
     const host = await flowHarness(adapter); const abort = new AbortController(); let disposed = false;
@@ -93,7 +120,8 @@ describe('restricted evidence child in the host', () => {
     try {
       const render = await loadPromptRenderer(); const run = restrictedExplorer(host.ctx, render('dream_evidence.j2', {}))({ store: f.store, claims: f.initial, route: { provider: 'mock', model: 'mock' }, config: { ...f.knowledge.config.llm, timeoutMs: mode === 'timeout' ? 100 : 5000 }, signal: abort.signal });
       if (mode === 'stop') { const timer = setTimeout(() => { abort.abort(new Error('Stopped by user.')); }, 100); timer.unref(); }
-      await expect(run).rejects.toThrow(); expect(disposed).toBe(true); expect((await f.store.read())?.completed).toBe(false); expect(adapter.requests).toHaveLength(1); expect(await new ClaimStore(f.knowledge.context()).list()).toEqual(f.initial);
+      if (mode === 'steps') await run; else await expect(run).rejects.toThrow();
+      expect(disposed).toBe(true); expect((await f.store.read())?.completed).toBe(mode === 'steps'); expect(adapter.requests).toHaveLength(1); expect(await new ClaimStore(f.knowledge.context()).list()).toEqual(f.initial);
     } finally { await host.close(); await f.close(); }
   });
 });

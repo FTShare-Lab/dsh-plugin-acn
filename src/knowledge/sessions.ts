@@ -5,6 +5,8 @@ import { SessionStateStore, VersionedDocumentSchema } from '../store/session-sta
 import type { AcnKnowledge } from './service.js';
 import { renderCatalog } from './catalog.js';
 import { ClaimIndexSchema, changeNotice, claimIndex } from './changes.js';
+import { KnowledgeBusy } from './alignment.js';
+import { LockTimeoutError } from '../store/errors.js';
 
 const VersionSchema = z.object({ claimsDigest: z.string() });
 const CatalogSchema = z.object({ text: z.string(), knowledgeVersion: VersionSchema, createdAt: z.string(), baseline: ClaimIndexSchema });
@@ -20,7 +22,8 @@ export class KnowledgeSessions {
   private readonly states = new Map<string, KnowledgeSessionState>();
   private readonly writes = new Map<string, Promise<void>>();
   constructor(readonly knowledge: AcnKnowledge) { this.store = new SessionStateStore(knowledge.context()); }
-  async freeze(id: string, source: 'startup' | 'clear' | 'resume' | 'compact', parentId?: string, fetchOverview = true): Promise<void> {
+  async freeze(id: string, source: 'startup' | 'clear' | 'resume' | 'compact', parentId?: string, fetchOverview = true, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
     await this.flush(id);
     const stored = await this.store.read(id);
     let state = KnowledgeSessionStateSchema.parse(stored ?? { schemaVersion: 1 });
@@ -35,13 +38,13 @@ export class KnowledgeSessions {
     }
     if (state.catalog === undefined || source === 'clear' || (source === 'startup' && parentId === undefined)) {
       if (source === 'resume' || source === 'compact') this.knowledge.logger.warn('Missing session Claim catalog; creating a new baseline.');
-      const snapshot = await this.knowledge.snapshot();
+      const snapshot = await this.knowledge.snapshot(signal);
       const baseline = claimIndex(snapshot.claims);
       state = { ...state, catalog: { text: renderCatalog(snapshot.claims, this.knowledge.config.catalog), knowledgeVersion: snapshot.version, createdAt: nowSeconds(), baseline }, lastNotifiedVersion: snapshot.version, knownClaims: baseline, seenSourceIds: source === 'clear' ? [] : state.seenSourceIds ?? [] };
       const team = this.knowledge.team;
       if (fetchOverview && team !== null && state.catalog !== undefined) {
         try {
-          const overview = await team.request('router', () => team.router.overview());
+          const overview = await team.request('router', () => team.router.overview(signal));
           const lines = overview.scopes.map((item) => `${JSON.stringify(item.scope)} | active=${item.active_claims} | stale=${item.stale_claims} | open_disputes=${item.open_disputes} | resolved_disputes=${item.resolved_disputes}`);
           const overviewText = `\n\nTeam scope overview (discovery only):\n${lines.join('\n') || '(empty)'}`;
           const total = this.knowledge.config.catalog.maxChars;
@@ -49,21 +52,33 @@ export class KnowledgeSessions {
           state.catalog.text = renderCatalog(snapshot.claims, { ...this.knowledge.config.catalog, maxChars: Math.max(1, total - overviewBudget) });
           const remaining = Math.max(0, total - Array.from(state.catalog.text).length);
           state.catalog.text += Array.from(overviewText).slice(0, remaining).join('');
-        } catch { state.catalog.text = Array.from(`${state.catalog.text}\n\n团队概览不可用。可通过 consult_router mode=overview 重试。`).slice(0, this.knowledge.config.catalog.maxChars).join(''); }
+        } catch { signal?.throwIfAborted(); state.catalog.text = Array.from(`${state.catalog.text}\n\n团队概览不可用。可通过 consult_router mode=overview 重试。`).slice(0, this.knowledge.config.catalog.maxChars).join(''); }
       }
     }
-    const saved = await this.store.update(id, (current) => VersionedDocumentSchema.parse({ ...current, ...state }));
+    signal?.throwIfAborted();
+    const saved = await this.store.update(id, (current) => VersionedDocumentSchema.parse({ ...current, ...state }), signal);
     this.states.set(id, KnowledgeSessionStateSchema.parse(saved));
   }
   catalog(id: string): string { return this.states.get(id)?.catalog?.text ?? ''; }
-  async prepare(id: string): Promise<ChangeAdmission | null> {
+  async prepare(id: string, signal?: AbortSignal): Promise<ChangeAdmission | null> {
+    signal?.throwIfAborted();
     await this.flush(id);
     const state = this.states.get(id);
     if (state?.catalog === undefined) return null;
-    const snapshot = await this.knowledge.snapshot();
-    if (snapshot.version.claimsDigest === state.lastNotifiedVersion?.claimsDigest) return null;
-    const current = claimIndex(snapshot.claims);
-    return { text: changeNotice(snapshot.version.claimsDigest, state.catalog.baseline, current, state.knownClaims ?? state.catalog.baseline), version: snapshot.version, knownClaims: { ...state.knownClaims, ...current } };
+    // 增量通知不阻断前台；仅重试瞬时冲突，不等待其他进程持锁，也不推进通知游标。
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      signal?.throwIfAborted();
+      try {
+        const snapshot = await this.knowledge.snapshot(signal, 0); signal?.throwIfAborted();
+        if (snapshot.version.claimsDigest === state.lastNotifiedVersion?.claimsDigest) return null;
+        const current = claimIndex(snapshot.claims);
+        return { text: changeNotice(snapshot.version.claimsDigest, state.catalog.baseline, current, state.knownClaims ?? state.catalog.baseline), version: snapshot.version, knownClaims: { ...state.knownClaims, ...current } };
+      } catch (error) {
+        signal?.throwIfAborted();
+        if (!(error instanceof KnowledgeBusy || error instanceof LockTimeoutError)) throw error;
+      }
+    }
+    this.knowledge.logger.debug('Knowledge refresh deferred while a local commit is busy.'); return null;
   }
   admitted(id: string, notice: ChangeAdmission): void {
     const previous = this.writes.get(id) ?? Promise.resolve();

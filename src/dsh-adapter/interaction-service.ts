@@ -15,7 +15,24 @@ import { JobError } from '../worker/types.js';
 import { TeamFacade } from '../team/service.js';
 import { resolveConfig } from '../config.js';
 import { PresentationStore } from '../store/presentation.js';
+import { teamCredentials } from './team-credentials.js';
 import type { RuntimePool } from './runtime-pool.js';
+import type { CredentialResolver } from '../team/http.js';
+
+export async function checkTeamConnection(ctx: Context, connection: Extract<InteractionRequest, { action: 'check' }>['connection'], credential: CredentialResolver = teamCredentials(ctx), signal?: AbortSignal): Promise<InteractionResult> {
+  if (!connection.routerEndpoint || !connection.maintainerEndpoint) return { ok: false, message: '单人配置不需要连接检查；请先填写两个团队地址。' };
+  const config = resolveConfig({ agentId: connection.agentId, team: { routerEndpoint: connection.routerEndpoint, maintainerEndpoint: connection.maintainerEndpoint, keyEnv: connection.keyEnv, timeoutMs: connection.timeoutMs, retryCount: 0 } });
+  if (config.agentId === '') return { ok: false, message: '请先填写 Agent ID。' };
+  const team = new TeamFacade(config.team, config.agentId, ctx.logger, credential);
+  try {
+    const checks = await Promise.all((['maintainer', 'router'] as const).map(async (service) => {
+      const bounded = AbortSignal.any([AbortSignal.timeout(config.team.timeoutMs), ...signal === undefined ? [] : [signal]]);
+      try { await team.request(service, async () => { const health = await team[service].health(bounded); if (health.team_auth_enabled && health.auth_passed !== true) throw new JobError('auth', '认证未通过，请检查团队鉴权密钥。'); if (service === 'router') await team.router.overview(bounded); }); return { service, state: 'ok' as const, message: '连接与认证通过' }; }
+      catch { return { service, state: 'failed' as const, message: '未通过，请检查地址、服务状态和团队鉴权密钥。' }; }
+    }));
+    return { ok: !signal?.aborted && checks.every((item) => item.state === 'ok'), message: signal?.aborted ? '检查已取消。' : checks.every((item) => item.state === 'ok') ? '团队连接检查通过。' : '部分服务不可用；可离线保存，使用前需恢复连接。', checks };
+  } finally { await team.close(); }
+}
 
 function summary(result: unknown): string {
   if (result === null || typeof result !== 'object') return '尚无处理结果';
@@ -50,25 +67,14 @@ export async function readKnowledge(pool: RuntimePool, key: string, kind: 'claim
     return { key, name: pool.choices().find((item) => item.key === key)?.name ?? key, items: matching.slice(offset, offset + 30).map((item) => ({ kind, id: item.id, name: item.name, status: 'status' in item ? String(item.status) : '', detail: JSON.stringify(item, null, 2) })), omitted: Math.max(0, matching.length - offset - 30), activities, pendingClaims: pending.claims.length, pendingDisputes: pending.disputes.length };
   } finally { if (knowledge !== pool.base) await knowledge.team?.close(); }
 }
-export async function executeInteraction(ctx: Context, input: InteractionRequest, runtimePool?: RuntimePool): Promise<InteractionResult> {
+export async function executeInteraction(ctx: Context, input: InteractionRequest, runtimePool?: RuntimePool, signal?: AbortSignal): Promise<InteractionResult> {
   const parsed = InteractionRequestSchema.safeParse(input);
   if (!parsed.success) return { ok: false, message: '请求字段不合法，请重新加载页面。' };
   const request = parsed.data;
   const pool = runtimePool ?? ctx.get('acnRuntime');
   if (pool === undefined) return { ok: false, message: '知识服务尚未启用，请检查插件配置。' };
   try {
-    if (request.action === 'check') {
-      if (!request.connection.routerEndpoint || !request.connection.maintainerEndpoint) return { ok: false, message: '单人配置不需要连接检查；请先填写两个团队地址。' };
-      const config = resolveConfig({ agentId: request.connection.agentId, team: { routerEndpoint: request.connection.routerEndpoint, maintainerEndpoint: request.connection.maintainerEndpoint, keyEnv: request.connection.keyEnv, timeoutMs: request.connection.timeoutMs, retryCount: 0 } });
-      const team = new TeamFacade(config.team, request.connection.agentId, ctx.logger);
-      try {
-        const checks = await Promise.all((['maintainer', 'router'] as const).map(async (service) => {
-          try { await team.request(service, async () => { const health = await team[service].health(AbortSignal.timeout(config.team.timeoutMs)); if (health.team_auth_enabled && health.auth_passed !== true) throw new JobError('auth', '认证未通过，请检查认证环境变量。'); if (service === 'router') await team.router.overview(AbortSignal.timeout(config.team.timeoutMs)); }); return { service, state: 'ok' as const, message: '连接与认证通过' }; }
-          catch { return { service, state: 'failed' as const, message: '未通过，请检查地址、服务状态和认证环境变量。' }; }
-        }));
-        return { ok: checks.every((item) => item.state === 'ok'), message: checks.every((item) => item.state === 'ok') ? '团队连接检查通过。' : '部分服务不可用；可离线保存，使用前需恢复连接。', checks };
-      } finally { await team.close(); }
-    }
+    if (request.action === 'check') return await checkTeamConnection(ctx, request.connection, teamCredentials(ctx), signal);
     if (request.action === 'probe') {
       if (!request.provider || !request.model) return { ok: true, message: '沿用会话模型；首次同步前请先选择聊天模型。' };
       const signal = AbortSignal.timeout(20_000);
@@ -79,6 +85,15 @@ export async function executeInteraction(ctx: Context, input: InteractionRequest
       return { ok: true, message: '知识模型检查通过。' };
     }
     if (request.action === 'knowledge') return { ok: true, message: '', knowledge: await readKnowledge(pool, request.key, request.kind, request.query, request.offset) };
+    if (request.action === 'reference') {
+      const config = pool.config(request.key, true);
+      if (config === undefined || !config.agentId) throw new JobError('connection', '请选择可用的知识身份。');
+      const knowledge = pool.isBase(request.key) ? pool.base : new AcnKnowledge(config, ctx.logger);
+      try {
+        const item = (await new ClaimStore(knowledge.context()).list()).find((claim) => claim.id === request.id && claim.holder === knowledge.agentId);
+        return { ok: true, message: '', reference: { key: request.key, id: request.id, ...(item === undefined ? {} : { item: { kind: 'claim', id: item.id, name: item.name, status: String(item.status), detail: JSON.stringify(item, null, 2) } }) } };
+      } finally { if (knowledge !== pool.base) await knowledge.team?.close(); }
+    }
     if (request.action === 'activity') return { ok: true, message: '', knowledge: await readKnowledge(pool, request.key, 'claim', '', 0, false) };
     if (request.action === 'ack') {
       const config = pool.config(request.key, true);

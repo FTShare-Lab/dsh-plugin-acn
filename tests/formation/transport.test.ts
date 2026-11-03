@@ -3,8 +3,37 @@ import fs from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { formationFixture, emptyOutput, waitJob } from './helpers.js';
+import { transportError } from '../../src/llm/structured.js';
 
 describe('auxiliary call transport policy', () => {
+  it.each([
+    { error: { code: 'AUTH' }, label: 'AUTH', retryable: false },
+    { error: { code: 'PRIVATE_FAILURE_MARKER', status: 403 }, label: 'AUTH', retryable: false },
+    { error: { code: 'INVALID_CREDENTIAL' }, label: 'AUTH', retryable: false },
+    { error: { code: 'ACCOUNT_QUOTA', status: 429 }, label: 'QUOTA', retryable: false },
+    { error: { status: 402 }, label: 'QUOTA', retryable: false },
+    { error: { code: 'CONTEXT_WINDOW_EXCEEDED', status: 400 }, label: 'CONTEXT_WINDOW_EXCEEDED', retryable: false },
+    { error: { code: 'NO_ADAPTER' }, label: 'NO_ADAPTER', retryable: false },
+    { error: { code: 'INVALID_REQUEST', status: 400 }, label: 'INVALID_REQUEST', retryable: false },
+    { error: { code: 'MALFORMED_RESPONSE' }, label: 'MALFORMED_RESPONSE', retryable: false },
+    { error: { code: 'EMPTY_RESPONSE' }, label: 'EMPTY_RESPONSE', retryable: true },
+    { error: { code: 'RATE_LIMITED' }, label: 'RATE_LIMIT', retryable: true },
+    { error: { code: 'TIMEOUT' }, label: 'TIMEOUT', retryable: true },
+    { error: { code: 'HTTP_408', status: 408 }, label: 'TIMEOUT', retryable: true },
+    { error: { code: 'SERVER_ERROR', status: 503 }, label: 'SERVER', retryable: true },
+    { error: { code: 'ECONNRESET' }, label: 'TRANSPORT', retryable: true },
+  ])('retains a safe category and retry policy for $error', ({ error, label, retryable }) => {
+    const result = transportError({ ...error, message: 'PRIVATE_PROVIDER_BODY' });
+    expect(result.message).toContain(label); expect(result.retryable).toBe(retryable); expect(result.message).not.toContain('PRIVATE_');
+  });
+  it('never echoes an unknown provider code or body', () => {
+    const result = transportError({ code: 'PRIVATE_CODE_MARKER', message: 'PRIVATE_PROVIDER_BODY' });
+    expect(result.retryable).toBe(false); expect(result.message).not.toContain('PRIVATE_');
+  });
+  it('carries a validated provider wait into the existing durable scheduling boundary', () => {
+    const failure = transportError({ code: 'RATE_LIMIT', status: 429, providerRetryAfterMs: 60_000, message: 'PRIVATE_PROVIDER_BODY' });
+    expect(failure.retryAfterMs).toBe(60_000); expect(failure.message).toContain('至少等待 60 秒'); expect(failure.message).not.toContain('PRIVATE_');
+  });
   it('retries a transient transport at most three calls per job attempt and uses durable backoff', async () => {
     let calls = 0;
     const fixture = await formationFixture(() => {

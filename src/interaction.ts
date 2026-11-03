@@ -1,6 +1,7 @@
 // 网页交互仅传递连接参数、公开知识与任务摘要，不传递私有记忆或凭据正文。
 import { z } from 'zod';
 import { ConnectionSchema, UpstreamSchema } from './config.js';
+import { ClaimIdSchema } from './protocol/ids.js';
 
 export const RuntimeChoiceSchema = z.object({ key: z.string(), name: z.string(), agentId: z.string(), enabled: z.boolean(), mode: z.enum(['solo', 'team']) });
 export const SessionViewSchema = z.object({
@@ -16,6 +17,10 @@ export const ActivitySchema = z.object({ id: z.string(), kind: z.string(), state
 export type Activity = z.infer<typeof ActivitySchema>;
 export const KnowledgeViewSchema = z.object({ key: z.string(), name: z.string(), items: z.array(KnowledgeItemSchema), omitted: z.number(), activities: z.array(ActivitySchema), pendingClaims: z.number(), pendingDisputes: z.number() });
 export type KnowledgeView = z.infer<typeof KnowledgeViewSchema>;
+export const KnowledgeReferenceSchema = z.object({ key: z.string(), id: ClaimIdSchema, item: KnowledgeItemSchema.optional() });
+export type KnowledgeReference = z.infer<typeof KnowledgeReferenceSchema>;
+export const TeamConnectionInputSchema = z.union([ConnectionSchema, UpstreamSchema.safeExtend({ id: z.string().optional() })]);
+export const ConnectionChecksSchema = z.array(z.object({ service: z.enum(['router', 'maintainer']), state: z.enum(['ok', 'failed']), message: z.string() }));
 export const InteractionRequestSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('session'), sessionId: z.string() }),
   z.object({ action: z.literal('select'), sessionId: z.string(), key: z.string() }),
@@ -23,15 +28,17 @@ export const InteractionRequestSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('sync'), sessionId: z.string() }),
   z.object({ action: z.literal('knowledge'), key: z.string(), query: z.string().max(500).default(''), kind: z.enum(['claim', 'dispute', 'trace']).default('claim'), offset: z.number().int().nonnegative().default(0) }),
   z.object({ action: z.literal('activity'), key: z.string() }),
+  z.object({ action: z.literal('reference'), key: z.string(), id: ClaimIdSchema }),
   z.object({ action: z.literal('retry'), key: z.string(), id: z.string() }),
   z.object({ action: z.literal('ack'), key: z.string(), id: z.string(), version: z.number().int().nonnegative() }),
   z.object({ action: z.literal('recap'), sessionId: z.string() }),
-  z.object({ action: z.literal('check'), connection: z.union([ConnectionSchema, UpstreamSchema.safeExtend({ id: z.string().optional() })]) }),
+  z.object({ action: z.literal('check'), connection: TeamConnectionInputSchema }),
   z.object({ action: z.literal('probe'), provider: z.string(), model: z.string() }),
 ]);
 export type InteractionRequest = z.input<typeof InteractionRequestSchema>;
 export const InteractionResultSchema = z.object({
   ok: z.boolean(), message: z.string(), session: SessionViewSchema.optional(), knowledge: KnowledgeViewSchema.optional(),
-  checks: z.array(z.object({ service: z.enum(['router', 'maintainer']), state: z.enum(['ok', 'failed']), message: z.string() })).optional(),
+  reference: KnowledgeReferenceSchema.optional(),
+  checks: ConnectionChecksSchema.optional(),
 });
 export type InteractionResult = z.infer<typeof InteractionResultSchema>;

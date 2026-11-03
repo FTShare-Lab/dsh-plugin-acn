@@ -15,10 +15,10 @@ This repository contains the TypeScript plugin, its web configuration page, mode
 | Claims and Traces | Store scoped, referenceable knowledge with evidence, confidence and provenance; read and revise it when relevant |
 | Recap and Finalize | Form knowledge through `/recap`, batch or tail idle periods, host compaction, and archive finalization; process increments and pause automatic work after archival |
 | Private Memory | Maintain `MEMORY.md` and `USER.md`, with frozen session snapshots, periodic reviews that prioritize dialogue, and no direct team upload |
-| Dream | Clean up and consolidate knowledge, trace its local provenance, and optionally check workspace files while preserving valid conditions and evidence limits |
+| Dream | Clean up and consolidate knowledge, trace its local provenance, and optionally check workspace files while preserving valid conditions and evidence limits; retry malformed tool JSON within a fixed limit |
 | Work configurations | Save multiple solo or team upstreams, inherit the newest conversation configuration per project, with a global fallback, and keep session ownership and private stores separate |
 | Team collaboration | Discover claims through ACN Router, deliver knowledge to Maintainer and internalize its suggestions locally |
-| Recovery and import | Resume interrupted background work and import existing ACN knowledge without overwriting targets |
+| Recovery and import | Resume interrupted background work, classify model failures with bounded retries, and import existing ACN knowledge without overwriting targets |
 
 ## Install and configure
 
@@ -31,7 +31,9 @@ pnpm pack --pack-destination .artifacts
 
 In DSH, open **Plugins**, add the tarball by its absolute local path, then enable **agent-claim-network**. **Settings → ACN settings** and the plugin detail share two tabs, **Work configurations** and **Knowledge and model**. Create a work configuration with an Agent ID; its display name is optional. The first configuration becomes the global default. New sessions inherit the configuration of the most recently created ordinary conversation in the same project. They fall back to the global default when no valid record is available. Users can change the selection before the first message; existing sessions and drafts retain their bindings. No project preference UI or additional host compatibility package is required.
 
-Each upstream can run solo or connect to team services. Enable team services in the existing configuration and supply both URLs and the credential environment variable name. The same Agent ID and local knowledge are retained. Team members use distinct IDs matching their authorization. A failed initial sync reports the problem and allows local work. Solo history is not automatically uploaded when joining. Changing team URLs keeps the pending queue, so eligible pending records may be delivered to the new service after activation. Create another upstream to isolate teams.
+A blank conversation created before initial setup can be initialized by choosing its configuration in the ACN menu. Disabled configurations retain their key and data for restoration. Source links open exact local details with back navigation and explain missing team sources without automatic network requests.
+
+Each upstream can run solo or connect to team services. Enable team services in the existing configuration and supply both URLs and paste the Team authentication key directly. The input is masked by default; the eye button toggles visibility of the current entry. Saving the configuration also stores the key in DSH; reference names are generated internally. Connection checks use the draft key without saving it. Reopening shows only configured status; leave the field empty to keep the saved key. Plugin YAML and responses never contain the credential value. Existing environment references remain supported. Service consoles require administrator authentication; member credentials do not grant that access. The same Agent ID and local knowledge are retained. Team members use distinct IDs matching their authorization. A failed initial sync reports the problem and allows local work. Solo history is not automatically uploaded when joining. Changing team URLs keeps the pending queue, so eligible pending records may be delivered to the new service after activation. Create another upstream to isolate teams.
 
 Configuration edits take effect in newly started runtime instances; running sessions retain their starting clients. **Reload saved configuration** discards unsaved edits. New stores use `<home>/<upstream>/data/agents/<agentId>/`; existing installations retain their original directories through migration mappings.
 

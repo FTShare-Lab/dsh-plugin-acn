@@ -85,3 +85,13 @@ it.each(['', 'agent-a', '日常开发'])('does not repeat the Agent ID when its 
   const choice = screen.getByRole('menuitemradio');
   expect(choice.textContent).toBe(name && name !== 'agent-a' ? '日常开发 · agent-a' : 'agent-a');
 });
+
+it('initializes an unavailable blank session even when its default choice has the same key', async () => {
+  const view = SessionViewSchema.parse({ sessionId: 'reused-blank', key: 'coding', name: '开发', locked: false, available: false, phase: 'blocked', message: '请选择工作配置，初始化当前空白会话。', choices: [{ ...soloChoice, key: 'coding', name: '开发' }], defaultConnection: 'coding', showCompletion: true });
+  const interact = vi.fn<InteractionApi['interact']>().mockImplementation((request) => Promise.resolve({ ok: true, message: '', session: request.action === 'select' ? { ...view, available: true, phase: 'ready' } : view }));
+  const block = vi.fn();
+  render(<SessionToolbar api={{ read: vi.fn(), save: vi.fn(), interact }} sessionId={SessionId('reused-blank')} useSession={useSession} c={c} block={block} openSettings={vi.fn()} openKnowledge={vi.fn()} />);
+  fireEvent.click(await screen.findByRole('button', { name: /ACN.*开发/ }));
+  fireEvent.click(screen.getByRole('menuitemradio', { name: /开发/ }));
+  await waitFor(() => { expect(interact).toHaveBeenCalledWith({ action: 'select', sessionId: 'reused-blank', key: 'coding' }); expect(block).toHaveBeenLastCalledWith('reused-blank', undefined); });
+});

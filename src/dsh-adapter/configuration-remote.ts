@@ -3,13 +3,21 @@ import { z } from 'zod';
 import { createTypertRemoteInfo } from '@deepseek-ai/dsh-typert-protocol/remote-info';
 import { ConfigurationResultSchema, ConfigurationSnapshotSchema, SaveConfigurationSchema } from '../configuration.js';
 import { InteractionRequestSchema, InteractionResultSchema } from '../interaction.js';
+import { CredentialRequestSchema, CredentialResultSchema } from '../credentials.js';
 
 const request = { mode: 'strict' as const, typeSymbol: 'dsh-plugin-acn#SaveConfiguration', create: () => SaveConfigurationSchema };
 export const configurationRemote = createTypertRemoteInfo({
   package: 'dsh-plugin-acn',
   methods: {
+    'acnConfiguration/credential': {
+      service: 'acnConfiguration', invocation: { kind: 'direct' },
+      cancellation: { parameter: 'signal' },
+      parameters: [{ name: 'request', source: 'json', codec: { mode: 'strict', typeSymbol: 'dsh-plugin-acn#CredentialRequest', create: () => CredentialRequestSchema }, strictCodec: { mode: 'strict', typeSymbol: 'dsh-plugin-acn#CredentialRequest', create: () => CredentialRequestSchema } }],
+      result: { mode: 'strict', typeSymbol: 'dsh-plugin-acn#CredentialResult', create: () => CredentialResultSchema },
+    },
     'acnConfiguration/interact': {
       service: 'acnConfiguration', invocation: { kind: 'direct' },
+      cancellation: { parameter: 'signal' },
       parameters: [{ name: 'request', source: 'json', codec: { mode: 'strict', typeSymbol: 'dsh-plugin-acn#InteractionRequest', create: () => InteractionRequestSchema }, strictCodec: { mode: 'strict', typeSymbol: 'dsh-plugin-acn#InteractionRequest', create: () => InteractionRequestSchema } }],
       result: { mode: 'strict', typeSymbol: 'dsh-plugin-acn#InteractionResult', create: () => InteractionResultSchema },
     },

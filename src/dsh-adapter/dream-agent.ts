@@ -10,7 +10,7 @@ import { z } from 'zod';
 import { DreamTools, isDreamTool } from '../dream/autonomous.js';
 import { DreamValidationError } from '../dream/schema.js';
 import type { AutonomousDreamRunner } from '../dream/service.js';
-import { abortable } from '../llm/structured.js';
+import { abortable, transportError } from '../llm/structured.js';
 import { JobError } from '../worker/types.js';
 import { toolParameters } from './tool-schema.js';
 
@@ -40,7 +40,7 @@ export function dreamToolGuard(name: string, args: unknown): string | undefined 
 export function autonomousDreamRunner(ctx: Context): AutonomousDreamRunner {
   return async ({ session, route, config, system, signal }) => {
     const requestDeadline = new AbortController(); const bounded = AbortSignal.any([signal, requestDeadline.signal]); let stepError: Error | undefined; let completed = false;
-    let clearRequestTimeout = () => {};
+    let clearRequestTimeout = () => {}; let toolJsonRetries = 0; let toolJsonFeedback = '';
     const binding = ctx.get('acnRuntime')?.backgroundSelection(session.knowledge.config);
     const handle = await ctx.agents.create({ sessionId: SessionId(`acn-dream-${randomUUID()}`), meta: { cwd: session.workspace, origin: 'subagent', delegationDepth: 1, agentPreset: 'acn-dream' }, agentOptions: { ...route, maxTokens: config.maxOutputTokens }, signal: bounded, setup: (child, agent) => {
       if (binding !== undefined) appendPluginRecord(agent.session, 'plugin:acn/team-selection', binding);
@@ -59,11 +59,14 @@ export function autonomousDreamRunner(ctx: Context): AutonomousDreamRunner {
       // required context 在每次请求准入后刷新，同一步重试进入收尾时也能收到通知。
       const budgetContext = 'acn-dream-budget';
       child.systemPrompt.context({ name: budgetContext, order: 0, text: () => session.budgetNotice(), interpolate: false, required: true });
+      const toolErrorContext = 'acn-dream-tool-error';
+      child.systemPrompt.context({ name: toolErrorContext, order: 1, text: () => toolJsonFeedback, interpolate: false, required: true });
+      const allowedContexts = new Set([budgetContext, toolErrorContext]);
       const shadowed = new Set<string>();
       child.on('system-prompt/assemble', async (_assembly, _context, next) => {
         const assembly = await next();
-        for (const context of assembly.contexts) if (context.name !== budgetContext && !shadowed.has(context.name)) { child.systemPrompt.context({ name: context.name, order: 0, text: '', interpolate: false }); shadowed.add(context.name); }
-        return { ...assembly, contexts: assembly.contexts.filter((context) => context.name === budgetContext), variables: {}, tools: assembly.tools.filter((tool) => isDreamTool(tool.name)) };
+        for (const context of assembly.contexts) if (!allowedContexts.has(context.name) && !shadowed.has(context.name)) { child.systemPrompt.context({ name: context.name, order: 0, text: '', interpolate: false }); shadowed.add(context.name); }
+        return { ...assembly, contexts: assembly.contexts.filter((context) => allowedContexts.has(context.name)), variables: {}, tools: assembly.tools.filter((tool) => isDreamTool(tool.name)) };
       });
       child.on('agent/pre-step', async (_payload, next) => {
         // finish 后不再调用模型生成装饰性总结。
@@ -82,9 +85,34 @@ export function autonomousDreamRunner(ctx: Context): AutonomousDreamRunner {
         return next();
       });
       // 一次模型尝试结束即解除其期限；工具执行和后续请求不累计到前一次调用。
-      child.on('agent/assistant-stream', ({ frame }) => { if (frame.type === 'end') clearRequestTimeout(); });
-      child.on('agent/request-error', async (_payload, next) => { clearRequestTimeout(); return next(); });
-      child.on('session/event', (_session, event) => { if (event.type === 'turn/end') { clearRequestTimeout(); completed = event.data.reason.kind === 'completed'; } });
+      child.on('agent/assistant-stream', ({ frame }) => {
+        if (frame.type !== 'end') return;
+        clearRequestTimeout();
+        if (frame.outcome.kind === 'committed' && frame.outcome.eventType === 'assistant/message') toolJsonFeedback = '';
+      });
+      child.on('agent/request-error', async (payload, next) => {
+        clearRequestTimeout();
+        // 仅接管适配器明确报告的工具输入 JSON 语法错误；同一步重试仍经过 request 额度准入。
+        if (payload.failure.code !== 'MALFORMED_RESPONSE' || !/(?:^|: )tool input is invalid JSON$/u.test(payload.failure.message)) return next();
+        bounded.throwIfAborted(); payload.signal.throwIfAborted();
+        if (toolJsonRetries < 2) {
+          toolJsonRetries += 1;
+          // 宿主未接纳失败响应，不能构造无对应调用的 tool result；通过公开 context 在重试前回喂安全原因。
+          toolJsonFeedback = '工具参数 JSON 解析失败（MALFORMED_RESPONSE）。上一条模型响应未被接纳，该响应中的工具调用均未执行。请重新发出需要的工具调用，参数必须是完整合法的 JSON 对象，正确闭合并使用双引号和转义，同时遵守工具 schema。不要只输出解释或将失败调用视为已执行。已接受的进度保留，修复请求仍计入现有探索与收尾额度；按当前阶段和剩余额度行动。';
+          return { kind: 'retry' };
+        }
+        stepError = new JobError('dream_tool_json', '模型返回的工具参数格式无效（MALFORMED_RESPONSE），自动重试两次后仍失败；进度和已用额度已保留，可稍后重试或更换知识模型。');
+        // 达到本次上限后不再委托其他重试监听器，防止叠加宿主重试次数。
+        return undefined;
+      }, { prepend: true });
+      child.on('session/event', (_session, event) => {
+        if (event.type !== 'turn/end') return;
+        clearRequestTimeout(); const reason = event.data.reason; completed = reason.kind === 'completed';
+        if (stepError !== undefined) return;
+        // 宿主已决定终止本轮；保存安全分类，不再叠加 worker 的模型自动重试。
+        if (reason.kind === 'error') { const failure = transportError(reason.error); stepError = new JobError(failure.kind, `Dream 模型调用失败：${failure.message} 已有进度和已用额度保留。`); }
+        if (reason.kind === 'max-tokens') stepError = new JobError('dream_output_limit', 'Dream 模型输出达到 token 上限（MAX_TOKENS）；进度和已用额度保留，请精简整理范围或调整输出上限后重试。');
+      });
     } });
     const cancel = () => { handle.agent.cancel({ kind: 'parent' }); };
     bounded.addEventListener('abort', cancel, { once: true });

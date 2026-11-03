@@ -86,6 +86,10 @@ ACN_WEB_INSTALL=browser pnpm smoke:web
 
 ## 本地团队调试
 
+首次配置验收应先保留安装前后的空白会话，再创建工作配置。确认原空白会话可从 ACN 菜单初始化，模型回复后 `/recap` 能形成 Claim；已有消息、模型请求和派生历史不能换身份。配置停用与恢复应保留同一标识、知识及会话归属。
+
+在「团队鉴权密钥」输入随机测试 key，确认默认掩码、眼睛按钮显隐、空值保留及取消草稿；连接检查不写入托管存储，保存配置才保存密钥。确认自动引用只进入插件 YAML、密钥只进入宿主托管存储，旧客户端的下一次请求使用轮换值；同时检查带路径前缀的服务地址。展开本地和缺失的来源 Claim，确认返回时保留原详情与筛选，浏览不触发网络和模型。
+
 同时启动参考服务和一个可从网页安装插件的隔离 DSH：
 
 ```sh
@@ -94,13 +98,13 @@ ACN_CONTRACT_WEB_HOME=/path/to/isolated-web-check \
 pnpm test:contract
 ```
 
-该命令先构建 Router / Maintainer，再为 `agent-a`、`agent-b` 生成临时凭据，启动两项服务和网页宿主。页面中的认证变量名分别填写 `ACN_TEST_TEAM_CREDENTIAL` 与 `ACN_TEST_OTHER_CREDENTIAL`；地址使用脚本实际输出的回环 endpoint。停止脚本会结束这些服务并清理临时团队数据。
+该命令先构建 Router / Maintainer，再为 `agent-a`、`agent-b` 生成临时凭据，启动两项服务和网页宿主。脚本预配置 `ACN_TEST_TEAM_CREDENTIAL` 与 `ACN_TEST_OTHER_CREDENTIAL` 的兼容引用；页面无需填写引用名。正常新建工作配置时直接输入成员 key，地址使用脚本实际输出的回环 endpoint。停止脚本会结束这些服务并清理临时团队数据。
 
 此模式默认不启用 Router 模型检索或 Maintainer 自动仲裁，只验证通信。需要评价模型仲裁时，应另行在服务端配置 Maintainer 模型并启用仲裁；推荐保持 Router 为词法检索，避免[已知重排限制](outstanding-issues.md#团队仲裁与信息边界)。插件中的模型选项不会替团队服务配置模型。
 
 接入已经启动的测试服务时，为 `pnpm smoke:web` 同时提供 `ACN_WEB_TEAM_ROUTER`、`ACN_WEB_TEAM_MAINTAINER`，并用 `ACN_WEB_TEAM_KEY_ENV` 指定认证环境变量名。默认变量名为 `ACN_WEB_TEAM_CREDENTIAL`。少配一个 endpoint 会启动失败；凭据不写入配置文件。
 
-可在同一隔离 profile 的「ACN 插件设置 → 团队连接」页添加两条连接，分别使用不同成员 ID 与凭据变量；也可为多个进程分别设置独立的 `ACN_WEB_HOME`、不同的 `ACN_WEB_AGENT_ID` 和对应凭据。可用 `ACN_WEB_SEED_CLAIM=false` 从空知识开始，避免多个成员生成同一个 seed ID。`ACN_WEB_TEAM_TIMEOUT_MS` 控制团队请求超时，默认 15000 毫秒。
+可在同一隔离 profile 的「ACN 插件设置 → 工作配置」页添加两份配置，分别使用不同成员 ID 与团队鉴权密钥；也可为多个进程分别设置独立的 `ACN_WEB_HOME`、不同的 `ACN_WEB_AGENT_ID` 和对应凭据。可用 `ACN_WEB_SEED_CLAIM=false` 从空知识开始，避免多个成员生成同一个 seed ID。`ACN_WEB_TEAM_TIMEOUT_MS` 控制团队请求超时，默认 15000 毫秒。
 
 团队检查应覆盖 A 形成并上传知识、B 检索和复用、冲突上报、Maintainer 给出建议、各成员 Inbox 内化、修订回传，以及 Dream 整理后的依赖交付。仲裁完成、建议送达和本地内化是不同阶段，应分别确认；服务断开后的补送也应检查。
 
