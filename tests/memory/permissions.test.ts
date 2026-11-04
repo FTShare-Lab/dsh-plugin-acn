@@ -23,6 +23,16 @@ async function setup(disabled = false) {
 afterEach(async () => { vi.restoreAllMocks(); await Promise.all(active.splice(0).map((f) => f.close())); });
 
 describe('private filesystem permissions', () => {
+  it('permits public hardlinks and project searches even with linked build artifacts', async () => {
+    const { workspace, call } = await setup();
+    await fs.mkdir(join(workspace, 'target')); await fs.writeFile(join(workspace, '.gitignore'), 'target/\n');
+    await fs.writeFile(join(workspace, 'target', 'build-a'), 'public build');
+    await fs.link(join(workspace, 'target', 'build-a'), join(workspace, 'target', 'build-b'));
+    await fs.link(join(workspace, 'notes.txt'), join(workspace, 'public-link.txt'));
+    expect(await call('read', { file_path: 'public-link.txt' })).toMatchObject({ isError: false });
+    expect(await call('glob', { pattern: '*.txt' })).toMatchObject({ isError: false });
+    expect(await call('grep', { pattern: 'public' })).toMatchObject({ isError: false });
+  });
   it('protects stored private files of a connection before its runtime has ever been activated', async () => {
     const { call, f } = await setup();
     const path = join(f.knowledge.config.home, 'connections', 'unused-team', 'agents', 'member-b', 'memories', 'USER.md');

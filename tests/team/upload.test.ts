@@ -113,7 +113,7 @@ describe('upload delivery', () => {
   it('a service recovers during the idle timer and the existing durable queue is delivered automatically', async () => {
     let available = false; const server = await teamServer(() => ({ status: available ? 200 : 503 })); const fixture = await inboxFixture(undefined, { team: { routerEndpoint: server.endpoint, maintainerEndpoint: server.endpoint, retryCount: 0 } }); const scheduler = new UploadScheduler(fixture.knowledge, 20);
     try {
-      const store = new UploadStore(fixture.knowledge.context()); await new ClaimStore(fixture.knowledge.context()).write(claim); await store.enqueue([claim], [], true); scheduler.start(); await scheduler.flush(); expect((await store.read()).claims).toHaveLength(1);
+      const store = new UploadStore(fixture.knowledge.context()); await new ClaimStore(fixture.knowledge.context()).write(claim); await store.enqueue([claim], [], true); scheduler.start(); await vi.waitFor(async () => { expect(Object.values((await new DeliveryStatusStore(fixture.knowledge.context()).read()).issues).some((issue) => issue.reason === 'retryable' && issue.attempts > 0)).toBe(true); }); expect((await store.read()).claims).toHaveLength(1);
       available = true; await vi.waitFor(async () => { expect((await store.read()).claims).toEqual([]); });
     } finally { await scheduler.close(); await fixture.close(); await server.close(); }
   });
@@ -121,8 +121,9 @@ describe('upload delivery', () => {
     const first = await teamServer(() => ({})); const endpoint = first.endpoint; const port = Number(new URL(endpoint).port); await first.close();
     const fixture = await inboxFixture(undefined, { team: { routerEndpoint: endpoint, maintainerEndpoint: endpoint, retryCount: 0, timeoutMs: 100 } }); const scheduler = new UploadScheduler(fixture.knowledge, 20); let resumed: Awaited<ReturnType<typeof teamServer>> | undefined;
     try {
-      const store = new UploadStore(fixture.knowledge.context()); await new ClaimStore(fixture.knowledge.context()).write(claim); await store.enqueue([claim], [dispute()], true); scheduler.start(); await scheduler.flush(); expect((await store.read()).claims).toHaveLength(1);
-      resumed = await teamServer(() => ({}), port); await vi.waitFor(async () => { expect((await store.read()).claims).toEqual([]); expect((await store.read()).disputes).toEqual([]); }); expect(resumed.requests.map((request) => request.path)).toEqual(['/claims/upload', '/disputes/report']);
+      const store = new UploadStore(fixture.knowledge.context()); await new ClaimStore(fixture.knowledge.context()).write(claim); await store.enqueue([claim], [dispute()], true); scheduler.start(); await vi.waitFor(async () => { expect(Object.values((await new DeliveryStatusStore(fixture.knowledge.context()).read()).issues).some((issue) => issue.reason === 'retryable' && issue.attempts > 0)).toBe(true); }); expect((await store.read()).claims).toHaveLength(1);
+      resumed = await teamServer(() => ({}), port); await vi.waitFor(async () => { expect((await store.read()).claims).toEqual([]); expect((await store.read()).disputes).toEqual([]); }); // 重连可能发生在 Claim 失败与 Dispute 尝试之间，断言完成的实体而非跨轮请求顺序。
+      expect(resumed.requests.map((request) => request.path).sort()).toEqual(['/claims/upload', '/disputes/report']);
     } finally { await scheduler.close(); await resumed?.close(); await fixture.close(); }
   });
   it('keeps a newer revision queued during delivery and never holds knowledge/pending locks during HTTP', async () => {

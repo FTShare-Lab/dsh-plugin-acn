@@ -42,7 +42,7 @@ export const ConfigSchema = z.strictObject({
   team: z.strictObject({
     routerEndpoint: endpoint.default(''), maintainerEndpoint: endpoint.default(''),
     keyEnv: z.string().regex(/^(?:[A-Za-z_][A-Za-z0-9_]*)?$/).default(''),
-    timeoutMs: positive().default(15_000), retryCount: nonnegative().default(3),
+    timeoutMs: positive().default(15_000), routerTimeoutMs: positive().default(50_000), retryCount: nonnegative().default(3),
     retryBaseDelayMs: positive().default(500), retryMaxDelayMs: positive().default(8000),
   }).prefault({}),
   llm: z.strictObject({

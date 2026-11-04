@@ -1,8 +1,9 @@
-// 网页仅编辑常用配置；高级字段保留在原配置中，由同一领域校验器检查。
+// 网页编辑工作配置与高级偏好；未展示的字段保留，由同一领域校验器检查。
 import { z } from 'zod';
 import { resolveConfig, ConnectionSchema, UpstreamSchema, UpstreamNameSchema } from './config.js';
 import { ConfigError } from './config.js';
 import { upstreamsOf } from './upstreams.js';
+import { AdvancedConfigurationSchema, advancedConfiguration } from './advanced-configuration.js';
 
 export const ConfigurationValuesSchema = z.strictObject({
   agentId: z.string().trim(), home: z.string().trim(),
@@ -12,6 +13,7 @@ export const ConfigurationValuesSchema = z.strictObject({
   timeoutMs: z.number(),
   legacyEnabled: z.boolean().optional(), connections: z.array(ConnectionSchema).optional(), defaultConnection: z.string().optional(), showCompletion: z.boolean().optional(),
   upstream: z.string().optional(), upstreams: z.record(UpstreamNameSchema, UpstreamSchema).optional(),
+  advanced: AdvancedConfigurationSchema.optional(),
 });
 export type ConfigurationValues = z.infer<typeof ConfigurationValuesSchema>;
 export const ModelChoiceSchema = z.strictObject({ provider: z.string(), providerName: z.string(), id: z.string(), name: z.string() });
@@ -38,6 +40,7 @@ export function configurationValues(raw: unknown): ConfigurationValues {
     routerEndpoint: config.team.routerEndpoint, maintainerEndpoint: config.team.maintainerEndpoint,
     keyEnv: config.team.keyEnv, timeoutMs: config.team.timeoutMs,
     legacyEnabled: config.legacyEnabled, connections: config.connections, defaultConnection: config.defaultConnection, showCompletion: config.showCompletion,
+    advanced: advancedConfiguration(config),
     ...(config.upstreams === undefined ? {} : { upstreams: config.upstreams, upstream: config.upstream }),
   };
 }
@@ -69,6 +72,18 @@ export function mergeConfiguration(raw: Record<string, unknown>, values: Configu
     },
   };
   delete next['projectUpstreams'];
+  const advanced = values.advanced;
+  if (advanced !== undefined) {
+    next['inbox'] = { ...record(raw.inbox), processingStaleAfterSecs: advanced.inboxProcessingStaleAfterSecs };
+    const previousTeam = resolveConfig(raw).team;
+    const httpChanged = advanced.httpTimeoutSecs !== previousTeam.timeoutMs / 1000;
+    const timeoutMs = httpChanged ? Math.round(advanced.httpTimeoutSecs * 1000) : values.timeoutMs;
+    const routerTimeoutMs = advanced.routerQueryTimeoutSecs === previousTeam.routerTimeoutMs / 1000 ? previousTeam.routerTimeoutMs : Math.round(advanced.routerQueryTimeoutSecs * 1000);
+    next['team'] = { ...record(next['team']), timeoutMs, routerTimeoutMs, retryCount: advanced.httpRetryCount, retryBaseDelayMs: advanced.httpRetryBaseDelayMs, retryMaxDelayMs: advanced.httpRetryMaxDelayMs };
+    // 仅显式修改全局 HTTP 超时才统一现有配置，其他偏好保存保留各连接的原值。
+    if (httpChanged && values.upstreams !== undefined) next['upstreams'] = Object.fromEntries(Object.entries(values.upstreams).map(([key, value]) => [key, { ...value, timeoutMs }]));
+    if (httpChanged && values.connections !== undefined) next['connections'] = values.connections.map((value) => ({ ...value, timeoutMs }));
+  }
   resolveConfig(next);
   return next;
 }

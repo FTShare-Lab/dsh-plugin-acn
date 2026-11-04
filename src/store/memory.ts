@@ -1,6 +1,6 @@
 // 双文件锁内发布固定目标；先记日志，恢复识别精确 before/after 并保留外部第三版本。
 import fs from 'node:fs/promises';
-import { constants } from 'node:fs';
+import { openSingleFile } from './regular-file.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { StoreContext } from './context.js';
@@ -20,17 +20,10 @@ export class MemoryFileStore {
   constructor(readonly context: StoreContext) {}
   private async readText(path: string): Promise<string> {
     let file;
-    let entry;
-    try {
-      entry = await fs.lstat(path);
-      if (!entry.isFile() || entry.isSymbolicLink() || entry.nlink !== 1) throw new StoreError('conflict', 'Private Memory must be a single-link regular file.');
-      // Windows 不提供 NOFOLLOW/NONBLOCK，显式校验不能依赖打开标志。
-      file = await fs.open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
-    }
+    try { file = await openSingleFile(path, () => new StoreError('conflict', 'Private Memory must be a single-link regular file.')); }
     catch (error) { if (hasCode(error, 'ENOENT')) return ''; throw error; }
     try {
       const info = await file.stat();
-      if (!info.isFile() || info.nlink !== 1 || info.dev !== entry.dev || info.ino !== entry.ino) throw new StoreError('conflict', 'Private Memory changed while opening.');
       const bytes = await file.readFile(); const after = await file.stat(); const current = await fs.lstat(path);
       if (!current.isFile() || current.isSymbolicLink() || current.nlink !== 1 || after.nlink !== 1 || current.dev !== info.dev || current.ino !== info.ino || after.size !== info.size || after.mtimeMs !== info.mtimeMs || after.ctimeMs !== info.ctimeMs) throw new StoreError('conflict', 'Private Memory changed while reading.');
       try { return new TextDecoder('utf-8', { fatal: true }).decode(bytes); }

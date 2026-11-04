@@ -13,21 +13,29 @@ import { hasCode } from '../store/errors.js';
 const fileTools = new Set(['read', 'read_image', 'write', 'edit', 'grep', 'glob', 'str_replace_editor']);
 const denial = '普通文件工具不能访问私有 Agent 数据或包含它的搜索根；请使用 Claim/Memory 专用工具，或缩小搜索目录。';
 const fingerprint = (execution: Readonly<ToolExecution>): string => createHash('sha256').update(JSON.stringify(execution.arguments) ?? 'undefined').digest('hex');
-async function searchHasAliases(root: string, signal: AbortSignal): Promise<boolean> {
-  const directories = [root]; let inspected = 0;
+async function* linkedFiles(root: string, signal: AbortSignal): AsyncGenerator<string> {
+  const directories = [root];
   while (directories.length > 0) {
     signal.throwIfAborted(); const directory = directories.pop(); if (directory === undefined) break;
-    for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
-      signal.throwIfAborted(); inspected += 1; if (inspected > 100_000) return true;
+    let entries; try { entries = await fs.readdir(directory, { withFileTypes: true }); } catch (error) { if (hasCode(error, 'ENOENT')) continue; throw error; }
+    for (const entry of entries) {
+      signal.throwIfAborted();
       const path = join(directory, entry.name);
-      // 搜索器不跟随符号链接；硬链接需要在递归搜索开始前显式拒绝。
       if (entry.isDirectory()) directories.push(path);
-      else if (entry.isFile() && (await fs.lstat(path)).nlink !== 1) return true;
+      else if (entry.isFile()) { try { const info = await fs.lstat(path); if (info.nlink > 1) yield `${info.dev}:${info.ino}`; } catch (error) { if (!hasCode(error, 'ENOENT')) throw error; } }
     }
   }
-  return false;
 }
 export function protectMemoryPaths(ctx: Context, knowledge: AcnKnowledge): void {
+  const privateHome = dirname(dirname(agentHomePath(knowledge.config.home, 'private-root')));
+  const privateAlias = async (path: string, recursive: boolean, signal: AbortSignal) => {
+    const privateLinks = new Set<string>();
+    for await (const identity of linkedFiles(privateHome, signal)) privateLinks.add(identity);
+    if (privateLinks.size === 0) return false;
+    if (recursive) { for await (const identity of linkedFiles(path, signal)) if (privateLinks.has(identity)) return true; }
+    else { const info = await fs.lstat(path); return privateLinks.has(`${info.dev}:${info.ino}`); }
+    return false;
+  };
   const validated = new WeakMap<object, { fingerprint: string; cwd: string }>();
   const targetAllowed = async (target: FsTarget, recursive: boolean, signal?: AbortSignal): Promise<boolean> => {
     const mapped = ctx.fs.processPathFromHostPath(dirname(dirname(agentHomePath(knowledge.config.home, 'private-root')))); if (mapped === undefined) return true;
@@ -47,9 +55,9 @@ export function protectMemoryPaths(ctx: Context, knowledge: AcnKnowledge): void 
     const info = await ctx.fs.stat(target, execution.signal);
     if (!await targetAllowed(target, search || info?.type === 'directory', execution.signal)) return { kind: 'deny', reason: denial };
     const path = ctx.fs.processPath(target);
-    // 同机文件的硬链接不由 canonical containment 识别，保守拒绝多链接普通文件。
+    // 仅拒绝指向私有数据的硬链接，普通项目和构建产物的硬链接不影响搜索。
     if (ctx.fs.processPathFromHostPath(resolve(path)) === path) {
-      try { const stat = await fs.lstat(path); if (stat.isFile() && stat.nlink !== 1 || search && stat.isDirectory() && await searchHasAliases(path, execution.signal)) return { kind: 'deny', reason: denial }; }
+      try { const stat = await fs.lstat(path); if ((stat.isFile() && stat.nlink > 1 || search && stat.isDirectory()) && await privateAlias(path, search && stat.isDirectory(), execution.signal)) return { kind: 'deny', reason: denial }; }
       catch (error) { if (!hasCode(error, 'ENOENT')) throw error; }
     }
     // 宿主冻结工具参数，不能重写相对路径；最终门禁同时检查实际 cwd 未发生变化。

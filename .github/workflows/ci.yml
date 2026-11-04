@@ -74,3 +74,20 @@ jobs:
       - run: pnpm test:contract
         env:
           ACN_REPO: ${{ github.workspace }}/.artifacts/acn-reference
+  windows-desktop-install:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm build
+      - run: npm install --global @deepseek-ai/dsh@0.2.1-rc.5
+      - run: pnpm smoke:install

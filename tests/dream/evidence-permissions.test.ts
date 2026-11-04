@@ -6,10 +6,18 @@ import { EvidenceStore } from '../../src/dream/evidence-store.js';
 import { z } from 'zod';
 import { evidenceFixture, material } from './evidence-helpers.js';
 import { ClaimIdSchema } from '../../src/protocol/ids.js';
+import { readEvidenceFile } from '../../src/dream/evidence-files.js';
 
 const credentialPaths = ['secrets.json', 'tokens.json', 'app.credentials.json', 'SECRETS.YAML', 'private-keys.txt', join('secrets', 'config.json'), join('config', 'service_credentials.toml'), join('tokens', 'cache.json'), join('credentials', 'runtime.txt')];
 
 describe('restricted workspace evidence', () => {
+  it.runIf(process.platform === 'win32')('accepts ordinary Windows path casing without relaxing the evidence boundary', async () => {
+    const f = await evidenceFixture();
+    try {
+      const file = await readEvidenceFile(f.workspace.toUpperCase(), f.knowledge.context().paths.root, 'SOURCE.TXT', 4096);
+      expect(file.content).toBe(material);
+    } finally { await f.close(); }
+  });
   it.each(['MEMORY.md', 'USER.md', 'export_env.sh', '.env', '.env.example', 'credentials.json', '.ssh/id', '.aws/config', '.git/config', 'client.key', 'access-token.txt', 'node_modules/example/index.js', 'memories/example.txt', ...credentialPaths])('rejects protected path %s without creating a receipt', async (path) => {
     const f = await evidenceFixture();
     try { const target = join(f.workspace, path); await fs.mkdir(dirname(target), { recursive: true }); await fs.writeFile(target, 'PRIVATE_DATA_MARKER'); await expect(f.read(undefined, path)).rejects.toThrow(); expect((await f.store.read())?.receipts).toEqual({}); }

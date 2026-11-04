@@ -74,7 +74,7 @@ it('keeps rejected retry feedback visible after a successful activity refresh an
   const reason = '连接已停用或删除，不能重试。'; const open = vi.fn();
   const api: InteractionApi = { read: vi.fn().mockResolvedValue(snapshot), save: vi.fn(), interact: vi.fn<InteractionApi['interact']>((request) => Promise.resolve(request.action === 'retry' ? { ok: false, message: reason } : { ok: true, message: '', knowledge: data })) };
   render(<KnowledgePanel api={api} initialKey="coding" initialTab="activity" c={c} openSettings={open} />);
-  fireEvent.click(await screen.findByText('inbox · 处理失败')); fireEvent.click(screen.getByRole('button', { name: '重试任务' }));
+  fireEvent.click(await screen.findByLabelText('inbox · 处理失败')); fireEvent.click(screen.getByRole('button', { name: '重试任务' }));
   await screen.findByText(reason); fireEvent.click(screen.getByRole('button', { name: '刷新' }));
   await waitFor(() => { expect(vi.mocked(api.interact).mock.calls.filter(([request]) => request.action === 'activity')).toHaveLength(2); });
   expect(screen.getByText(reason)).toBeDefined(); fireEvent.click(screen.getByRole('button', { name: '检查 ACN 设置' })); expect(open).toHaveBeenCalled();

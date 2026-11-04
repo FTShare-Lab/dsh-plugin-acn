@@ -3,6 +3,15 @@ import { z } from 'zod';
 export const MessageInfoSchema = z.object({ code: z.string(), count: z.number().optional(), entityId: z.string().optional(), status: z.number().optional() });
 export type MessageInfo = z.infer<typeof MessageInfoSchema>;
 const messages = {
+  check_auth: ['认证未通过，请检查 Agent ID 和团队鉴权密钥。', 'Authentication failed. Check the Agent ID and team authentication key.'],
+  check_timeout: ['连接超时，请检查服务状态和网络后重试。', 'The connection timed out. Check the service and network, then retry.'],
+  check_dns: ['无法解析服务域名，请检查地址和网络。', 'The service hostname could not be resolved. Check the URL and network.'],
+  check_unreachable: ['无法连接服务，请检查地址、端口和服务是否已启动。', 'The service could not be reached. Check its address, port and whether it is running.'],
+  check_network: ['网络连接失败，请检查网络或代理后重试。', 'The network connection failed. Check the network or proxy and retry.'],
+  check_service: ['服务暂时不可用，请检查服务状态后重试。', 'The service is temporarily unavailable. Check its status and retry.'],
+  check_protocol: ['服务响应不符合 ACN 协议，请联系团队管理员检查服务版本。', 'The response does not match the ACN protocol. Ask your team administrator to check the service version.'],
+  check_client: ['服务拒绝了请求，请检查服务地址和访问权限。', 'The service rejected the request. Check its URL and access permissions.'],
+  check_offline: ['部分团队服务不可用；可保存配置并继续本地工作，团队同步前需恢复连接。', 'Some team services are unavailable. You can save and continue local work; restore the connection before team sync.'],
   team_check_ok: ['连接与认证通过', 'Connection and authentication passed'],
   team_check_failed: ['未通过，请检查地址、服务状态和团队鉴权密钥。', 'Check the service URL, availability and team authentication key.'],
   delivery_ack: ['已标记知悉；该争议仍未成功投递。', 'Acknowledged. This dispute was not successfully delivered.'],

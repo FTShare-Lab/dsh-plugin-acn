@@ -17,6 +17,7 @@ import { allActivities, activityPage } from '../activities.js';
 import type { ActivityPage } from '../activities.js';
 import { UploadDelivery } from '../upload/deliver.js';
 import { TeamFacade } from '../team/service.js';
+import { TeamError } from '../team/errors.js';
 import { resolveConfig } from '../config.js';
 import { PresentationStore } from '../store/presentation.js';
 import { teamCredentials } from './team-credentials.js';
@@ -30,15 +31,19 @@ export async function checkTeamConnection(ctx: Context, connection: Extract<Inte
   const team = new TeamFacade(config.team, config.agentId, ctx.logger, credential);
   try {
     const checks = await Promise.all((['maintainer', 'router'] as const).map(async (service) => {
-      const bounded = AbortSignal.any([AbortSignal.timeout(config.team.timeoutMs), ...signal === undefined ? [] : [signal]]);
+      const bounded = AbortSignal.any([AbortSignal.timeout(Math.min(config.team.timeoutMs, 15_000)), ...signal === undefined ? [] : [signal]]);
       try { await team.request(service, async () => { const health = await team[service].health(bounded); if (health.team_auth_enabled && health.auth_passed !== true) throw new JobError('auth', '认证未通过，请检查团队鉴权密钥。'); if (service === 'router') await team.router.overview(bounded); }); return { service, state: 'ok' as const, message: '连接与认证通过' }; }
-      catch { return { service, state: 'failed' as const, message: '未通过，请检查地址、服务状态和团队鉴权密钥。' }; }
+      catch (error) {
+        const reason = bounded.aborted ? bounded.reason instanceof Error && bounded.reason.name === 'TimeoutError' ? 'timeout' : 'cancelled' : error instanceof TeamError ? error.connectionFailure ?? error.kind : error instanceof JobError ? error.kind : 'network';
+        const messages: Record<string, string> = { retryable: '服务暂时不可用，请检查服务状态后重试。', auth: '认证未通过，请检查 Agent ID 和团队鉴权密钥。', timeout: '连接超时，请检查服务状态和网络后重试。', dns: '无法解析服务域名，请检查地址和网络。', unreachable: '无法连接服务，请检查地址、端口和服务是否已启动。', network: '网络连接失败，请检查网络或代理后重试。', protocol: '服务响应不符合 ACN 协议，请联系团队管理员检查服务版本。', client: '服务拒绝了请求，请检查服务地址和访问权限。', cancelled: '检查已取消。' };
+        return { service, state: 'failed' as const, message: messages[reason] ?? messages['network'] ?? '' };
+      }
     }));
-    return { ok: !signal?.aborted && checks.every((item) => item.state === 'ok'), message: signal?.aborted ? '检查已取消。' : checks.every((item) => item.state === 'ok') ? '团队连接检查通过。' : '部分服务不可用；可离线保存，使用前需恢复连接。', checks };
+    return { ok: !signal?.aborted && checks.every((item) => item.state === 'ok'), message: signal?.aborted ? '检查已取消。' : checks.every((item) => item.state === 'ok') ? '团队连接检查通过。' : '部分团队服务不可用；可保存配置并继续本地工作，团队同步前需恢复连接。', checks };
   } finally { await team.close(); }
 }
 
-export async function readKnowledge(pool: RuntimePool, key: string, kind: 'claim' | 'dispute' | 'trace', query: string, offset: number, entities = true, activityOptions: ActivityPage = {}): Promise<KnowledgeView> {
+export async function readKnowledge(pool: RuntimePool, key: string, kind: 'claim' | 'dispute' | 'trace', query: string, offset: number, entities = true, activityOptions: ActivityPage = {}, filters: { status?: string; delivery?: string } = {}): Promise<KnowledgeView> {
   const config = pool.config(key, true);
   if (config === undefined || config.agentId === '') throw new JobError('connection', '请选择可用的知识身份。');
   // 浏览不启动 worker、同步或 Dream；只从当前已生效实体与任务账本读取。
@@ -46,13 +51,16 @@ export async function readKnowledge(pool: RuntimePool, key: string, kind: 'claim
   try {
     const context = knowledge.context();
     const values = !entities ? [] : kind === 'claim' ? await new ClaimStore(context).list() : kind === 'dispute' ? await new DisputeStore(context).list() : await new TraceStore(context).list();
-    const text = query.toLocaleLowerCase();
-    const matching = values.filter((item) => ('holder' in item ? item.holder === context.agentId : 'agent' in item ? item.agent === context.agentId : item.reporter_agent_id === context.agentId) && JSON.stringify(item).toLocaleLowerCase().includes(text)).sort((a, b) => a.id.localeCompare(b.id));
     const pending = await new UploadStore(context).read();
+    const pendingIds = new Set<string>([...pending.claims, ...pending.disputes].map((item) => item.id));
+    const text = query.toLocaleLowerCase();
+    const matching = values.filter((item) => ('holder' in item ? item.holder === context.agentId : 'agent' in item ? item.agent === context.agentId : item.reporter_agent_id === context.agentId)
+      && JSON.stringify(item).toLocaleLowerCase().includes(text) && (!filters.status || 'status' in item && item.status === filters.status)
+      && (!filters.delivery || filters.delivery === 'all' || (pendingIds.has(item.id) ? 'pending' : 'local') === filters.delivery)).sort((a, b) => a.id.localeCompare(b.id));
     const rows = await allActivities(knowledge, (kind) => pool.supportsJob(key, kind));
     const issues = rows.filter((item) => item.kind === 'delivery' && item.state === 'rejected' && item.requiresAttention).length;
     const attentionCount = pending.claims.length + pending.disputes.length + issues + rows.filter((item) => item.kind !== 'delivery' && item.requiresAttention).length;
-    return { key, name: pool.choices().find((item) => item.key === key)?.name ?? key, items: matching.slice(offset, offset + 30).map((item) => ({ kind, id: item.id, name: item.name, status: 'status' in item ? String(item.status) : '', detail: JSON.stringify(item, null, 2) })), omitted: Math.max(0, matching.length - offset - 30), ...activityPage(rows, activityOptions), attentionCount, pendingClaims: pending.claims.length, pendingDisputes: pending.disputes.length };
+    return { key, name: pool.choices().find((item) => item.key === key)?.name ?? key, items: matching.slice(offset, offset + 30).map((item) => ({ kind, id: item.id, name: item.name, status: 'status' in item ? String(item.status) : '', detail: JSON.stringify(item, null, 2), summary: ('statement' in item ? item.statement : 'summary' in item ? item.summary : item.task).slice(0, 500), updatedAt: ('updated_at' in item ? item.updated_at : undefined) ?? item.created_at, delivery: pendingIds.has(item.id) ? 'pending' : 'local' })), omitted: Math.max(0, matching.length - offset - 30), ...activityPage(rows, activityOptions), activityKinds: [...new Set(rows.map((item) => item.kind))], activitySources: [...new Set(rows.flatMap((item) => item.sessionId === undefined ? [] : [item.sessionId]))], attentionCount, runningCount: rows.filter((item) => item.kind !== 'delivery' && (item.state === 'queued' || item.state === 'running')).length, pendingClaims: pending.claims.length, pendingDisputes: pending.disputes.length };
   } finally { if (knowledge !== pool.base) await knowledge.team?.close(); }
 }
 export async function executeInteraction(ctx: Context, input: InteractionRequest, runtimePool?: RuntimePool, signal?: AbortSignal): Promise<InteractionResult> {
@@ -74,14 +82,16 @@ export async function executeInteraction(ctx: Context, input: InteractionRequest
       if (assembler.finish.kind !== 'stop') return { ok: false, message: '模型未正常完成检查，保留原模型。请检查模型配置或重试。' };
       return { ok: true, message: '知识模型检查通过。' };
     }
-    if (request.action === 'knowledge') return { ok: true, message: '', knowledge: await readKnowledge(pool, request.key, request.kind, request.query, request.offset) };
+    if (request.action === 'knowledge') return { ok: true, message: '', knowledge: await readKnowledge(pool, request.key, request.kind, request.query, request.offset, true, {}, request) };
     if (request.action === 'reference') {
       const config = pool.config(request.key, true);
       if (config === undefined || !config.agentId) throw new JobError('connection', '请选择可用的知识身份。');
       const knowledge = pool.isBase(request.key) ? pool.base : new AcnKnowledge(config, ctx.logger);
       try {
-        const item = (await new ClaimStore(knowledge.context()).list()).find((claim) => claim.id === request.id && claim.holder === knowledge.agentId);
-        return { ok: true, message: '', reference: { key: request.key, id: request.id, ...(item === undefined ? {} : { item: { kind: 'claim', id: item.id, name: item.name, status: String(item.status), detail: JSON.stringify(item, null, 2) } }) } };
+        const trace = request.id.startsWith('trace_');
+        const entries = trace ? await new TraceStore(knowledge.context()).list() : await new ClaimStore(knowledge.context()).list();
+        const item = entries.find((value) => value.id === request.id && ('holder' in value ? value.holder : value.agent) === knowledge.agentId);
+        return { ok: true, message: '', reference: { key: request.key, id: request.id, ...(item === undefined ? {} : { item: { kind: trace ? 'trace' : 'claim', id: item.id, name: item.name, status: 'status' in item ? String(item.status) : '', detail: JSON.stringify(item, null, 2) } }) } };
       } finally { if (knowledge !== pool.base) await knowledge.team?.close(); }
     }
     if (request.action === 'activity') return { ok: true, message: '', knowledge: await readKnowledge(pool, request.key, 'claim', '', 0, false, request) };

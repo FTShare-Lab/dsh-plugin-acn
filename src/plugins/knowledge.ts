@@ -29,7 +29,7 @@ export const Config: Schema = Schema.object({
   defaultConnection: Schema.string().default(''), legacyEnabled: boolean(true), showCompletion: boolean(true),
   team: Schema.object({
     routerEndpoint: Schema.string().default(''), maintainerEndpoint: Schema.string().default(''), keyEnv: Schema.string().default(''),
-    timeoutMs: number(15_000), retryCount: number(3), retryBaseDelayMs: number(500), retryMaxDelayMs: number(8000),
+    timeoutMs: number(15_000), routerTimeoutMs: number(50_000), retryCount: number(3), retryBaseDelayMs: number(500), retryMaxDelayMs: number(8000),
   }),
   llm: Schema.object({ provider: Schema.string().default(''), model: Schema.string().default(''), maxOutputTokens: number(32_768), timeoutMs: number(600_000), structuredRetries: number(5) }),
   catalog: Schema.object({ maxClaims: number(20), maxChars: number(24_000) }),

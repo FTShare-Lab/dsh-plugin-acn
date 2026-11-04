@@ -1,6 +1,6 @@
 // 工作区内的普通文本文件才可查证；排除私有目录、凭据、符号链接与硬链接。
 import fs from 'node:fs/promises';
-import { constants } from 'node:fs';
+import { openSingleFile } from '../store/regular-file.js';
 import { createHash } from 'node:crypto';
 import { basename, isAbsolute, relative, resolve, sep } from 'node:path';
 import { requireDream, DreamValidationError } from './schema.js';
@@ -11,18 +11,18 @@ export const within = (root: string, path: string): boolean => { const rel = rel
 // 文件名和每层目录名共用规则；覆盖单复数凭据名称，保留词边界以免误拦 tokenizer 等普通源码。
 const blocked = (part: string): boolean => part.startsWith('.') || /^(?:memory\.md|user\.md|export_env\.sh|node_modules|memories)$/i.test(part) || /(?:^|[._-])(?:secrets?|credentials?|private[-_]?keys?|tokens?)(?:[._-]|$)/i.test(part) || /\.(?:pem|key|p12|pfx)$/i.test(part);
 export async function authorizeFile(workspace: string, privateHome: string, input: string): Promise<string> {
-  requireDream(isAbsolute(workspace) && await fs.realpath(workspace) === workspace, '查证工作区已变化。');
+  requireDream(isAbsolute(workspace) && relative(await fs.realpath(workspace), workspace) === '', '查证工作区已变化。');
   const path = resolve(workspace, input);
   requireDream(within(workspace, path) && !within(await fs.realpath(privateHome), path), '查证路径必须位于工作区且不能进入私有数据目录。');
   const parts = relative(workspace, path).split(sep);
   requireDream(parts.every((part) => part !== '' && !blocked(part)) && !blocked(basename(workspace)), '查证不能读取私有、隐藏或凭据路径。');
   let current = workspace;
   for (const part of parts) { current = resolve(current, part); requireDream(!(await fs.lstat(current)).isSymbolicLink(), '查证不跟随符号链接。'); }
-  requireDream(await fs.realpath(path) === path, '查证文件路径已变化。'); return path;
+  requireDream(relative(await fs.realpath(path), path) === '', '查证文件路径已变化。'); return path;
 }
 export async function readEvidenceFile(workspace: string, privateHome: string, input: string, maxBytes: number): Promise<{ path: string; content: string; revision: Receipt['output']['file_version']['revision'] }> {
   const path = await authorizeFile(workspace, privateHome, input);
-  const file = await fs.open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  const file = await openSingleFile(path, () => new DreamValidationError('查证仅接受单链接普通文件，不跟随符号链接。'));
   try {
     const before = await file.stat();
     requireDream(before.isFile() && before.nlink === 1 && before.size <= maxBytes, '查证仅接受预算内的单链接普通文件。');

@@ -31,7 +31,7 @@ pnpm smoke:install
 | `pnpm check:security` | 版本控制文本中的凭据、邮箱和个人路径，以及提交元数据中的其他敏感内容；允许用户确认的 Git 身份邮箱 |
 | `pnpm check:docs` | Markdown 相对链接与标题锚点 |
 
-安装包包含运行 JS、类型声明、提示词、组合 patch、双语说明、本地化资源、图标、使用截图和许可证；不包含源码测试、依赖缓存、临时项目或运行日志。安装检查使用独立的 `DSH_HOME`，不会修改日常 profile。`smoke:install` 由 Node 脚本执行，可从 Windows PowerShell 或 POSIX 终端运行；Windows 的 pnpm / dsh 命令 shim 通过统一启动器调用，不要求安装 Bash。它需要可用的 `tar` 和 DSH CLI。
+安装包包含运行 JS、类型声明、提示词、组合 patch、双语说明、本地化资源、图标、使用截图和许可证；不包含源码测试、依赖缓存、临时项目或运行日志。安装检查使用独立的 `DSH_HOME`，不会修改日常 profile。`smoke:install` 由 Node 脚本执行，可从 Windows PowerShell 或 POSIX 终端运行；Windows 的 pnpm / dsh 命令 shim 通过统一启动器调用，不要求安装 Bash。它需要可用的 `tar` 和 DSH CLI；`DSH_BIN` 也可指向桌面附带 CLI 的 `.js` 入口。
 
 安全扫描不识别截图文字。更新图片时应检查可见内容，使用中性示例，避免展示实际数据路径、提供商别名、邮箱或凭据。
 
@@ -144,7 +144,7 @@ pnpm test:contract
 
 Windows job 只在临时 runner 开启开发者模式，以执行真实符号链接 fixture；不跳过链接保护测试，也不修改用户电脑设置。本机 Windows 运行这些测试需要开发者模式或创建符号链接的权限；普通插件使用不要求创建链接。新增 `tests/platform/` 覆盖反斜杠主目录、盘符 / UNC、原生导入、保留名称和去掉 POSIX 打开标志后的 Memory 读写及链接拒绝。现有 macOS 权限断言继续保留，Windows 改为检查可读写，不把 mode 位当作 ACL 验收。
 
-团队契约单独在 Ubuntu 运行；这不代表 Windows 上直接部署 Rust 服务已被验收。Windows 本地可在 PowerShell 串行执行以下检查（先安装所需版本的 Node、pnpm、DSH CLI 和 tar）：
+基线安装检查使用 DSH rc.2，独立的 Windows 安装 job 另检查 rc.5；不重复运行主矩阵已覆盖的测试集。团队契约单独在 Ubuntu 运行；这不代表 Windows 上直接部署 Rust 服务已被验收。Windows 本地可在 PowerShell 串行执行以下检查（先安装所需版本的 Node、pnpm、DSH CLI 和 tar）：
 
 ```powershell
 pnpm install --frozen-lockfile

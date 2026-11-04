@@ -1,5 +1,6 @@
 // 动作专属参数与领域分发独立于宿主，禁止通过工具修订身份和来源。
 import { z } from 'zod';
+import { validationMessage } from './validation.js';
 import { ClaimIdSchema, TraceIdSchema } from '../protocol/ids.js';
 import { ClaimStatusSchema, ConfidenceSchema } from '../protocol/claim.js';
 import type { AcnKnowledge } from '../knowledge/service.js';
@@ -34,20 +35,20 @@ export async function executeClaim(knowledge: AcnKnowledge, input: unknown, sign
     const args = ClaimToolArgsSchema.parse(normalized);
     switch (args.action) {
       case 'list': return await knowledge.listClaims({ ...(args.query === undefined ? {} : { query: args.query }), ...(args.include_deprecated === undefined ? {} : { includeDeprecated: args.include_deprecated }), ...(args.offset === undefined ? {} : { offset: args.offset }), ...(args.limit === undefined ? {} : { limit: args.limit }) }, signal);
-      case 'read': return await knowledge.readClaim(ClaimIdSchema.parse(args.id), signal);
+      case 'read': return await knowledge.readClaim(z.object({ id: ClaimIdSchema }).parse({ id: args.id }).id, signal);
       case 'update': {
         const update = ClaimUpdateSchema.parse(Object.fromEntries(Object.entries(args).filter(([key]) => key !== 'action')));
         return await knowledge.updateClaim(update, signal);
       }
       case 'traces': return await knowledge.listTraces({ ...(args.claim_id === undefined ? {} : { claimId: ClaimIdSchema.parse(args.claim_id) }), ...(args.offset === undefined ? {} : { offset: args.offset }), ...(args.limit === undefined ? {} : { limit: args.limit }) }, signal);
-      case 'read_trace': return await knowledge.readTrace(TraceIdSchema.parse(args.id), { ...(args.task_offset === undefined ? {} : { taskOffset: args.task_offset }), ...(args.task_limit === undefined ? {} : { taskLimit: args.task_limit }) }, signal);
+      case 'read_trace': return await knowledge.readTrace(z.object({ id: TraceIdSchema }).parse({ id: args.id }).id, { ...(args.task_offset === undefined ? {} : { taskOffset: args.task_offset }), ...(args.task_limit === undefined ? {} : { taskLimit: args.task_limit }) }, signal);
     }
   } catch (error) {
     signal?.throwIfAborted();
     if (error instanceof KnowledgeBusy || error instanceof LockTimeoutError) return { error: { kind: 'knowledge_busy', message: '知识库暂时忙碌，请稍后重试当前知识操作。', retryable: true } };
     if (error instanceof RevisionConflict) return { conflict: true as const, current_revision: error.currentRevision };
     if (error instanceof KnowledgeError) return { error: { kind: error.kind, message: error.message } };
-    if (error instanceof z.ZodError) return { error: { kind: 'validation', message: 'Invalid claim action, fields, identifier or pagination.' } };
+    if (error instanceof z.ZodError) return { error: { kind: 'validation', message: validationMessage(error) } };
     throw error;
   }
 }
