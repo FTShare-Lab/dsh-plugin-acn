@@ -3,12 +3,14 @@ import type { Context } from '@deepseek-ai/cordis';
 import type {} from '@deepseek-ai/dsh-workspace';
 import type { AcnFormation } from '../formation/service.js';
 
-export async function connectArchives(ctx: Context, formation: Pick<AcnFormation, 'beginArchive' | 'cancelArchive' | 'archived' | 'reconcileArchives'>): Promise<void> {
+export async function connectArchives(ctx: Context, formation: Pick<AcnFormation, 'beginArchive' | 'cancelArchive' | 'archived' | 'reconcileArchives'>, owns?: (id: string) => Promise<boolean>): Promise<void> {
   const registry = ctx.workspaceRegistry;
   const original = registry.archiveSession.bind(registry);
   const own = Object.getOwnPropertyDescriptor(registry, 'archiveSession');
   const wrapped: typeof original = async (id, options) => {
     if (registry.archivedSessionIds.includes(id)) return original.call(registry, id, options);
+    // 草稿可首发前改选；旧目录的空投影不能代表当前会话仍属于该配置。
+    if (owns !== undefined && !await owns(id)) return original.call(registry, id, options);
     const session = ctx.sessions.get(id);
     const upper = session === undefined ? undefined : session.seq - 1;
     const frozen = await formation.beginArchive(id, upper);

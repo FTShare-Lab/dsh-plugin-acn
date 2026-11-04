@@ -25,6 +25,7 @@ import { structuredBackend } from './llm.js';
 import { teamCredentials } from './team-credentials.js';
 import { autonomousDreamRunner } from './dream-agent.js';
 import { compactionEnd, projectEvent } from './formation.js';
+import { formationOwnership, formationReplay } from './formation-replay.js';
 import { identityOf, sessionAllowed, sessionSelection, restoreSessionBinding, rememberConfiguration, runningConfiguration, forgetConfiguration, configurationActivation, markSessionEligible, sessionEligible, sessionHasWork, sessionUnbound, unboundSession } from './session-binding.js';
 import { connectArchives } from './formation-archive.js';
 import { readYamlOr, writeYamlAtomic } from '../store/yaml.js';
@@ -324,14 +325,15 @@ export class RuntimePool {
     const render = await loadPromptRenderer(); this.render = render; const backend = structuredBackend(this.ctx);
     const catalog = new KnowledgeSessions(knowledge); const memory = new AcnMemory(knowledge);
     const memories = new MemorySessions(memory, render); const review = new MemoryReview(memory, backend, render);
-    const formation = new AcnFormation(knowledge, backend, render, {}, knowledge.jobs ?? undefined, async (route) => { try { await this.ctx.llm.prepareCall(route, AbortSignal.timeout(15_000)); return true; } catch { return false; } });
+    const replay = formationReplay(this.ctx, config);
+    const formation = new AcnFormation(knowledge, backend, render, {}, knowledge.jobs ?? undefined, async (route) => { try { await this.ctx.llm.prepareCall(route, AbortSignal.timeout(15_000)); return true; } catch { return false; } }, replay);
     const inbox = new AcnInbox(knowledge, backend, render);
     const dream = new AcnDream(knowledge, backend, render, () => this.pending, { workspace: () => readYamlOr(knowledge.context().paths.dreamWorkspace, z.string(), () => process.cwd()), run: autonomousDreamRunner(this.ctx) });
     const uploads = new UploadScheduler(knowledge);
     const runtime: Runtime = { knowledge, formation, inbox, dream, memory, catalog, memories, review, uploads, components: new Set(), setComponent: async (component, enabled) => {
       if (runtime.components.has(component) === enabled) return;
       if (enabled) {
-        if (component === 'formation') { runtime.formation = new AcnFormation(knowledge, backend, render, {}, knowledge.jobs ?? undefined); await runtime.formation.start(); }
+        if (component === 'formation') { runtime.formation = new AcnFormation(knowledge, backend, render, {}, knowledge.jobs ?? undefined, undefined, replay); await runtime.formation.start(); }
         if (component === 'inbox') { runtime.inbox = new AcnInbox(knowledge, backend, render); await runtime.inbox.start(); }
         if (component === 'dream') { runtime.dream = new AcnDream(knowledge, backend, render, () => this.pending, { workspace: () => readYamlOr(knowledge.context().paths.dreamWorkspace, z.string(), () => process.cwd()), run: autonomousDreamRunner(this.ctx) }); await runtime.dream.start(); }
         if (component === 'memory') { runtime.review = new MemoryReview(memory, backend, render); await runtime.review.start(); }
@@ -354,7 +356,7 @@ export class RuntimePool {
         else { await knowledge.jobs?.close(); await uploads.close(); this.retiredWorkers.add(runtime); }
       }
       if (current || previous === undefined) this.workers.set(identity, runtime);
-      await this.ctx.inject(['workspaceRegistry'], (child) => connectArchives(child, { beginArchive: (id, upper) => runtime.components.has('formation') ? runtime.formation.beginArchive(id, upper) : Promise.resolve(null), cancelArchive: (id) => runtime.formation.cancelArchive(id), archived: (id, upper) => runtime.formation.archived(id, upper), reconcileArchives: (ids) => runtime.formation.reconcileArchives(ids) }));
+      await this.ctx.inject(['workspaceRegistry'], (child) => connectArchives(child, { beginArchive: (id, upper) => runtime.components.has('formation') ? runtime.formation.beginArchive(id, upper) : Promise.resolve(null), cancelArchive: (id) => runtime.formation.cancelArchive(id), archived: (id, upper) => runtime.formation.archived(id, upper), reconcileArchives: (ids) => runtime.formation.reconcileArchives(ids) }, formationOwnership(child, config)));
       for (const name of ['prompt', 'formation', 'inbox', 'dream', 'memory'] as const) {
         if (this.enabled(name) && (name !== 'memory' || config.memory.enabled)) {
           runtime.components.add(name);

@@ -9,6 +9,7 @@ import { structuredBackend } from '../dsh-adapter/llm.js';
 import { compactionEnd, projectEvent } from '../dsh-adapter/formation.js';
 import { isSubagent } from '../tools/subagent.js';
 import { connectArchives } from '../dsh-adapter/formation-archive.js';
+import { formationOwnership, formationReplay } from '../dsh-adapter/formation-replay.js';
 
 declare module '@deepseek-ai/cordis' { interface Context { acnFormation: AcnFormation } }
 export const name = 'acn-formation';
@@ -21,7 +22,7 @@ export async function apply(ctx: Context): Promise<void> {
   if (worker === null) return;
   const service = new AcnFormation(ctx.acnKnowledge, structuredBackend(ctx), await loadPromptRenderer(), {}, worker, async (route) => {
     try { await ctx.llm.prepareCall(route, AbortSignal.timeout(15_000)); return true; } catch { return false; }
-  });
+  }, formationReplay(ctx, knowledge.config));
   ctx.provide('acnFormation', service);
   if (!knowledge.active) { ctx.effect(() => () => service.close()); return; }
   ctx.on('session/event', (session, event) => {
@@ -36,7 +37,7 @@ export async function apply(ctx: Context): Promise<void> {
   ctx.effect(() => () => service.close());
   for (const agent of ctx.agents.list()) if (sessionAllowed(ctx, knowledge.config, agent.session.header) && !isSubagent(agent.session.header)) { service.attach(agent.session.id); if (agent.status === 'running') service.running(agent.session.id); }
   // 已归档会话必须先恢复暂停状态，才能开始扫描空闲增量。
-  await ctx.inject(['workspaceRegistry'], (child) => connectArchives(child, service));
+  await ctx.inject(['workspaceRegistry'], (child) => connectArchives(child, service, formationOwnership(child, knowledge.config)));
   await service.start();
 }
 export default { name, inject, apply };

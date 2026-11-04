@@ -78,6 +78,13 @@ export const messageInfo = (message: string, kind?: string): MessageInfo => {
   return { code: code || 'legacy', ...(entityId === undefined ? {} : { entityId }), ...(status === undefined ? {} : { status }) };
 };
 const recovery: Record<string, string> = {
+  transcript_occupied: 'Session projection files are not writable or a lock timed out after bounded retries. Check file usage and directory permissions, then retry the original task. No knowledge model call was made.',
+  transcript_space: 'Local storage space or quota is exhausted. Restore capacity, then retry the original task; incomplete input was not sent to the knowledge model.',
+  transcript_corrupt: 'Session projections conflict or are corrupt. Keep the original data and contact the maintainer; missing input was not skipped.',
+  transcript_source: 'The original session log could not be replayed. Restore the original session and work configuration, then retry.',
+  transcript_io: 'Session projection I/O failed. Check local storage, then retry the task or recap again; no knowledge model call was made.',
+  transcript_limit: 'A single session projection exceeds the size limit. Keep the original session and contact the maintainer; oversized input cannot be silently skipped.',
+  formation_enqueue: 'The formation task could not be queued. Projections are retained. Check local storage and recap again.',
   handler_inactive: 'The required background component is inactive. Enable it in the DSH plugin manager, then retry.',
   context_limit: 'The model context limit was reached. Select a knowledge model with enough context and retry.',
   structured_output: 'The model repeatedly returned invalid JSON. Retry or choose another knowledge model.',

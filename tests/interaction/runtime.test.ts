@@ -23,6 +23,7 @@ import type { ConfigInput } from '../../src/config.js';
 import Knowledge from '../../src/plugins/knowledge.js';
 import { executeInteraction } from '../../src/dsh-adapter/interaction-service.js';
 import type { Context } from '@deepseek-ai/cordis';
+import { acquireFileLease } from '../../src/store/lock.js';
 
 const config = (endpoint: string): ConfigInput => ({
   connections: [{ id: 'team-a', name: 'Example team', agentId: 'member-a', routerEndpoint: endpoint, maintainerEndpoint: endpoint, timeoutMs: 1000 }],
@@ -31,6 +32,25 @@ const config = (endpoint: string): ConfigInput => ({
 });
 const reply = (path: string) => path === '/inbox/pull' ? { body: [] } : path.endsWith('/overview') ? { body: { scopes: [] } } : { body: { status: 'ok', team_auth_enabled: false } };
 describe('session team interaction', () => {
+  it('releases the shared worker and team client when shutdown formation cannot persist a session', async () => {
+    const server = await teamServer((request) => reply(request.path));
+    const flow = await flowHarness(new ScriptAdapter([textResponse('Foreground work completed.')]), { formation: true, inbox: true, config: { ...config(server.endpoint), formation: { idleRecap: false, finalizeIdleMinutes: 0, finalizeOnDispose: true } } });
+    try {
+      const agent = await flow.create(); const initial = await flow.ctx.acnRuntime.service(agent.session.header); await initial.formation?.flush(agent.session.id);
+      await flow.ctx.acnRuntime.select(agent.session.header, 'team-a');
+      const services = await flow.ctx.acnRuntime.service(agent.session.header);
+      const formation = services.formation; const worker = services.knowledge.jobs; const team = services.knowledge.team;
+      if (formation === undefined || worker === null || team === null) throw new Error('Missing team runtime');
+      const record = formation.transcript.record.bind(formation.transcript);
+      vi.spyOn(formation.transcript, 'record').mockImplementation((id, projection) => projection.entry?.type === 'user'
+        ? Promise.reject(Object.assign(new Error('Private fault detail'), { code: 'EPERM' })) : record(id, projection));
+      const closeWorker = vi.spyOn(worker, 'close'); const closeTeam = vi.spyOn(team, 'close');
+      await turn(agent); await expect(formation.flush(agent.session.id)).rejects.toMatchObject({ kind: 'transcript_occupied' });
+      await expect(flow.ctx.acnRuntime.close()).resolves.toBeUndefined();
+      expect(closeWorker).toHaveBeenCalled(); expect(closeTeam).toHaveBeenCalled();
+      const lease = await acquireFileLease(services.knowledge.context().paths.workerLock, { timeoutMs: 1000 }); await lease.release();
+    } finally { await flow.close(); await server.close(); }
+  });
   it('keeps a new session solo and browses an unused connection without network or model work', async () => {
     const server = await teamServer((request) => reply(request.path));
     const adapter = new ScriptAdapter([textResponse('Local task completed.')]); const flow = await flowHarness(adapter, { formation: true, inbox: true, memory: true, config: config(server.endpoint) });

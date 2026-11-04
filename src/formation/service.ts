@@ -14,52 +14,90 @@ import type { Projection, Route } from './transcript.js';
 import { RecapOutputSchema } from './schema.js';
 import { prepareFormation, recapClaimIds } from './prepare.js';
 import { idleTrigger } from './triggers.js';
+import { FormationCapture, formationFault, retryFormation } from './capture.js';
+import type { FormationStage, ProjectionReplay } from './capture.js';
 
 export class AcnFormation {
   readonly worker: DurableWorker;
   readonly transcript: TranscriptStore;
   private pending = Promise.resolve();
-  private captureError: unknown;
+  private readonly captures: FormationCapture;
+  private readonly compactions = new Map<string, number>();
+  private readonly archiveChecks = new Map<string, boolean>();
+  private archiveView: ReadonlySet<string> | undefined;
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly attached = new Set<string>();
   private readonly activeSessions = new Set<string>();
   private scanner: ReturnType<typeof setInterval> | undefined;
   private started = false;
   private closing = false;
+  private closeTask: Promise<void> | undefined;
   private readonly unregister: (() => void)[];
   private readonly ownsWorker: boolean;
-  constructor(readonly knowledge: AcnKnowledge, private readonly backend: StructuredBackend, private readonly render: (name: string, context: object) => string, workerOptions: ConstructorParameters<typeof DurableWorker>[1] = {}, worker?: DurableWorker, private readonly routeReady?: (route: Route) => Promise<boolean>) {
+  constructor(readonly knowledge: AcnKnowledge, private readonly backend: StructuredBackend, private readonly render: (name: string, context: object) => string, workerOptions: ConstructorParameters<typeof DurableWorker>[1] = {}, worker?: DurableWorker, private readonly routeReady?: (route: Route) => Promise<boolean>, replay?: ProjectionReplay) {
     this.worker = worker ?? new DurableWorker(knowledge.context(), workerOptions);
     this.ownsWorker = worker === undefined;
     this.transcript = new TranscriptStore(knowledge.context());
+    this.captures = new FormationCapture(this.transcript, replay);
     this.unregister = [this.worker.register('recap', (job, control) => this.run(job, control)), this.worker.register('finalize', (job, control) => this.run(job, control))];
   }
   async start(): Promise<void> {
     await new FormationStore(this.knowledge.context()).recover();
-    for (const id of await this.transcript.sessions()) {
-      await this.transcript.record(id, {});
-      const state = await this.transcript.state(id);
-      if (state.archivePending) await this.finishArchive(id);
+    for (const id of await this.transcript.sessions(true)) {
+      try {
+        await this.captures.prepare(id);
+        await this.transcript.record(id, {});
+        const state = await this.transcript.state(id);
+        if (state.archivePending) await this.finishArchive(id);
+      } catch (error) { this.report('replay', id, error); }
     }
     await this.worker.start();
     this.started = true;
-    this.scanner = setInterval(() => { this.schedule(() => this.scanPending(Date.now())); }, this.knowledge.config.formation.recapScanSeconds * 1000);
+    this.scanner = setInterval(() => { this.schedule('scan', undefined, () => this.scanPending(Date.now())); }, this.knowledge.config.formation.recapScanSeconds * 1000);
     this.scanner.unref();
     await this.scanPending(Date.now());
   }
   attach(id: string): void { this.attached.add(id); this.idle(id); }
   capture(id: string, projection: Projection, compactedUntil?: number): void {
     if (this.closing) return;
-    this.schedule(async () => {
-      await this.transcript.record(id, projection);
-      if (projection.route !== undefined) await this.rememberRoute(projection.route);
-      if (compactedUntil !== undefined && this.knowledge.config.formation.recapOnCompaction) await this.enqueueNew(id, 'recap', 'compaction', compactedUntil);
+    this.schedule('projection', id, async () => {
+      this.captures.add(id, projection);
+      if (compactedUntil !== undefined && this.knowledge.config.formation.recapOnCompaction) this.compactions.set(id, Math.max(this.compactions.get(id) ?? -1, compactedUntil));
+      await this.captures.drain(id);
+      // 会话路由已在投影状态中持久化；全局备用路由失败不阻塞本会话复盘。
+      if (projection.route !== undefined) {
+        const route = projection.route;
+        try { await retryFormation(() => this.rememberRoute(route)); }
+        catch (error) { this.report('route', id, error); }
+      }
+      await this.flushCompaction(id);
     });
   }
-  private schedule(action: () => Promise<unknown>): void {
-    this.pending = this.pending.then(action).then(() => undefined).catch((error: unknown) => { this.captureError = error; this.knowledge.logger.warn('Knowledge formation could not persist a session event.'); });
+  private report(stage: FormationStage, id: string | undefined, error: unknown): void {
+    this.knowledge.logger.warn(`Knowledge formation failed: stage=${stage} session=${id ?? '-'} code=${formationFault(error)}.`);
   }
-  async flush(): Promise<void> { await this.pending; if (this.captureError !== undefined) throw new JobError('transcript', '会话投影未完整持久化；请检查存储空间和 transcript 限制后重试。'); }
+  private schedule(stage: FormationStage, id: string | undefined, action: () => Promise<unknown>): void {
+    this.pending = this.pending.then(action).then(() => undefined).catch((error: unknown) => { this.report(stage, id, error); });
+  }
+  private async flushCompaction(id: string): Promise<void> {
+    const until = this.compactions.get(id);
+    if (until === undefined) return;
+    try { await retryFormation(() => this.enqueueNew(id, 'recap', 'compaction', until)); this.compactions.delete(id); }
+    catch (error) { this.report('enqueue', id, error); throw new JobError('formation_enqueue', '复盘任务入队失败，投影已保留；请检查本地存储后再次复盘。'); }
+  }
+  async flush(id?: string): Promise<void> {
+    const task = this.pending.then(async () => {
+      const ids = id === undefined ? new Set([...await this.transcript.sessions(true), ...this.captures.ids(), ...this.compactions.keys()]) : new Set([id]);
+      let failure: Error | undefined;
+      for (const current of ids) {
+        try { await this.captures.prepare(current); await this.flushCompaction(current); }
+        catch (error) { failure ??= error instanceof Error ? error : new JobError('storage', '本地复盘准备失败，请检查存储后重试。'); }
+      }
+      if (failure !== undefined) throw failure;
+    });
+    this.pending = task.catch(() => {});
+    await task;
+  }
   private async rememberRoute(route: Route): Promise<void> {
     const context = this.knowledge.context();
     await withFileLock(`${context.paths.lastRoute}.lock`, () => writeYamlAtomic(context.paths.lastRoute, route, RouteSchema, context.logger));
@@ -68,7 +106,7 @@ export class AcnFormation {
   idle(id: string): void {
     this.running(id);
     this.activeSessions.delete(id);
-    if (!this.closing) this.schedule(() => this.checkIdle(id, Date.now()));
+    if (!this.closing) this.schedule('scan', id, () => this.checkIdle(id, Date.now()));
     const minutes = this.knowledge.config.formation.finalizeIdleMinutes;
     if (this.closing || minutes === 0) return;
     // 配置允许较长空闲时间，分段等待避免平台计时器溢出后立即触发。
@@ -76,29 +114,35 @@ export class AcnFormation {
     const wait = () => {
       const remaining = deadline - Date.now();
       if (remaining > 0) { const timer = setTimeout(wait, Math.min(remaining, 2_147_483_647)); timer.unref(); this.timers.set(id, timer); }
-      else { this.timers.delete(id); this.schedule(() => this.enqueue(id, 'finalize')); }
+      else { this.timers.delete(id); this.schedule('enqueue', id, async () => { await this.captures.prepare(id); return this.enqueue(id, 'finalize'); }); }
     };
     wait();
   }
   disposed(id: string): void {
     this.running(id); this.attached.delete(id);
     this.activeSessions.delete(id);
-    if (!this.closing && this.knowledge.config.formation.finalizeOnDispose) this.schedule(() => this.enqueue(id, 'finalize'));
+    if (!this.closing && this.knowledge.config.formation.finalizeOnDispose) this.schedule('enqueue', id, async () => { await this.captures.prepare(id); return this.enqueue(id, 'finalize'); });
   }
-  async finalize(id: string): Promise<Job> { await this.flush(); return this.enqueue(id, 'finalize'); }
+  async finalize(id: string): Promise<Job> { await this.flush(id); return this.enqueue(id, 'finalize'); }
   async recap(id: string): Promise<Job | null> {
-    await this.flush();
+    await this.flush(id);
     const state = await this.transcript.state(id);
     const until = this.activeSessions.has(id) ? Math.max(processedThrough(state), ...state.completedTurns) : state.lastSeenSeq;
     return this.enqueueNew(id, 'recap', 'manual', until);
   }
-  async scan(now = Date.now()): Promise<void> { await this.flush(); await this.scanPending(now); }
+  async scan(now = Date.now()): Promise<void> { await this.pending; await this.scanPending(now); }
   private async scanPending(now: number): Promise<void> {
     if (this.closing) return;
-    for (const id of await this.transcript.sessions()) await this.checkIdle(id, now);
+    await this.reconcilePendingArchives();
+    for (const id of new Set([...await this.transcript.sessions(true), ...this.captures.ids()])) {
+      try { await this.checkIdle(id, now); } catch (error) { this.report('scan', id, error); }
+    }
   }
   private async checkIdle(id: string, now: number): Promise<void> {
     if (!this.started || this.closing || this.activeSessions.has(id)) return;
+    await this.captures.prepare(id);
+    await this.flushCompaction(id);
+    await this.finishArchive(id);
     const state = await this.transcript.state(id);
     const trigger = idleTrigger(this.knowledge.config.formation, state, await this.transcript.read(id), now);
     if (trigger === undefined) return;
@@ -108,8 +152,9 @@ export class AcnFormation {
     if (!this.activeSessions.has(id)) await this.enqueueNew(id, 'recap', trigger);
   }
   async beginArchive(id: string, upper?: number): Promise<number | null> {
-    await this.flush();
-    if (!this.attached.has(id) && await this.transcript.states.read(id) === null) return null;
+    await this.pending;
+    if (!this.attached.has(id) && !this.captures.ids().includes(id) && !(await this.transcript.sessions(true)).includes(id)) return null;
+    await this.flush(id);
     const state = await this.transcript.lifecycle(id, (current) => {
       current.archiveIntent = current.autoPaused && current.archivedThroughSeq !== null ? current.archivedThroughSeq : Math.min(upper ?? current.lastSeenSeq, current.lastSeenSeq);
     });
@@ -117,20 +162,39 @@ export class AcnFormation {
   }
   async cancelArchive(id: string): Promise<void> { await this.transcript.lifecycle(id, (state) => { state.archiveIntent = null; }); }
   async archived(id: string, upper: number): Promise<void> {
-    await this.flush();
+    this.archiveChecks.set(id, true);
+    await this.recordArchive(id, upper);
+    await this.flush(id);
+    await this.finishArchive(id);
+  }
+  private async recordArchive(id: string, upper: number): Promise<void> {
     await this.transcript.lifecycle(id, (state) => {
       if (!state.autoPaused) { state.autoPaused = true; state.archivedThroughSeq = upper; state.archivePending = true; }
       state.archiveIntent = null;
     });
-    await this.finishArchive(id);
+    this.archiveChecks.delete(id);
   }
   async reconcileArchives(archived: ReadonlySet<string>): Promise<void> {
-    await this.flush();
-    for (const id of await this.transcript.sessions()) {
-      const state = await this.transcript.state(id);
-      if (state.archiveIntent !== null) {
-        if (archived.has(id)) await this.archived(id, state.archiveIntent); else await this.cancelArchive(id);
-      } else if (archived.has(id) && state.archivedThroughSeq === null) await this.archived(id, state.lastSeenSeq);
+    this.archiveView = new Set(archived);
+    await this.pending;
+    await this.reconcilePendingArchives();
+    if (this.started) await this.scanPending(Date.now());
+  }
+  private async reconcilePendingArchives(): Promise<void> {
+    if (this.archiveView !== undefined) {
+      try {
+        for (const id of await this.transcript.sessions(true)) this.archiveChecks.set(id, this.archiveView.has(id));
+        this.archiveView = undefined;
+      } catch (error) { this.report('scan', undefined, error); return; }
+    }
+    for (const [id, archived] of this.archiveChecks) {
+      try {
+        const state = await this.transcript.state(id);
+        if (state.archiveIntent !== null) {
+          if (archived) await this.recordArchive(id, state.archiveIntent); else await this.cancelArchive(id);
+        } else if (archived && state.archivedThroughSeq === null) await this.recordArchive(id, state.lastSeenSeq);
+        this.archiveChecks.delete(id);
+      } catch (error) { this.report('replay', id, error); }
     }
   }
   private async finishArchive(id: string): Promise<void> {
@@ -155,10 +219,10 @@ export class AcnFormation {
     return this.worker.enqueue(kind, { untilSeq }, id);
   }
   private async run(job: Job, control: JobControl): Promise<Job['result']> {
-    await this.flush();
     const id = job.sessionId;
     const until = job.payload['untilSeq'];
     if (id === undefined || typeof until !== 'number' || !Number.isSafeInteger(until)) throw new JobError('validation', '形成任务缺少合法会话或区间。');
+    await this.flush(id);
     await new FormationStore(this.knowledge.context()).recover();
     const state = await this.transcript.state(id);
     const fromSeq = processedThrough(state);
@@ -182,14 +246,22 @@ export class AcnFormation {
     const task = entries.filter((entry) => entry.type === 'user').map((entry) => entry.text).join('\n') || '本段会话知识复盘';
     return this.knowledge.applyFormation({ sessionId: id, jobId: job.id, kind: job.kind === 'recap' ? 'recap' : 'finalize', fromSeq, untilSeq, analysisClaims, prepared, task }, control);
   }
-  async close(): Promise<void> {
+  close(): Promise<void> {
+    this.closeTask ??= this.finishClose();
+    return this.closeTask;
+  }
+  private async finishClose(): Promise<void> {
     this.closing = true;
     if (this.scanner !== undefined) clearInterval(this.scanner);
     for (const timer of this.timers.values()) clearTimeout(timer);
     this.timers.clear();
     try {
       await this.pending;
-      if (this.knowledge.config.formation.finalizeOnDispose) for (const id of this.attached) await this.enqueue(id, 'finalize');
+      if (this.knowledge.config.formation.finalizeOnDispose) for (const id of this.attached) {
+        try { await this.captures.prepare(id); await this.enqueue(id, 'finalize'); }
+        // 卸载不能因单会话持久化故障中断后续资源清理；原日志仍是下次恢复依据。
+        catch (error) { this.report('enqueue', id, error); }
+      }
     } finally { for (const unregister of this.unregister) unregister(); if (this.ownsWorker) await this.worker.close(); }
   }
 }

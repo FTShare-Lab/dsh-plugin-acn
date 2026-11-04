@@ -1,6 +1,9 @@
 // 生产循环、真实命令和回环 HTTP 模型贯通知识形成及生命周期事件。
 import fs from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
+import { join } from 'node:path';
+import { Context } from '@deepseek-ai/cordis';
+import * as Persistence from '@deepseek-ai/dsh-session-persistence-jsonl';
 import { DeepSeekAdapter as MessagesAdapter, resolveAdapterOptions } from '@deepseek-ai/dsh-llm-deepseek';
 import type { DeepSeekAdapterOptions } from '@deepseek-ai/dsh-llm-deepseek';
 import { startMockLlmServer } from '@deepseek-ai/dsh-llm-mock-server';
@@ -11,11 +14,51 @@ import { describe, expect, it, vi } from 'vitest';
 import { ClaimStore } from '../../src/store/claims.js';
 import { TraceStore } from '../../src/store/traces.js';
 import { FormationStore } from '../../src/formation/checkpoint.js';
+import Formation from '../../src/plugins/formation.js';
+import { formationOwnership, formationReplay } from '../../src/dsh-adapter/formation-replay.js';
+import { resolveConfig } from '../../src/config.js';
 import { emptyOutput, newDraft, waitJob } from '../formation/helpers.js';
 import { ScriptAdapter, textResponse } from './adapter.js';
 import { flowHarness, turn } from './harness.js';
 
 describe('formation in the production host', () => {
+  it('reads original events through a fresh persistence host and refuses a different owner', async () => {
+    const flow = await flowHarness(new ScriptAdapter([textResponse('Durable public reply.')]), { persistence: true });
+    const cold = new Context();
+    try {
+      const agent = await flow.create(); await turn(agent, 'Durable public task.'); await flow.ctx.sessionPersistence.flush();
+      await cold.plugin(Persistence, { root: join(flow.root, 'logs') });
+      cold.provide('sessions', { get: () => undefined } as unknown as Context['sessions']);
+      const replay = formationReplay(cold, flow.knowledge.config);
+      expect(await formationOwnership(cold, flow.knowledge.config)(agent.session.id)).toBe(true);
+      expect(await formationOwnership(cold, resolveConfig({ ...flow.knowledge.config, agentId: 'agent-b' }))(agent.session.id)).toBe(false);
+      expect(await formationOwnership(cold, flow.knowledge.config)('missing-session')).toBe(false);
+      const projections = await replay(agent.session.id);
+      expect(JSON.stringify(projections)).toContain('Durable public task.'); expect(JSON.stringify(projections)).toContain('Durable public reply.');
+      await expect(formationReplay(cold, resolveConfig({ ...flow.knowledge.config, agentId: 'agent-b' }))(agent.session.id)).rejects.toMatchObject({ kind: 'transcript_source' });
+    } finally { await cold.fiber.dispose(); await flow.close(); }
+  });
+  it('replays the original host log after a failed projection and component reload', async () => {
+    const adapter = new ScriptAdapter([textResponse('The service contract has been verified.'), textResponse(JSON.stringify(emptyOutput()))]);
+    const flow = await flowHarness(adapter, { formation: true, persistence: true, config: { formation: { finalizeIdleMinutes: 0, finalizeOnDispose: false } } });
+    try {
+      const agent = await flow.create(); const original = flow.ctx.acnFormation;
+      const record = original.transcript.record.bind(original.transcript);
+      vi.spyOn(original.transcript, 'record').mockImplementation((id, projection) => projection.entry?.type === 'user'
+        ? Promise.reject(Object.assign(new Error('PRIVATE_OCCUPIED_DETAIL'), { code: 'EPERM' })) : record(id, projection));
+      await turn(agent, 'Verify the bounded retry behavior.');
+      await expect(original.flush(agent.session.id)).rejects.toMatchObject({ kind: 'transcript_occupied' });
+      expect(adapter.requests).toHaveLength(1);
+      await flow.fibers.formation?.dispose(); await flow.ctx.plugin(Formation);
+      const restored = flow.ctx.acnFormation; const job = await restored.recap(agent.session.id);
+      if (job === null) throw new Error('Expected replayed Recap');
+      await waitJob(restored.worker.queue, job.id);
+      expect(adapter.requests).toHaveLength(2);
+      expect(JSON.stringify(adapter.requests[1]?.messages)).toContain('Verify the bounded retry behavior.');
+      expect(JSON.stringify(adapter.requests[1]?.messages)).toContain('The service contract has been verified.');
+      expect((await restored.transcript.state(agent.session.id)).recappedThroughSeq).toBeGreaterThan(0);
+    } finally { await flow.close(); }
+  });
   it.each([{ llm: {}, expected: 32_768 }, { llm: { maxOutputTokens: 8192 }, expected: 8192 }])('passes the resolved output budget to the background model: $expected', async ({ llm, expected }) => {
     const adapter = new ScriptAdapter([textResponse('The task is complete.'), textResponse(JSON.stringify(emptyOutput()))]);
     const flow = await flowHarness(adapter, { formation: true, config: { llm, formation: { finalizeIdleMinutes: 0, finalizeOnDispose: false } } });
