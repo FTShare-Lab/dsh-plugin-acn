@@ -201,7 +201,7 @@ describe('private files and atomic primitives', () => {
     expect((await jobs.read('example-job'))?.state).toBe('queued');
     await expect(jobs.write('example-job', { schemaVersion: 2 })).rejects.toMatchObject({ kind: 'encode' });
     expect(() => ctx.paths.session('../../outside')).toThrow();
-    expect(agentHomePath('/tmp/example', 'agent-a')).toBe('/tmp/example/agents/agent-a');
+    expect(agentHomePath(root, 'agent-a')).toBe(join(root, 'agents', 'agent-a'));
     expect(ctx.paths.workerLock).toBe(join(root, 'jobs', 'worker.lock'));
   });
   it('round trips private text and missing files are empty', async () => {

@@ -1,6 +1,6 @@
 // 通过共享持久 worker 验证完整整理、审计、修复、暂停与按组恢复。
 import fs from 'node:fs/promises';
-import { join } from 'node:path';
+import { sep, join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { AcnDream } from '../../src/dream/service.js';
 import { ValidationSchema, ProgressSchema, CheckpointSchema } from '../../src/dream/schema.js';
@@ -146,7 +146,7 @@ describe('Dream through durable worker', () => {
   });
   it('unloading during prepared finishes this group, pauses further work and can resume after reload', async () => {
     const input = claims(); const f = await dreamFixture(phaseBackend(input)); const ready = deferred(); const release = deferred(); let paused = false;
-    const rename = fs.rename.bind(fs); const spy = vi.spyOn(fs, 'rename').mockImplementation(async (source, target) => { await rename(source, target); if (!paused && String(target).includes('/executions/') && String(target).endsWith('.yaml')) { paused = true; ready.resolve(); await release.promise; } });
+    const rename = fs.rename.bind(fs); const spy = vi.spyOn(fs, 'rename').mockImplementation(async (source, target) => { await rename(source, target); if (!paused && String(target).includes(`${sep}executions${sep}`) && String(target).endsWith('.yaml')) { paused = true; ready.resolve(); await release.promise; } });
     try { await f.start(); const job = await f.dream.request(); await ready.promise; const closing = f.dream.close(); release.resolve(); await closing; await until(async () => (await f.worker.queue.read(job.id))?.state === 'queued'); expect((await f.knowledge.dreamStore().records(job.id))[0]?.checkpoint.applied).toBe(true); expect((await f.knowledge.dreamStore().state()).last_success_at).toBeNull(); const reloaded = new AcnDream(f.knowledge, () => { throw new Error('Applied groups cannot rerun the model.'); }, await loadPromptRenderer()); try { await reloaded.start(); expect((await reloaded.request()).id).toBe(job.id); await waitJob(f.worker.queue, job.id); } finally { await reloaded.close(); } }
     finally { release.resolve(); spy.mockRestore(); await f.close(); }
   });

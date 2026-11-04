@@ -18,6 +18,7 @@ import { LlmAdapter } from '@deepseek-ai/dsh-llm';
 import type { LlmModelInfo, StreamChunk } from '@deepseek-ai/dsh-llm';
 import type { PatchOptions } from '@deepseek-ai/cordis-plugin-include';
 import type {} from '../../src/dsh-adapter/configuration-service.js';
+import type { ConfigurationValues } from '../../src/configuration.js';
 import { AgentIdSchema } from 'dsh-plugin-acn/protocol';
 
 class Model extends LlmAdapter {
@@ -81,6 +82,20 @@ try {
   ]) assert.equal((await service.save({ revision: saved.snapshot.revision, values })).ok, false);
   assert.deepEqual(await service.save({ revision: saved.snapshot.revision, values: { ...saved.snapshot.values, model: 'missing-model' } }), { ok: false, code: 'unavailable', fields: ['llm'] });
   assert.equal(await readFile(patch, 'utf8'), beforeInvalid);
+
+  if (process.platform === 'win32') {
+    const member = (id: string) => ({ name: '', agentId: AgentIdSchema.parse(id), enabled: true, routerEndpoint: '', maintainerEndpoint: '', keyEnv: '', timeoutMs: 15000 });
+    const invalidNames: ConfigurationValues[] = [
+      { ...saved.snapshot.values, agentId: 'con' },
+      { ...saved.snapshot.values, upstream: 'nul', upstreams: { nul: member('agent-a') } },
+      { ...saved.snapshot.values, upstream: 'coding', upstreams: { coding: member('aux') } },
+    ];
+    for (const values of invalidNames) {
+      const result = await service.save({ revision: saved.snapshot.revision, values });
+      assert.deepEqual(result, { ok: false, code: 'invalid', fields: ['windowsStorageName'] });
+      assert.equal(await readFile(patch, 'utf8'), beforeInvalid);
+    }
+  }
 
   const create = (id: string) => ctx.agents.create({ sessionId: SessionId(id), agentOptions: { provider: 'example', model: 'example-model' } });
   const memory = (agent: Agent, entry: string) => ctx.tools.execute({ name: 'memory', arguments: { ops: [{ op: 'add', target: 'memory', entry }] }, agent, callId: ToolCallId(crypto.randomUUID()), signal: new AbortController().signal });
@@ -181,6 +196,16 @@ try {
   const upgraded = { ...native.values, upstream: 'coding', upstreams: { coding: { name: '开发', agentId: AgentIdSchema.parse('agent-a'), enabled: true, routerEndpoint: '', maintainerEndpoint: '', keyEnv: '', timeoutMs: 15000 }, review: { name: '审查', agentId: AgentIdSchema.parse('agent-b'), enabled: true, routerEndpoint: '', maintainerEndpoint: '', keyEnv: '', timeoutMs: 15000 } } };
   const upgrade = await service.save({ revision: native.revision, values: upgraded }); assert.equal(upgrade.ok, true, JSON.stringify(upgrade));
   assert.ok((await readFile(join(upgraded.home, 'upstream-migration-v1.yaml'), 'utf8')).includes('external-next'));
+  // 跨平台迁移可以留下不用的旧身份；停用的配置不能阻止合法 upstream 的编辑与保存。
+  const beforeLegacy = await service.read();
+  const migrated = await service.save({ revision: beforeLegacy.revision, values: { ...beforeLegacy.values, agentId: 'con', upstreams: { ...upgraded.upstreams, retired: { ...upgraded.upstreams.review, agentId: AgentIdSchema.parse('aux'), enabled: false } } } });
+  assert.equal(migrated.ok, true, JSON.stringify(migrated));
+  if (!migrated.ok) throw new Error('Expected inactive legacy identity to remain editable.');
+  assert.equal(migrated.snapshot.dataDirectory, join(upgraded.home, 'coding', 'data', 'agents', 'agent-a'));
+  const edited = await service.save({ revision: migrated.snapshot.revision, values: { ...migrated.snapshot.values, showCompletion: false } });
+  assert.equal(edited.ok, true, JSON.stringify(edited));
+  if (!edited.ok) throw new Error('Expected valid upstream settings to save.');
+  assert.equal((await service.save({ revision: edited.snapshot.revision, values: beforeLegacy.values })).ok, true);
   const coding = await ctx.agents.create({ sessionId: SessionId('upstream-coding'), meta: { cwd: root }, agentOptions: { provider: 'example', model: 'example-model' } });
   assert.equal((await service.interact({ action: 'session', sessionId: coding.agent.session.id })).session?.key, 'coding');
   assert.equal((await memory(coding.agent, 'UPSTREAM_CODING_PRIVATE')).isError, false);

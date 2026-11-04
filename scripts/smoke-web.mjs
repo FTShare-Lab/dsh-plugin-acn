@@ -1,17 +1,17 @@
 // 在隔离项目启动真实安装包；默认复用本机模型，脚本模型用于重复故障验收。
 import assert from 'node:assert/strict';
-import { spawn, execFile } from 'node:child_process';
+import spawn from 'cross-spawn';
+import { runCommand as exec } from './run-command.mjs';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { promisify } from 'node:util';
 import { parse, stringify } from 'yaml';
 import { startMockLlmServer } from '@deepseek-ai/dsh-llm-mock-server';
 
-const exec = promisify(execFile); const repo = dirname(dirname(fileURLToPath(import.meta.url)));
+const repo = dirname(dirname(fileURLToPath(import.meta.url)));
 const root = process.env.ACN_WEB_HOME === undefined ? await fs.mkdtemp(join(tmpdir(), 'acn-web-acceptance-')) : resolve(process.env.ACN_WEB_HOME);
 const agentId = process.env.ACN_WEB_AGENT_ID ?? 'agent-a'; assert.match(agentId, /^[a-z0-9_-]+$/, 'Invalid acceptance agent ID.');
 const project = join(root, 'documents', 'deepseek-harness', 'default-workspace'); const home = join(root, 'knowledge'); const profile = 'acn-web'; const dsh = process.env.DSH_BIN ?? 'dsh';

@@ -112,6 +112,12 @@ describe('upstream settings', () => {
     fireEvent.click(await screen.findByRole('button', { name: '配置' })); fireEvent.change(screen.getByLabelText('显示名称（可选）'), { target: { value: '保留草稿' } }); fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
     await screen.findByText(zh.conflict); expect(screen.getByLabelText<HTMLInputElement>('显示名称（可选）').value).toBe('保留草稿');
   });
+  it('explains a Windows reserved name rejection and keeps the editable draft', async () => {
+    const { api } = setup(); vi.mocked(api.save).mockResolvedValueOnce({ ok: false, code: 'invalid', fields: ['windowsStorageName'] });
+    fireEvent.click(await screen.findByRole('button', { name: '配置' })); fireEvent.change(screen.getByLabelText('Agent ID'), { target: { value: 'con' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
+    await screen.findByText(/Windows 不能使用 CON/); expect(screen.getByLabelText<HTMLInputElement>('Agent ID').value).toBe('con');
+  });
   it('saves model selection only after a successful probe and ignores a cancelled late result', async () => {
     const { api } = setup(); vi.mocked(api.interact).mockResolvedValueOnce({ ok: false, message: '模型不可用。' });
     fireEvent.click(await screen.findByRole('tab', { name: '知识与模型' })); const choose = () => { fireEvent.change(screen.getByLabelText('知识处理模型'), { target: { value: JSON.stringify(['example', 'new-model']) } }); }; choose();

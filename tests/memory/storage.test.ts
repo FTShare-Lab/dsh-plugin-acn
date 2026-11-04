@@ -23,7 +23,10 @@ describe('private dual-file storage', () => {
     const result = await f.memory.apply({ ops: [add('memory', 'Use concise answers.'), add('user', 'The user studies statistics.')] });
     expect(result.no_op).toBe(false); expect(await f.memory.files.read()).toEqual({ memory: 'Use concise answers.', user: 'The user studies statistics.' });
     const paths = f.knowledge.context().paths;
-    for (const path of [paths.memory, paths.user]) expect((await fs.stat(path)).mode & 0o777).toBe(0o600);
+    for (const path of [paths.memory, paths.user]) {
+      if (process.platform === 'win32') await fs.access(path, fs.constants.R_OK | fs.constants.W_OK);
+      else expect((await fs.stat(path)).mode & 0o777).toBe(0o600);
+    }
     await expect(fs.stat(paths.memoryPending)).rejects.toMatchObject({ code: 'ENOENT' });
   });
   it.each([

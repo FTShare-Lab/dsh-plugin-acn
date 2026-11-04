@@ -1,6 +1,6 @@
 // 在真实证据和固定目标提交的原子边界暂停，由父进程强杀并交给新实例恢复。
 import fs from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { sep, dirname, join } from 'node:path';
 import { parse } from 'yaml';
 import { AgentIdSchema } from '../../../lib/protocol.js';
 import { AgentPaths, ClaimStore } from '../../../lib/store.js';
@@ -15,7 +15,7 @@ const rename = fs.rename;
 fs.rename = async (source, target) => {
   await rename(source, target); let match = false;
   if (target === evidence.path) { const manifest = parse(await fs.readFile(target, 'utf8')); const count = Object.keys(manifest.receipts).length; match = stage === 'permission' && manifest.calls === 0 || stage === 'budget' && manifest.calls === 1 && count === 0 || stage === 'receipt' && count === 1 || stage === 'evidence-completed' && manifest.completed; }
-  if (String(target).includes('/executions/') && String(target).endsWith('.yaml')) { const checkpoint = parse(await fs.readFile(target, 'utf8')); match ||= stage === 'prepared' && !checkpoint.applied && !checkpoint.groups[0].completed || stage === 'group-completed' && checkpoint.groups[0].completed && !checkpoint.applied || stage === 'applied' && checkpoint.applied; }
+  if (String(target).includes(`${sep}executions${sep}`) && String(target).endsWith('.yaml')) { const checkpoint = parse(await fs.readFile(target, 'utf8')); match ||= stage === 'prepared' && !checkpoint.applied && !checkpoint.groups[0].completed || stage === 'group-completed' && checkpoint.groups[0].completed && !checkpoint.applied || stage === 'applied' && checkpoint.applied; }
   if (dirname(target) === context.paths.claims) match ||= stage === 'first-claim';
   match ||= stage === 'pending' && target === context.paths.dreamPending || stage === 'trace' && dirname(target) === context.paths.traces || stage === 'state' && target === context.paths.dreamState;
   if (match) await pause();

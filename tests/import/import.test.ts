@@ -38,6 +38,14 @@ async function digestFiles(root: string): Promise<Record<string, string>> {
   return result;
 }
 describe('read-only import', () => {
+  it('imports a quoted native path with spaces without JSON escaping', async () => {
+    const f = await setup(); const source = await digestFiles(f.source);
+    const preview = await importCommand(f.knowledge, `--dry-run "${f.source}"`, false);
+    expect(preview.claims).toEqual(['claim_00000001']);
+    await importCommand(f.knowledge, `"${f.source}"`, false);
+    expect(await digestFiles(f.knowledge.context().paths.root)).toEqual(source);
+    expect(await digestFiles(f.source)).toEqual(source);
+  });
   it('previews without target writes, copies exact source bytes and skips all repeated IDs', async () => {
     const f = await setup(); const before = await digestFiles(f.source);
     const preview = await f.command('--dry-run'); expect(preview).toMatchObject({ dryRun: true, claims: ['claim_00000001'], traces: ['trace_00000001'], memories: ['memory', 'user'] });

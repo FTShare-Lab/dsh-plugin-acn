@@ -8,6 +8,8 @@ ACN adds knowledge and private memory to DeepSeek Harness (DSH). DSH still owns 
 
 This repository contains the TypeScript plugin, its web configuration page, model prompts and automated tests. Router and Maintainer are separately deployed ACN services; the plugin provides their clients.
 
+The same package targets macOS, Windows and Linux. macOS has local regression coverage. Windows path handling and file protection have been updated and Windows CI is configured; Windows desktop acceptance remains unverified. See the [platform scope](docs/dsh-compat.md#操作系统).
+
 ## Capabilities
 
 | Feature | What it does |

@@ -250,9 +250,9 @@ describe('upstream selection and ownership', () => {
     const profiles = upstreamsOf(raw);
     expect(profiles['team-a']?.legacyKey).toBe('TEAM-A');
     const migrated = resolveConfig(mergeConfiguration(raw, { ...configurationValues(raw), upstreams: profiles, upstream: 'personal' }));
-    expect(resolveUpstream(migrated, 'personal')?.home).toBe('/tmp/example-knowledge/personal');
+    expect(resolveUpstream(migrated, 'personal')?.home).toBe(join('/tmp/example-knowledge', 'personal'));
     expect(resolveUpstream(migrated, 'legacy')?.home).toBe('/tmp/example-knowledge');
-    expect(resolveUpstream(migrated, 'team-a')?.home).toBe('/tmp/example-knowledge/connections/TEAM-A');
+    expect(resolveUpstream(migrated, 'team-a')?.home).toBe(join('/tmp/example-knowledge', 'connections', 'TEAM-A'));
     expect(() => mergeConfiguration(migrated, { ...configurationValues(migrated), upstreams: { ...profiles, 'team-a': { ...profiles['team-a'] as NonNullable<typeof profiles['team-a']>, legacyKey: 'another' } } })).toThrow();
   });
   it('browses an unused upstream without initializing a worker or team request', async () => {

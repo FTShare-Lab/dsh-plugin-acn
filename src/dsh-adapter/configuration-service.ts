@@ -16,6 +16,7 @@ import { ConfigError, resolveConfig } from '../config.js';
 import { configurationValues, mergeConfiguration, SaveConfigurationSchema } from '../configuration.js';
 import type { ConfigurationSnapshot, ConfigurationResult, ModelChoice, SaveConfiguration } from '../configuration.js';
 import { AgentPaths, agentHomePath } from '../store/paths.js';
+import { invalidStorageName } from '../store/path-names.js';
 import { checkTeamConnection, executeInteraction } from './interaction-service.js';
 import { upstreamsOf, resolveUpstream } from '../upstreams.js';
 import { PendingUploadsSchema } from '../store/uploads.js';
@@ -161,15 +162,17 @@ export class ConfigurationService extends TypertRemoteService {
     const config = resolveConfig(raw);
     const upstreamPending: Record<string, number | null> = {};
     for (const key of Object.keys(upstreamsOf(config))) {
-      const selected = resolveUpstream(config, key, true); if (selected === undefined) continue;
-      const path = new AgentPaths(agentHomePath(selected.home, selected.agentId)).pendingUploads;
       try {
+        const selected = resolveUpstream(config, key, true); if (selected === undefined) continue;
+        const path = new AgentPaths(agentHomePath(selected.home, selected.agentId)).pendingUploads;
         const pending = await readYamlOr(path, PendingUploadsSchema, () => PendingUploadsSchema.parse({}));
         upstreamPending[key] = pending.claims.length + pending.disputes.length + (pending.consolidations?.length ?? 0) + (pending.acknowledgements?.length ?? 0);
       } catch { upstreamPending[key] = null; this.ctx.logger.warn('Could not read pending counts for an upstream; configuration remains available.'); }
     }
-    const selected = config.upstreams === undefined ? config : resolveUpstream(config, config.upstream);
-    return { revision: configurationRevision(raw), values, models, active: entry.fiber?.state === activeState, dataDirectory: selected?.agentId ? agentHomePath(selected.home, selected.agentId) : '', upstreamPending };
+    let dataDirectory = '';
+    try { const selected = config.upstreams === undefined ? config : resolveUpstream(config, config.upstream); dataDirectory = selected?.agentId ? agentHomePath(selected.home, selected.agentId) : ''; }
+    catch { this.ctx.logger.warn('Could not resolve the selected data directory; configuration remains available.'); }
+    return { revision: configurationRevision(raw), values, models, active: entry.fiber?.state === activeState, dataDirectory, upstreamPending };
   }
 
   save(request: SaveConfiguration): Promise<ConfigurationResult> {
@@ -186,8 +189,12 @@ export class ConfigurationService extends TypertRemoteService {
       if (values.upstreams === undefined && values.agentId === '') throw new ConfigError(['agentId']);
       if (values.mode === 'team' && (!values.routerEndpoint || !values.maintainerEndpoint)) throw new ConfigError(['team']);
       const previous = configurationValues(entryConfig(entry));
-      mergeConfiguration(entryConfig(entry), values);
-      await checkDirectory(agentHomePath(values.home, values.agentId || 'example'));
+      const candidate = resolveConfig(mergeConfiguration(entryConfig(entry), values));
+      const enabled = Object.entries(upstreamsOf(candidate)).filter(([, item]) => item.enabled);
+      const names = enabled.flatMap(([key, item]) => [key, item.agentId, item.legacyKey ?? '']);
+      if (names.some((name) => invalidStorageName(name))) return { ok: false, code: 'invalid', fields: ['windowsStorageName'] };
+      await checkDirectory(agentHomePath(candidate.home, 'example'));
+      for (const [key] of enabled) { const selected = resolveUpstream(candidate, key); if (selected !== undefined) await checkDirectory(agentHomePath(selected.home, selected.agentId)); }
       if (values.upstreams !== undefined && previous.upstreams === undefined && (previous.agentId !== '' || (previous.connections?.length ?? 0) > 0)) {
         const backup = join(dirname(dirname(agentHomePath(previous.home, 'example'))), 'upstream-migration-v1.yaml');
         await withFileLock(`${backup}.lock`, async () => {
@@ -200,7 +207,7 @@ export class ConfigurationService extends TypertRemoteService {
       this.checkIdle();
       this.pending += 1;
       let conflict = false;
-      const identity = (value: typeof previous) => value.agentId === '' ? '' : agentHomePath(value.home, value.agentId);
+      const identity = (value: typeof previous) => value.upstreams !== undefined || value.agentId === '' ? '' : agentHomePath(value.home, value.agentId);
       const epoch = () => Math.max(Date.now(), ...this.ctx.agents.list().map((agent) => agent.session.header.createdAt));
       try { await this.ctx.configEditor.edit(entry, (current) => {
         // 宿主获取文件锁并重读外部修改后再次检查，防止两个窗口互相覆盖。

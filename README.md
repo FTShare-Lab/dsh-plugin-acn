@@ -10,6 +10,8 @@ ACN记忆框架是 DeepSeek Harness（DSH）的知识与记忆插件。它把工
 
 DSH 继续负责 Agent 主循环、上下文压缩、会话和读写文件等默认工具。ACN 负责知识与记忆，不替换这些宿主能力。
 
+插件面向 macOS、Windows 和 Linux，使用同一安装包。macOS 已完成本机回归；Windows 路径及文件保护已补齐，并配置 Windows CI，尚未完成 Windows 桌面实机验收。平台验证范围见 [DSH 兼容边界](docs/dsh-compat.md#操作系统)。
+
 ## 从哪里开始
 
 - **第一次安装：** [带截图的使用指南](docs/user-guide.md)，从本地安装包到模型配置，再完成一次知识形成与复用。

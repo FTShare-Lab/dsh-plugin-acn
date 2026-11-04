@@ -1,7 +1,6 @@
 // 导入先验证只读源快照，再逐文件独占发布；中断后重试只补缺失文件。
 import fs from 'node:fs/promises';
 import { constants } from 'node:fs';
-import { homedir } from 'node:os';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { z } from 'zod';
 import type { AcnKnowledge } from '../knowledge/service.js';
@@ -17,6 +16,7 @@ import { MemoryFileStore } from '../store/memory.js';
 import type { MemoryTexts } from '../store/memory.js';
 import { withFileLock } from '../store/lock.js';
 import { commandWords } from './claim.js';
+import { expandHomePath } from '../store/paths.js';
 
 const MAX_FILE_BYTES = 16 * 1024 * 1024;
 interface SourceFile { path: string; text: string; stamp: string }
@@ -55,14 +55,36 @@ async function entities<T extends { id: string }>(root: string, name: string, sc
   return values;
 }
 function inside(parent: string, child: string): boolean { const path = relative(parent, child); return path === '' || (!path.startsWith(`..${sep}`) && path !== '..' && !isAbsolute(path)); }
+// 导入在 Windows 接受资源管理器路径；其他命令仍沿用原有转义语法。
+export function importWords(input: string, platform: NodeJS.Platform = process.platform): string[] {
+  if (platform !== 'win32') return commandWords(input);
+  const words: string[] = []; let offset = 0;
+  while (offset < input.length) {
+    if (/\s/u.test(input[offset] ?? '')) { offset += 1; continue; }
+    const quote = input[offset];
+    if (quote === '"' || quote === "'") {
+      const end = input.indexOf(quote, offset + 1);
+      if (end === -1 || end + 1 < input.length && !/\s/u.test(input[end + 1] ?? '')) invalid('Unclosed or invalid import path quote.');
+      let word = input.slice(offset + 1, end);
+      // 兼容 JSON.stringify 生成的路径；原生 UNC 的两个前导反斜杠必须保留。
+      if (quote === '"' && /^(?:[^\\]|\\\\)*$/.test(word) && (!word.startsWith('\\\\') || word.startsWith('\\\\\\\\'))) {
+        try { const decoded: unknown = JSON.parse(input.slice(offset, end + 1)); if (typeof decoded === 'string') word = decoded; } catch { /* 原生路径不是 JSON，按原文使用。 */ }
+      }
+      words.push(word); offset = end + 1;
+    } else {
+      const end = input.slice(offset).search(/\s/u); const length = end === -1 ? input.length - offset : end;
+      words.push(input.slice(offset, offset + length)); offset += length;
+    }
+  }
+  return words;
+}
 export async function importCommand(knowledge: AcnKnowledge, input: string, readOnly: boolean, signal?: AbortSignal): Promise<ImportReport> {
   if (readOnly) throw new KnowledgeError('ownership', 'Subagents cannot import private knowledge.');
-  const words = commandWords(input); const options = new Set(words.filter((word) => word.startsWith('--')));
+  const words = importWords(input); const options = new Set(words.filter((word) => word.startsWith('--')));
   const paths = words.filter((word) => !word.startsWith('--'));
   if (paths.length !== 1 || paths[0] === '' || [...options].some((option) => !['--dry-run', '--without-memory'].includes(option))) invalid('Usage: /acn-import [--dry-run] [--without-memory] <acn_agent_home>');
   const inputPath = paths[0] ?? '';
-  const expanded = inputPath === '~' ? homedir() : inputPath.startsWith('~/') ? join(homedir(), inputPath.slice(2)) : inputPath;
-  const source = resolve(expanded); await directory(source, true);
+  const source = resolve(expandHomePath(inputPath)); await directory(source, true);
   const context = knowledge.context(); const canonical = await fs.realpath(source);
   // 目标可能尚未创建；逐级 realpath 保留不存在的末尾，避免父目录别名绕过重叠检查。
   async function actual(path: string): Promise<string> { try { return await fs.realpath(path); } catch (error) { if (!hasCode(error, 'ENOENT')) throw error; const parent = resolve(path, '..'); if (parent === path) throw error; return join(await actual(parent), basename(path)); } }

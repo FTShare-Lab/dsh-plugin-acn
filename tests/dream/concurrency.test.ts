@@ -1,6 +1,6 @@
 // 并发提交、取消和恢复屏障使用真实锁与 I/O；模型和网络均在知识锁之外。
 import fs from 'node:fs/promises';
-import { join, dirname } from 'node:path';
+import { sep, join, dirname } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
@@ -39,7 +39,7 @@ describe('Dream concurrency and stop boundaries', () => {
   it.each(['provider', 'prepared'])('honors an independent process pause during %s and resumes the same job', async (mode) => {
     const input = claims(); const backend = phaseBackend(input); const ready = deferred(); const release = deferred(); let paused = false; let calls = 0;
     const f = await dreamFixture((...args) => { calls += 1; if (mode === 'provider' && !paused && (JSON.parse(args[2]) as { phase: string }).phase === 'review') { paused = true; ready.resolve(); return new Promise(() => {}); } return backend(...args); });
-    const rename = fs.rename.bind(fs); const spy = mode === 'prepared' ? vi.spyOn(fs, 'rename').mockImplementation(async (source, target) => { await rename(source, target); if (!paused && String(target).includes('/executions/') && String(target).endsWith('.yaml')) { paused = true; ready.resolve(); await release.promise; } }) : undefined;
+    const rename = fs.rename.bind(fs); const spy = mode === 'prepared' ? vi.spyOn(fs, 'rename').mockImplementation(async (source, target) => { await rename(source, target); if (!paused && String(target).includes(`${sep}executions${sep}`) && String(target).endsWith('.yaml')) { paused = true; ready.resolve(); await release.promise; } }) : undefined;
     try {
       await f.start(); const job = await f.dream.request(); await ready.promise;
       await promisify(execFile)(process.execPath, [fileURLToPath(new URL('./fixtures/pause.mjs', import.meta.url)), f.knowledge.context().paths.root], { timeout: 5000 }); release.resolve();

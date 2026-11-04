@@ -20,7 +20,7 @@ pnpm pack --pack-destination .artifacts
 pnpm smoke:install
 ```
 
-`ACN_REPO` 指向参考 ACN 源码仓库，版本与提交基线见[ACN 兼容边界](acn-compat.md)。这些检查需要 Rust 工具链；脚本会按需读取参考仓库的 `export_env.sh`。普通单元与集成测试使用临时目录和本地测试模型，不依赖真实模型服务。
+`ACN_REPO` 指向参考 ACN 源码仓库，版本与提交基线见[ACN 兼容边界](acn-compat.md)。`test:compat` / `test:contract` 需要 Bash 与 Rust 工具链，在 macOS / Linux 执行；脚本会按需读取参考仓库的 `export_env.sh`。普通单元与集成测试使用临时目录和本地测试模型，不依赖真实模型服务。
 
 | 检查入口 | 验证范围 |
 | --- | --- |
@@ -31,7 +31,7 @@ pnpm smoke:install
 | `pnpm check:security` | 版本控制文本中的凭据、邮箱和个人路径，以及提交元数据中的其他敏感内容；允许用户确认的 Git 身份邮箱 |
 | `pnpm check:docs` | Markdown 相对链接与标题锚点 |
 
-安装包包含运行 JS、类型声明、提示词、组合 patch、双语说明、本地化资源、图标、使用截图和许可证；不包含源码测试、依赖缓存、临时项目或运行日志。安装检查使用独立的 `DSH_HOME`，不会修改日常 profile。
+安装包包含运行 JS、类型声明、提示词、组合 patch、双语说明、本地化资源、图标、使用截图和许可证；不包含源码测试、依赖缓存、临时项目或运行日志。安装检查使用独立的 `DSH_HOME`，不会修改日常 profile。`smoke:install` 由 Node 脚本执行，可从 Windows PowerShell 或 POSIX 终端运行；Windows 的 pnpm / dsh 命令 shim 通过统一启动器调用，不要求安装 Bash。它需要可用的 `tar` 和 DSH CLI。
 
 安全扫描不识别截图文字。更新图片时应检查可见内容，使用中性示例，避免展示实际数据路径、提供商别名、邮箱或凭据。
 
@@ -44,7 +44,7 @@ export ACN_ACCEPTANCE_PROVIDER=your-provider
 pnpm smoke:web
 ```
 
-脚本默认使用 `deepseek-v4-flash-api`；可通过 `ACN_ACCEPTANCE_MODEL_ID` 选择该提供商下其他已配置模型。凭据只传给子进程，模型请求会访问所选提供商。脚本创建临时工作区、知识目录和 DSH profile，并输出网页地址；日常配置不变。停止脚本会结束其创建的服务。调试期间向该脚本进程发送 `SIGUSR1` 可只重启它创建的 DSH，保留测试服务与数据；新网页地址会再次输出。
+脚本默认使用 `deepseek-v4-flash-api`；可通过 `ACN_ACCEPTANCE_MODEL_ID` 选择该提供商下其他已配置模型。凭据只传给子进程，模型请求会访问所选提供商。脚本创建临时工作区、知识目录和 DSH profile，并输出网页地址；日常配置不变。停止脚本会结束其创建的服务。macOS / Linux 调试期间向该脚本进程发送 `SIGUSR1` 可只重启它创建的 DSH，保留测试服务与数据；新网页地址会再次输出。Windows 不支持此信号，需停止脚本后使用相同 `ACN_WEB_HOME` 重新启动。
 
 只验证安装与网页配置时使用：
 
@@ -140,7 +140,25 @@ pnpm test:contract
 
 ## CI 配置
 
-工作流定义在 `.github/workflows/ci.yml`，检查矩阵使用 Node 22 / 24。团队契约 job 需要仓库变量 `ACN_REFERENCE_REPOSITORY`，其值为参考源码仓库；私有跨仓库访问另用 `ACN_REFERENCE_TOKEN` secret。缺少参考仓库变量会明确失败，不会跳过契约检查。
+工作流使用 GitHub Actions，定义在 `.github/workflows/ci.yml`；仅推送到其他 Git 托管平台不会执行这个工作流。主检查矩阵为 Ubuntu / macOS / Windows × Node 22 / 24，覆盖类型、lint、安全、文档、全量测试、构建、打包和真实安装。测试使用四个文件进程，保留跨进程并发和强制终止恢复测试。
+
+Windows job 只在临时 runner 开启开发者模式，以执行真实符号链接 fixture；不跳过链接保护测试，也不修改用户电脑设置。本机 Windows 运行这些测试需要开发者模式或创建符号链接的权限；普通插件使用不要求创建链接。新增 `tests/platform/` 覆盖反斜杠主目录、盘符 / UNC、原生导入、保留名称和去掉 POSIX 打开标志后的 Memory 读写及链接拒绝。现有 macOS 权限断言继续保留，Windows 改为检查可读写，不把 mode 位当作 ACL 验收。
+
+团队契约单独在 Ubuntu 运行；这不代表 Windows 上直接部署 Rust 服务已被验收。Windows 本地可在 PowerShell 串行执行以下检查（先安装所需版本的 Node、pnpm、DSH CLI 和 tar）：
+
+```powershell
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm lint
+pnpm check:security
+pnpm check:docs
+pnpm test --maxWorkers=4
+pnpm build
+pnpm pack --pack-destination .artifacts
+pnpm smoke:install
+```
+
+提交前的本机验证不触发远端 CI，Windows runner 的结果应在工作流实际运行后确认。团队契约 job 需要仓库变量 `ACN_REFERENCE_REPOSITORY`，其值为参考源码仓库；私有跨仓库访问另用 `ACN_REFERENCE_TOKEN` secret。缺少参考仓库变量会明确失败，不会跳过契约检查。
 
 参考提交与 fixture 应一起维护。升级 ACN 或 DSH 后，先核对协议、事件、工具门禁、模型取消和卸载边界，再运行上述检查。测试是否通过以本次命令退出码及 CI 结果为准，不把旧报告的通过数量当作当前结论。
 

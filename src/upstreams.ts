@@ -3,12 +3,14 @@ import { join, resolve } from 'node:path';
 import { realpath } from 'node:fs/promises';
 import type { ResolvedConfig } from './config.js';
 import { resolveConfig, upstreamsOf } from './config.js';
+import { assertStorageName } from './store/path-names.js';
 
 export { upstreamsOf } from './config.js';
 
 export function resolveUpstream(config: ResolvedConfig, key: string, includeDisabled = false): ResolvedConfig | undefined {
   const profile = upstreamsOf(config)[key];
   if (profile === undefined || !profile.enabled && !includeDisabled) return undefined;
+  assertStorageName(key); if (profile.legacyKey !== undefined) assertStorageName(profile.legacyKey);
   const home = profile.legacyStorage === 'base' ? config.home : profile.legacyStorage === 'personal' ? join(config.home, 'personal') : profile.legacyStorage === 'connection' ? join(config.home, 'connections', profile.legacyKey ?? '') : join(config.home, key, 'data');
   return resolveConfig({ ...config, upstreams: undefined, upstream: '', connections: [], defaultConnection: '', sessionEpoch: 0,
     home, agentId: profile.agentId, legacyEnabled: true, team: { ...config.team, routerEndpoint: profile.routerEndpoint, maintainerEndpoint: profile.maintainerEndpoint, keyEnv: profile.keyEnv, timeoutMs: profile.timeoutMs } });

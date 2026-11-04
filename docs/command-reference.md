@@ -201,7 +201,16 @@ Dream 通过 DSH 子会话自主发现候选、按需探索、暂存、校验、
 /acn-import --without-memory "/path/to/agent-a"
 ```
 
-`~` 会在插件内展开，含空格的路径加引号；命令不会执行 Shell。预览只给出可复制数量与冲突列表，不创建目标。实际导入先完整校验源文件，再复制原始 UTF-8 字节；Claim holder 与 Trace agent 必须等于当前 `agentId`，不改归属。私有文件没有独立 holder；仅含私有文件的源目录必须以当前 `agentId` 命名。单文件上限 16 MiB，不接受符号链接、硬链接、目录伪装、非法 YAML、ID 与文件名不一致或重叠源/目标。
+`~` 会在插件内展开，含空格的路径加引号；命令不会执行 Shell。Windows 可以直接粘贴原生路径，反斜杠会保留，也接受既有 JSON 转义路径。例如：
+
+```text
+/acn-import --dry-run "D:\ACN data\example\data\agents\agent-a"
+/acn-import "D:\ACN data\example\data\agents\agent-a"
+```
+
+Windows 上的 `~\` 和 UNC 路径也可解析；网络共享的存储可靠性尚未验证。macOS / Linux 继续使用原有命令转义规则。
+
+预览只给出可复制数量与冲突列表，不创建目标。实际导入先完整校验源文件，再复制原始 UTF-8 字节；Claim holder 与 Trace agent 必须等于当前 `agentId`，不改归属。私有文件没有独立 holder；仅含私有文件的源目录必须以当前 `agentId` 命名。单文件上限 16 MiB，不接受符号链接、硬链接、目录伪装、非法 YAML、ID 与文件名不一致或重叠源/目标。
 
 现有目标一律保留，包含同 ID 的不同正文和空的私有文件；输出逐项列出跳过内容。私有文件遵守当前安全扫描和字符容量，超限时先调整配置或用 `--without-memory`；不会截断。`memory.enabled=false` 时跳过双文件。导入后的 Memory 对新会话生效，旧会话仍用冻结快照。
 

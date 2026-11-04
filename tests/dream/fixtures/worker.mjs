@@ -1,6 +1,6 @@
 // 在真实原子提交边界暂停，交由父进程 SIGKILL；恢复进程不得重放模型。
 import fs from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { sep, dirname, join } from 'node:path';
 import { parse } from 'yaml';
 import { AgentIdSchema } from '../../../lib/protocol.js';
 import { AgentPaths, ClaimStore, UploadStore } from '../../../lib/store.js';
@@ -38,7 +38,7 @@ fs.rename = async (source, target) => {
     match ||= stage === 'final-trace' && dirname(target) === context.paths.traces;
     if (target === context.paths.dreamFinal(jobId)) { const cp = CheckpointSchema.parse(parse(await fs.readFile(target, 'utf8'))); match ||= stage === 'final-prepared' && !cp.applied || stage === 'final-applied' && cp.applied; }
   }
-  if (stage.startsWith('sync-') && String(target).includes('/sync_reviews/')) { const record = parse(await fs.readFile(target, 'utf8')); match ||= stage === 'sync-prepared' && !record.applied || stage === 'sync-applied' && record.applied; }
+  if (stage.startsWith('sync-') && String(target).includes(`${sep}sync_reviews${sep}`)) { const record = parse(await fs.readFile(target, 'utf8')); match ||= stage === 'sync-prepared' && !record.applied || stage === 'sync-applied' && record.applied; }
   if (stage === 'sync-upload' && target === context.paths.pendingUploads && finalizing) match = true;
   if (match) await pause();
 };

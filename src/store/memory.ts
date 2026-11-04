@@ -20,11 +20,20 @@ export class MemoryFileStore {
   constructor(readonly context: StoreContext) {}
   private async readText(path: string): Promise<string> {
     let file;
-    try { file = await fs.open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); }
+    let entry;
+    try {
+      entry = await fs.lstat(path);
+      if (!entry.isFile() || entry.isSymbolicLink() || entry.nlink !== 1) throw new StoreError('conflict', 'Private Memory must be a single-link regular file.');
+      // Windows 不提供 NOFOLLOW/NONBLOCK，显式校验不能依赖打开标志。
+      file = await fs.open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+    }
     catch (error) { if (hasCode(error, 'ENOENT')) return ''; throw error; }
     try {
-      const info = await file.stat(); if (!info.isFile() || info.nlink !== 1) throw new StoreError('conflict', 'Private Memory must be a single-link regular file.');
-      try { return new TextDecoder('utf-8', { fatal: true }).decode(await file.readFile()); }
+      const info = await file.stat();
+      if (!info.isFile() || info.nlink !== 1 || info.dev !== entry.dev || info.ino !== entry.ino) throw new StoreError('conflict', 'Private Memory changed while opening.');
+      const bytes = await file.readFile(); const after = await file.stat(); const current = await fs.lstat(path);
+      if (!current.isFile() || current.isSymbolicLink() || current.nlink !== 1 || after.nlink !== 1 || current.dev !== info.dev || current.ino !== info.ino || after.size !== info.size || after.mtimeMs !== info.mtimeMs || after.ctimeMs !== info.ctimeMs) throw new StoreError('conflict', 'Private Memory changed while reading.');
+      try { return new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
       catch (error) { if (error instanceof TypeError) throw new StoreError('decode', 'Private Memory is not valid UTF-8.'); throw error; }
     } finally { await file.close(); }
   }

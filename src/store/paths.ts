@@ -2,10 +2,15 @@
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { AgentIdSchema, ClaimIdSchema, DisputeIdSchema, InboxIdSchema, TraceIdSchema } from '../protocol/ids.js';
+import { assertStorageName } from './path-names.js';
+
+export function expandHomePath(home: string): string {
+  return home === '~' ? homedir() : /^~[/\\]/.test(home) ? join(homedir(), home.slice(2)) : home;
+}
 
 export function agentHomePath(home: string, agentId: string): string {
-  const expanded = home === '~' ? homedir() : home.startsWith('~/') ? join(homedir(), home.slice(2)) : home;
-  return join(resolve(expanded), 'agents', AgentIdSchema.parse(agentId));
+  const id = AgentIdSchema.parse(agentId); assertStorageName(id);
+  return join(resolve(expandHomePath(home)), 'agents', id);
 }
 export function safeKey(value: string): string {
   if (!/^[a-zA-Z0-9_-]+$/.test(value)) throw new Error('Invalid local document identifier.');
