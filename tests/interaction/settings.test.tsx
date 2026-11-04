@@ -23,7 +23,8 @@ describe('upstream settings', () => {
   it('deduplicates the default selector label and knowledge identity selector', async () => {
     const current = { ...snapshot, values: configurationValues({ upstream: 'agent-a', upstreams: { 'agent-a': { name: '', agentId: 'agent-a' } } }) };
     const { api } = setup(current);
-    const selector = await screen.findByRole('combobox', { name: '全局默认配置' });
+    fireEvent.click(await screen.findByRole('tab', { name: '偏好' }));
+    const selector = await screen.findByRole('combobox', { name: '默认工作配置' });
     expect(selector.querySelector('option[value="agent-a"]')?.textContent).toBe('agent-a');
     cleanup(); render(<KnowledgePanel api={api} initialKey="agent-a" c={c} />);
     await waitFor(() => { expect(screen.getByRole('combobox', { name: '知识身份' }).querySelector('option[value="agent-a"]')?.textContent).toBe('agent-a'); });
@@ -96,7 +97,7 @@ describe('upstream settings', () => {
   it('keeps a draft while changing tabs and discards it only on explicit reload', async () => {
     const { api } = setup(); fireEvent.click(await screen.findByRole('button', { name: '配置' }));
     fireEvent.change(screen.getByLabelText('Agent ID'), { target: { value: 'draft-agent' } });
-    fireEvent.click(screen.getByRole('tab', { name: '知识与模型' })); fireEvent.click(screen.getByRole('switch', { name: '显示知识处理结果' }));
+    fireEvent.click(screen.getByRole('tab', { name: '偏好' })); fireEvent.click(screen.getByRole('switch', { name: '显示知识处理结果' }));
     await waitFor(() => { expect(api.save).toHaveBeenCalled(); }); expect(vi.mocked(api.save).mock.calls[0]?.[0].values.upstreams?.['coding']?.agentId).toBe('agent-a');
     fireEvent.click(screen.getByRole('tab', { name: '工作配置' })); expect(screen.getByLabelText<HTMLInputElement>('Agent ID').value).toBe('draft-agent');
     fireEvent.click(screen.getByRole('button', { name: zh.reload })); await screen.findByText('已重新加载，未保存的修改已丢弃。');
@@ -135,7 +136,7 @@ it.each(['inbox', 'dream', 'recap', 'finalize', 'memory_review'] as const)('show
   const interact = vi.fn<InteractionApi['interact']>().mockResolvedValue({ ok: true, message: '', knowledge: { key: 'personal', name: '示例配置', items: [], omitted: 0, activities: [{ id: 'failed-model-job', kind, state: 'failed', attempts: 1, updatedAt: 1, unseen: true, summary: '', error }], pendingClaims: 0, pendingDisputes: 0 } });
   const api: InteractionApi = { read: vi.fn().mockResolvedValue(snapshot), save: vi.fn(), interact };
   render(<KnowledgePanel api={api} initialKey="personal" initialTab="activity" c={c} />);
-  fireEvent.click(await screen.findByText(`${kind} · 处理失败`, { exact: false, selector: 'summary' }));
+  fireEvent.click(await screen.findByLabelText(`${kind} · 处理失败`, { exact: false, selector: 'summary' }));
   expect(screen.getByRole('alert').textContent).toBe(error);
   fireEvent.click(screen.getByRole('button', { name: '重试任务' }));
   await waitFor(() => { expect(interact).toHaveBeenCalledWith({ action: 'retry', key: 'personal', id: 'failed-model-job' }, expect.any(AbortSignal)); });

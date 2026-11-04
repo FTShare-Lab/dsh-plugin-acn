@@ -10,6 +10,9 @@ import type { JobKind } from './worker/types.js';
 import type { Activity } from './interaction.js';
 import { z } from 'zod';
 import { ClaimIdSchema } from './protocol/ids.js';
+import fs from 'node:fs/promises';
+import { join } from 'node:path';
+import { hasCode } from './store/errors.js';
 
 const Incomplete = z.object({ groupId: z.string(), claimIds: z.array(ClaimIdSchema), reason: z.string() });
 const labels: Record<string, string> = { claimCount: '更新 Claim', disputeCount: '形成争议', traceCount: '形成来源', applied: '更新 Claim', handled: '处理收件', uploadedClaims: '已投递 Claim', reportedDisputes: '已上报争议', modelSteps: '探索请求', wrapUpSteps: '收尾请求' };
@@ -38,6 +41,16 @@ export async function allActivities(knowledge: AcnKnowledge, supports: (kind: Jo
   const jobs = await new JobQueue(context).list();
   const rows: Activity[] = await Promise.all(jobs.map(async (job) => {
     const details = activityDetails(job.result);
+    let reportPath: string | undefined; let phase: Activity['phase'];
+    if (job.kind === 'dream') {
+      const progress = await knowledge.dreamStore().progress(job.id);
+      if (progress !== null) {
+        phase = progress.finished ? 'finished' : progress.autonomy?.wrap_up === undefined ? 'exploration' : 'wrap_up';
+        if (progress.autonomy !== undefined) { details.counts['modelSteps'] = progress.autonomy.steps; details.counts['wrapUpSteps'] = progress.autonomy.wrap_up?.steps ?? 0; }
+      }
+      const path = join(context.paths.dreamJob(job.id), 'report.md');
+      try { if ((await fs.lstat(path)).isFile()) reportPath = path; } catch (error) { if (!hasCode(error, 'ENOENT')) throw error; }
+    }
     const inactive = job.state === 'queued' && !supports(job.kind);
     if (job.kind === 'dream' && job.state === 'succeeded' && details.incompleteCandidates.length === 0) {
       const progress = await knowledge.dreamStore().progress(job.id);
@@ -46,6 +59,7 @@ export async function allActivities(knowledge: AcnKnowledge, supports: (kind: Jo
     return { id: job.id, kind: job.kind, state: inactive || job.payload['paused'] === true ? 'paused' : job.state, attempts: job.attempts, updatedAt: job.updatedAt,
       unseen: !(job.kind === 'inbox' && job.state === 'succeeded' && emptyInbox(job.result)) && presentation !== null && job.updatedAt >= presentation.baselineAt && presentation.seen[job.id] !== job.updatedAt,
       ...(job.sessionId === undefined ? {} : { sessionId: job.sessionId }), ...details,
+      ...(reportPath === undefined ? {} : { reportPath }), ...(phase === undefined ? {} : { phase }),
       requiresAttention: inactive || job.state === 'failed' || job.payload['paused'] === true || details.warnings.length > 0 || details.incompleteCandidates.length > 0,
       ...(inactive ? { error: '对应后台组件未启用，请在插件管理中启用后等待任务继续。', errorInfo: { code: 'task.handler_inactive' } } : job.lastError === undefined ? {} : { error: job.lastError, errorInfo: messageInfo(job.lastError, job.lastErrorKind) }),
     };
@@ -72,9 +86,9 @@ export async function allActivities(knowledge: AcnKnowledge, supports: (kind: Jo
   }
   return rows.sort((left, right) => right.updatedAt - left.updatedAt || left.id.localeCompare(right.id));
 }
-export interface ActivityPage { attentionOnly?: boolean; sourceSession?: string; offset?: number }
+export interface ActivityPage { attentionOnly?: boolean; sourceSession?: string; kind?: string; state?: string; offset?: number }
 export function activityPage(rows: Activity[], options: ActivityPage = {}) {
-  const matching = rows.filter((row) => (!options.attentionOnly || (row.requiresAttention ?? (row.state === 'failed' || row.state === 'paused'))) && (!options.sourceSession || row.sessionId === options.sourceSession));
+  const matching = rows.filter((row) => (!options.attentionOnly || (row.requiresAttention ?? (row.state === 'failed' || row.state === 'paused'))) && (!options.sourceSession || row.sessionId === options.sourceSession) && (!options.kind || row.kind === options.kind) && (!options.state || row.state === options.state));
   const offset = options.offset ?? 0;
   return { activities: matching.slice(offset, offset + 30), activitiesOmitted: Math.max(0, matching.length - offset - 30) };
 }

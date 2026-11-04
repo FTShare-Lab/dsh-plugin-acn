@@ -1,6 +1,6 @@
 // 导入先验证只读源快照，再逐文件独占发布；中断后重试只补缺失文件。
 import fs from 'node:fs/promises';
-import { constants } from 'node:fs';
+import { openSingleFile } from '../store/regular-file.js';
 import { homedir } from 'node:os';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { z } from 'zod';
@@ -28,7 +28,7 @@ async function directory(path: string, required = false): Promise<boolean> {
   catch (error) { if (!required && hasCode(error, 'ENOENT')) return false; throw error; }
 }
 async function readSource(path: string): Promise<SourceFile> {
-  const file = await fs.open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  const file = await openSingleFile(path, () => new KnowledgeError('validation', 'Import accepts single-link regular UTF-8 files without symbolic links.'));
   try {
     const before = await file.stat();
     if (!before.isFile() || before.nlink !== 1 || before.size > MAX_FILE_BYTES) invalid('Import accepts single-link regular UTF-8 files up to 16 MiB.');

@@ -26,7 +26,7 @@ Claim 可引用、结构合法、能够恢复，不等于结论完整或正确�
 
 知识复用依赖 Agent 主动检索和判断。本项目没有提供系统性的自动召回率、事实正确率或节省工时指标。测试与模型自评不能取代对当前代码、证据和业务约定的核对。
 
-部分工具参数错误只返回通用校验失败；例如 Claim 更新需要 `expected_revision`，不能写成 `revision`。排查时应对照[工具参数](command-reference.md)，不要反复提交相同的无效输入。
+工具参数错误返回字段位置和类型、范围或动作规则，不回显输入正文；例如 Claim 更新需要 `expected_revision`，不能写成 `revision`。完整字段见[工具参数](command-reference.md)。
 
 ## Dream 整理与查证
 

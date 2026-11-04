@@ -65,3 +65,21 @@ jobs:
       - run: pnpm test:contract
         env:
           ACN_REPO: ${{ github.workspace }}/.artifacts/acn-reference
+  windows:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm build
+      - run: pnpm exec vitest run tests/unit tests/configuration/advanced.test.ts tests/interaction tests/import tests/dream/evidence-permissions.test.ts tests/memory/operations.test.ts tests/memory/storage.test.ts tests/memory/permissions.test.ts tests/store/regular-file.test.ts --maxWorkers=4
+      - run: npm install --global @deepseek-ai/dsh@0.2.1-rc.5
+      - run: pnpm smoke:install

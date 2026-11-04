@@ -20,7 +20,7 @@ pnpm pack --pack-destination .artifacts
 pnpm smoke:install
 ```
 
-`ACN_REPO` 指向参考 ACN 源码仓库，版本与提交基线见[ACN 兼容边界](acn-compat.md)。这些检查需要 Rust 工具链；脚本会按需读取参考仓库的 `export_env.sh`。普通单元与集成测试使用临时目录和本地测试模型，不依赖真实模型服务。
+`ACN_REPO` 指向参考 ACN 源码仓库，版本与提交基线见[ACN 兼容边界](acn-compat.md)。这些检查需要 Rust 工具链；脚本会按需读取参考仓库的 `export_env.sh`。普通单元与集成测试使用临时目录和本地测试模型，不依赖真实模型服务。安装检查使用跨平台 Node 脚本，不要求 Windows 用户安装 Bash；`DSH_BIN` 可指向桌面附带的 CLI 或安装包的 `lib/bin.js`。Windows CI 单独覆盖 Node 22 / 24 的存储、交互与实际安装；Linux CI 用于开发与参考服务契约，不声明支持 Linux 桌面。
 
 | 检查入口 | 验证范围 |
 | --- | --- |

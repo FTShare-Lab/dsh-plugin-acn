@@ -1,5 +1,6 @@
 // Router 查询是可降级的只读领域工具；只记录实际返回正文的候选 ID。
 import { z } from 'zod';
+import { validationMessage } from './validation.js';
 import type { AcnKnowledge } from '../knowledge/service.js';
 import { SessionStateStore } from '../store/session-state.js';
 import { TeamError } from '../team/errors.js';
@@ -11,7 +12,7 @@ export const ConsultRouterArgsSchema = z.discriminatedUnion('mode', [
 ]);
 export async function executeConsultRouter(knowledge: AcnKnowledge, args: unknown, sessionId: string, signal?: AbortSignal): Promise<unknown> {
   const parsed = ConsultRouterArgsSchema.safeParse(args);
-  if (!parsed.success) return { error: { kind: 'validation', message: 'consult_router requires overview without query fields, or query with a non-empty scope.' } };
+  if (!parsed.success) return { error: { kind: 'validation', message: validationMessage(parsed.error) } };
   const team = knowledge.team;
   if (team === null) return { error: { kind: 'unconfigured', message: 'Team router is not configured.' } };
   try {

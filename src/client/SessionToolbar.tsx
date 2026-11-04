@@ -153,7 +153,7 @@ function SessionControls({ api, c, block, openSettings, openKnowledge, sessionId
         <hr className="acn-separator" />
       </>}
       {view?.configurationChanged && !view.locked && <MenuItem icon="sync" disabled={busy || running || syncing} onClick={() => { choose({ action: 'select', sessionId, key: view.key }); }}>{c('按已保存配置启动', 'Start with saved configuration')}</MenuItem>}
-      {configured && <MenuItem icon="book" onClick={() => { finishMenu(() => { openKnowledge(view?.key ?? 'personal'); }); }}>{c('知识与活动', 'Knowledge and activity')}{pending > 0 && <small>{pending} {c('项待处理', 'need attention')}</small>}</MenuItem>}
+      {configured && <MenuItem icon="book" onClick={() => { finishMenu(() => { openKnowledge(view?.key ?? 'personal', pending > 0); }); }}>{c('知识与活动', 'Knowledge and activity')}{pending > 0 && <small>{pending} {c('项待处理', 'need attention')}</small>}</MenuItem>}
       {configured && view?.available && <MenuItem icon="recap" disabled={busy || running || syncing || view.needsPreparation} onClick={() => { choose({ action: 'recap', sessionId }); }}>{c('复盘本次会话', 'Recap session')}</MenuItem>}
       {team && view?.available && !syncing && <MenuItem icon="sync" disabled={busy || running} onClick={() => { choose({ action: 'sync', sessionId }); }}>{view.phase === 'failed' ? c('重试同步', 'Retry sync') : c('同步收件', 'Sync Inbox')}</MenuItem>}
       {!configured && !team && !loadError && view && <p>{c('在插件设置中新建工作配置，填写 Agent ID 后即可使用。', 'Create a work configuration with an Agent ID in ACN settings.')}</p>}

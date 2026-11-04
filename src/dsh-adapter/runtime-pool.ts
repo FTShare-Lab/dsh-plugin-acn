@@ -202,9 +202,12 @@ export class RuntimePool {
     const config = this.config(key);
     if (config === undefined || config.agentId === '') throw new JobError('connection', '请先配置可用身份和团队连接。');
     const attached = this.attached.get(header.id); const previous = attached === undefined ? undefined : this.ready.get(attached);
-    if (previous !== undefined) { previous.formation.disposed(header.id); previous.memories.forget(header.id); await previous.catalog.forget(header.id); this.attached.delete(header.id); }
+    if (previous !== undefined) await previous.catalog.flush(header.id);
+    // 等待旧目录落盘时首轮可能已开始；检查到持久化改绑必须在同一同步片段完成。
+    if (this.selectionLocked(header)) throw new JobError('bound', '会话开始后不能切换知识归属，请新建会话。');
     const session = this.ctx.sessions.get(header.id);
     if (session === undefined) throw new JobError('session', '会话已关闭，请重新打开。');
+    if (previous !== undefined) { previous.formation.disposed(header.id); previous.memories.forget(header.id); previous.catalog.clear(header.id); this.attached.delete(header.id); }
     // 先持久化归属再访问知识；收件失败只降级本地工作，不改绑其他配置。
     appendPluginRecord(session, 'plugin:acn/team-selection', { schemaVersion: 1, key, identity: identityOf(config), prepared: config.team.routerEndpoint === '' });
     rememberConfiguration(header, config); this.prefer(header); this.instructions.delete(header.id);

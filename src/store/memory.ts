@@ -1,6 +1,6 @@
 // 双文件锁内发布固定目标；先记日志，恢复识别精确 before/after 并保留外部第三版本。
 import fs from 'node:fs/promises';
-import { constants } from 'node:fs';
+import { openSingleFile } from './regular-file.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { StoreContext } from './context.js';
@@ -20,11 +20,15 @@ export class MemoryFileStore {
   constructor(readonly context: StoreContext) {}
   private async readText(path: string): Promise<string> {
     let file;
-    try { file = await fs.open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); }
+    try { file = await openSingleFile(path, () => new StoreError('conflict', 'Private Memory must be a single-link regular file.')); }
     catch (error) { if (hasCode(error, 'ENOENT')) return ''; throw error; }
     try {
       const info = await file.stat(); if (!info.isFile() || info.nlink !== 1) throw new StoreError('conflict', 'Private Memory must be a single-link regular file.');
-      try { return new TextDecoder('utf-8', { fatal: true }).decode(await file.readFile()); }
+      try {
+        const bytes = await file.readFile(); const current = await fs.lstat(path); const after = await file.stat();
+        if (current.isSymbolicLink() || current.dev !== info.dev || current.ino !== info.ino || after.nlink !== 1 || after.size !== info.size || after.mtimeMs !== info.mtimeMs || after.ctimeMs !== info.ctimeMs) throw new StoreError('conflict', 'Private Memory changed while reading.');
+        return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+      }
       catch (error) { if (error instanceof TypeError) throw new StoreError('decode', 'Private Memory is not valid UTF-8.'); throw error; }
     } finally { await file.close(); }
   }

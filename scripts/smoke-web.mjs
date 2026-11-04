@@ -1,5 +1,6 @@
 // 在隔离项目启动真实安装包；默认复用本机模型，脚本模型用于重复故障验收。
 import assert from 'node:assert/strict';
+import { cliCommand } from './cli-command.mjs';
 import { spawn, execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -84,8 +85,8 @@ const server = createServer((req, res) => {
   })().catch((error) => { process.stderr.write(`Local acceptance backend: ${error instanceof Error ? error.message : 'request failed'}\n`); res.statusCode = 500; res.end('{}'); });
 });
 await new Promise((done) => { server.listen(0, '127.0.0.1', done); }); const address = server.address(); assert.ok(address && typeof address === 'object');
-const run = async (args, cwd = project) => exec(dsh, args, { cwd, env, maxBuffer: 8_000_000 });
-await exec('pnpm', ['pack', '--pack-destination', join(root, 'package')], { cwd: repo, maxBuffer: 8_000_000 });
+const run = async (args, cwd = project) => exec(...await cliCommand(dsh, args), { cwd, env, maxBuffer: 8_000_000 });
+await exec(...await cliCommand('pnpm', ['pack', '--pack-destination', join(root, 'package')]), { cwd: repo, maxBuffer: 8_000_000 });
 // from-default-profile 会重建已有 profile；重启验收必须保留用户通过网页保存的配置。
 try { await fs.access(join(env.DSH_HOME, 'profiles', profile, 'package.json')); }
 catch (error) {
@@ -113,14 +114,15 @@ const patch = join(root, 'acceptance.yml'); await fs.writeFile(patch, stringify(
 await fs.writeFile(join(root, 'profile.txt'), browserInstall ? 'Fresh profile awaiting browser installation and configuration. Credentials remain in the helper process environment.\n' : 'Fresh profile installed from the packed plugin. Credentials remain in the helper process environment.\n');
 const log = await fs.open(join(root, 'web.log'), 'a', 0o600); let announced = false; let restarting = false; let closing = false;
 function startRuntime() {
-  const runtime = spawn(dsh, ['--profile', profile, '--patch', patch, '--no-open', '--port', '0'], { cwd: project, env, stdio: ['ignore', 'pipe', 'pipe'] });
+  const runtime = spawn(dshLaunch[0], [...dshLaunch[1], '--profile', profile, '--patch', patch, '--no-open', '--port', '0'], { cwd: project, env, stdio: ['ignore', 'pipe', 'pipe'] });
   for (const stream of [runtime.stdout, runtime.stderr]) stream.on('data', (chunk) => { void log.write(chunk); const match = chunk.toString().match(/https?:\/\/(?:127\.0\.0\.1|localhost):\d+[^\s]*/); if (match && !announced) { announced = true; process.stdout.write(JSON.stringify({ root, project, url: match[0], model_inspection: `http://127.0.0.1:${address.port}/acceptance` }) + '\n'); } });
   runtime.once('exit', (code) => { if (!closing && !restarting) { process.stderr.write(`Web runtime exited ${code}; inspect ${join(root, 'web.log')}\n`); void close(); } });
   return runtime;
 }
+const dshLaunch = await cliCommand(dsh);
 let child = startRuntime();
 // 更新安装包后只重启验收宿主，保留环境凭据、团队服务、知识和会话，便于验证恢复。
-process.on('SIGUSR1', () => {
+if (process.platform !== 'win32') process.on('SIGUSR1', () => {
   if (closing || restarting) return;
   restarting = true;
   void (async () => {

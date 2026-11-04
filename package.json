@@ -240,7 +240,7 @@
     "test": "vitest run",
     "test:compat": "bash scripts/check-acn-compat.sh",
     "check:security": "node scripts/check-security.mjs",
-    "smoke:install": "bash scripts/smoke-install.sh",
+    "smoke:install": "node scripts/smoke-install.mjs",
     "fixtures:export": "bash scripts/export-acn-fixtures.sh",
     "prepack": "pnpm run build",
     "test:contract": "bash scripts/contract-up.sh",

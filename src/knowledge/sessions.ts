@@ -92,5 +92,7 @@ export class KnowledgeSessions {
     if (id !== undefined) await this.writes.get(id);
     else await Promise.all(this.writes.values());
   }
-  async forget(id: string): Promise<void> { await this.flush(id); this.states.delete(id); this.writes.delete(id); }
+  // 调用方在 flush 后可同步释放缓存，使归属检查与改绑之间没有异步间隙。
+  clear(id: string): void { this.states.delete(id); this.writes.delete(id); }
+  async forget(id: string): Promise<void> { await this.flush(id); this.clear(id); }
 }

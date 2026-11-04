@@ -61,9 +61,9 @@ function registerPage(ctx: Context): void {
     const [key, setKey] = useState<string>();
     const previous = useRef<HTMLElement | null>(null); const back = useRef<HTMLButtonElement>(null);
     useEffect(() => { if (key !== undefined) back.current?.focus(); else if (previous.current?.isConnected) previous.current.focus({ preventScroll: true }); }, [key]);
-    return <><div hidden={key !== undefined}><TeamSettingsPage initialTab={initialTab} api={api} t={t} openPlugins={ctx.get('pluginNavigation') === undefined ? undefined : () => { close?.(); ctx.get('pluginNavigation')?.openBundle('dsh-plugin-acn'); }} openKnowledge={(value) => { previous.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setKey(value); }} /></div>{key !== undefined && <>
-      <button ref={back} type="button" className="acn-tab" onClick={() => { setKey(undefined); }}>{c('‹ 返回 ACN 插件设置', '‹ Back to ACN settings')}</button>
-      <KnowledgePanel api={api} initialKey={key} c={c} openSettings={() => { setKey(undefined); }} openSource={(id) => { openSource(id, close); }} />
+    return <><div hidden={key !== undefined}><TeamSettingsPage initialTab={initialTab} api={api} t={t} openPlugins={close === undefined || ctx.get('pluginNavigation') === undefined ? undefined : () => { close(); ctx.get('pluginNavigation')?.openBundle('dsh-plugin-acn'); }} openKnowledge={(value) => { previous.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setKey(value); }} /></div>{key !== undefined && <>
+      <div className="acn-backbar"><button ref={back} type="button" className="acn-back-link" onClick={() => { setKey(undefined); }}><span aria-hidden="true">←</span>{c('返回 ACN 插件设置', 'Back to ACN settings')}</button></div>
+      <KnowledgePanel api={api} initialKey={key} showHeading c={c} openSettings={() => { setKey(undefined); }} openSource={(id) => { openSource(id, close); }} />
     </>}</>;
   }
   ctx.effect(() => ctx.slots.inject('plugins.bundle.config', () => ctx.slots.register({

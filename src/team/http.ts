@@ -5,10 +5,17 @@ import type { z } from 'zod';
 import type { ResolvedConfig } from '../config.js';
 import type { AgentId } from '../protocol/ids.js';
 import { TeamError } from './errors.js';
+import type { ConnectionFailure } from './errors.js';
 import { abortable } from '../llm/structured.js';
 
 export type CredentialResolver = (reference: string) => Promise<string | undefined>;
 const environmentCredential: CredentialResolver = (reference) => Promise.resolve(process.env[reference]);
+function connectionFailure(error: unknown, timedOut: boolean): ConnectionFailure {
+  if (timedOut) return 'timeout';
+  const cause = error instanceof Error && error.cause instanceof Error ? error.cause : error;
+  const code = cause !== null && typeof cause === 'object' && 'code' in cause ? cause.code : undefined;
+  return code === 'ENOTFOUND' || code === 'EAI_AGAIN' ? 'dns' : code === 'ECONNREFUSED' || code === 'ENETUNREACH' || code === 'EHOSTUNREACH' ? 'unreachable' : 'network';
+}
 
 export function bypassProxy(endpoint: string): boolean {
   return ['localhost', '127.0.0.1', '::1', '[::1]'].includes(new URL(endpoint).hostname.toLowerCase());
@@ -58,13 +65,17 @@ export class TeamHttp {
           : status === 408 || status === 429 || status >= 500 ? 'retryable' : 'client';
         failure = new TeamError(kind, this.service, operation, status);
       } catch (error) {
+        if (signal?.aborted && signal.reason instanceof Error && signal.reason.name === 'TimeoutError') throw new TeamError('retryable', this.service, operation, undefined, 'timeout');
         if (signal?.aborted || this.stop.signal.aborted) throw new TeamError('cancelled', this.service, operation);
-        failure = error instanceof TeamError ? error : new TeamError('retryable', this.service, operation);
+        failure = error instanceof TeamError ? error : new TeamError('retryable', this.service, operation, undefined, connectionFailure(error, timeout.aborted));
       }
       if (failure.kind !== 'retryable' || attempt >= this.config.retryCount) throw failure;
       const backoff = Math.min(this.config.retryMaxDelayMs, this.config.retryBaseDelayMs * 2 ** Math.min(attempt, 16));
       try { await delay(Math.max(1, Math.min(this.config.retryMaxDelayMs, Math.round(backoff * (0.8 + Math.random() * 0.4)))), undefined, { signal: AbortSignal.any([this.stop.signal, ...signal === undefined ? [] : [signal]]) }); }
-      catch { throw new TeamError('cancelled', this.service, operation); }
+      catch {
+        if (signal?.aborted && signal.reason instanceof Error && signal.reason.name === 'TimeoutError') throw new TeamError('retryable', this.service, operation, undefined, 'timeout');
+        throw new TeamError('cancelled', this.service, operation);
+      }
     }
   }
   async close(): Promise<void> { this.stop.abort(); await this.dispatcher.destroy(); }

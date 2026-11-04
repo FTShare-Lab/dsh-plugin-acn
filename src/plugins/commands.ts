@@ -5,6 +5,7 @@ import type {} from '../dsh-adapter/configuration-service.js';
 import type { Context } from '@deepseek-ai/cordis';
 import type {} from '@deepseek-ai/dsh-commands';
 import { z } from 'zod';
+import { join } from 'node:path';
 import { claimCommand, commandDomainError } from '../commands/claim.js';
 import { commandMessage } from '../interaction-messages.js';
 import { statusCommand } from '../commands/status.js';
@@ -63,7 +64,7 @@ export function apply(ctx: Context): void {
       if (service === undefined) return { kind: 'error', text: 'Dream 组件未启用。' };
       if (rawInput.trim() === 'stop') return { kind: 'success', text: `已请求停止 ${await service.stop()} 个 Dream 任务；正在提交的组会完成，草稿和进度保留。再次 /dream 或重启可继续。` };
       if (rawInput.trim() !== '') return { kind: 'error', text: '用法：/dream [stop]' };
-      try { const job = await service.request(agent.session.header.cwd, agent.session.id); return { kind: 'success', text: `Dream 任务 ${job.id}；使用 /acn-status 查看状态，报告位于 dream/${job.id}/report.md。` }; }
+      try { const job = await service.request(agent.session.header.cwd, agent.session.id); return { kind: 'success', text: `Dream 任务 ${job.id}；使用 /acn-status 查看状态，报告生成后可在「知识与活动 → 处理活动」查看并复制路径：${join((await pool.knowledge(agent.session.header)).context().paths.dreamJob(job.id), 'report.md')}。` }; }
       catch (error) { if (error instanceof JobError) return { kind: 'error', text: commandMessage(error.message, error.kind) }; throw error; }
     } });
   });

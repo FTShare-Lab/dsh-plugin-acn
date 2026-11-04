@@ -1,7 +1,8 @@
 // 团队错误只公开操作、分类和状态码；不携带请求、响应正文或底层网络错误。
 export type TeamErrorKind = 'auth' | 'client' | 'legacy_route' | 'retryable' | 'protocol' | 'cancelled';
+export type ConnectionFailure = 'timeout' | 'dns' | 'unreachable' | 'network';
 export class TeamError extends Error {
-  constructor(readonly kind: TeamErrorKind, readonly service: 'router' | 'maintainer', readonly operation: string, readonly status?: number) {
+  constructor(readonly kind: TeamErrorKind, readonly service: 'router' | 'maintainer', readonly operation: string, readonly status?: number, readonly connectionFailure?: ConnectionFailure) {
     const hint = kind === 'auth' ? '鉴权失败，请在 ACN 设置检查 Agent ID 和团队鉴权密钥。'
       : kind === 'legacy_route' ? '服务端不支持 Inbox receipt ACK，请联系团队管理员检查服务版本。'
       : kind === 'retryable' ? '服务暂时不可用，本地知识和待投递任务已保留。'
