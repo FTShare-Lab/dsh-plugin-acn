@@ -19,7 +19,9 @@ import type { LlmModelInfo, StreamChunk } from '@deepseek-ai/dsh-llm';
 import type { PatchOptions } from '@deepseek-ai/cordis-plugin-include';
 import type {} from '../../src/dsh-adapter/configuration-service.js';
 import type { ConfigurationValues } from '../../src/configuration.js';
-import { AgentIdSchema } from 'dsh-plugin-acn/protocol';
+import type { AgentId } from '../../src/protocol/ids.js';
+// fixture 只构造静态合法 ID；类型导入不让宿主执行器在运行时依赖源码 JS 或预生成声明。
+const fixtureAgentId = (value: string) => value as AgentId;
 
 class Model extends LlmAdapter {
   calls = 0;
@@ -84,7 +86,7 @@ try {
   assert.equal(await readFile(patch, 'utf8'), beforeInvalid);
 
   if (process.platform === 'win32') {
-    const member = (id: string) => ({ name: '', agentId: AgentIdSchema.parse(id), enabled: true, routerEndpoint: '', maintainerEndpoint: '', keyEnv: '', timeoutMs: 15000 });
+    const member = (id: string) => ({ name: '', agentId: fixtureAgentId(id), enabled: true, routerEndpoint: '', maintainerEndpoint: '', keyEnv: '', timeoutMs: 15000 });
     const invalidNames: ConfigurationValues[] = [
       { ...saved.snapshot.values, agentId: 'con' },
       { ...saved.snapshot.values, upstream: 'nul', upstreams: { nul: member('agent-a') } },
@@ -193,12 +195,12 @@ try {
   await racingResume.dispose();
   // 原配置升级后，真实 Loader、Remote、会话日志与项目预选必须一起工作。
   let native = await service.read();
-  const upgraded = { ...native.values, upstream: 'coding', upstreams: { coding: { name: '开发', agentId: AgentIdSchema.parse('agent-a'), enabled: true, routerEndpoint: '', maintainerEndpoint: '', keyEnv: '', timeoutMs: 15000 }, review: { name: '审查', agentId: AgentIdSchema.parse('agent-b'), enabled: true, routerEndpoint: '', maintainerEndpoint: '', keyEnv: '', timeoutMs: 15000 } } };
+  const upgraded = { ...native.values, upstream: 'coding', upstreams: { coding: { name: '开发', agentId: fixtureAgentId('agent-a'), enabled: true, routerEndpoint: '', maintainerEndpoint: '', keyEnv: '', timeoutMs: 15000 }, review: { name: '审查', agentId: fixtureAgentId('agent-b'), enabled: true, routerEndpoint: '', maintainerEndpoint: '', keyEnv: '', timeoutMs: 15000 } } };
   const upgrade = await service.save({ revision: native.revision, values: upgraded }); assert.equal(upgrade.ok, true, JSON.stringify(upgrade));
   assert.ok((await readFile(join(upgraded.home, 'upstream-migration-v1.yaml'), 'utf8')).includes('external-next'));
   // 跨平台迁移可以留下不用的旧身份；停用的配置不能阻止合法 upstream 的编辑与保存。
   const beforeLegacy = await service.read();
-  const migrated = await service.save({ revision: beforeLegacy.revision, values: { ...beforeLegacy.values, agentId: 'con', upstreams: { ...upgraded.upstreams, retired: { ...upgraded.upstreams.review, agentId: AgentIdSchema.parse('aux'), enabled: false } } } });
+  const migrated = await service.save({ revision: beforeLegacy.revision, values: { ...beforeLegacy.values, agentId: 'con', upstreams: { ...upgraded.upstreams, retired: { ...upgraded.upstreams.review, agentId: fixtureAgentId('aux'), enabled: false } } } });
   assert.equal(migrated.ok, true, JSON.stringify(migrated));
   if (!migrated.ok) throw new Error('Expected inactive legacy identity to remain editable.');
   assert.equal(migrated.snapshot.dataDirectory, join(upgraded.home, 'coding', 'data', 'agents', 'agent-a'));
@@ -252,7 +254,7 @@ try {
   let finish: (() => void) | undefined; const gate = new Promise<void>((resolve) => { finish = resolve; });
   ctx.configEditor.edit = async (...args: Parameters<typeof raceEdit>) => { enter?.(); await gate; return raceEdit(...args); };
   try {
-    const pendingSave = service.save({ revision: beforeRace.revision, values: { ...beforeRace.values, upstreams: { ...beforeRace.values.upstreams, credential_race: { name: '', agentId: AgentIdSchema.parse('agent-race'), enabled: true, routerEndpoint: '', maintainerEndpoint: '', keyEnv: reference, timeoutMs: 1000 } } } });
+    const pendingSave = service.save({ revision: beforeRace.revision, values: { ...beforeRace.values, upstreams: { ...beforeRace.values.upstreams, credential_race: { name: '', agentId: fixtureAgentId('agent-race'), enabled: true, routerEndpoint: '', maintainerEndpoint: '', keyEnv: reference, timeoutMs: 1000 } } } });
     await entered; const cleanup = service.credential({ action: 'discard', reference });
     await new Promise<void>((resolve) => { setImmediate(resolve); }); assert.equal(removed, false);
     finish?.(); assert.equal((await pendingSave).ok, true); assert.equal((await cleanup).ok, false); assert.equal(removed, false);
@@ -261,7 +263,7 @@ try {
   const historicalReference = `ACN_TEAM_${crypto.randomUUID().replaceAll('-', '').toUpperCase()}`;
   assert.equal((await service.credential({ action: 'store', reference: historicalReference, value: crypto.randomUUID() })).ok, true);
   const historical = await service.read();
-  const withHistorical = { ...historical.values, upstreams: { ...historical.values.upstreams, credential_history: { name: '', agentId: AgentIdSchema.parse('agent-history'), enabled: true, routerEndpoint: '', maintainerEndpoint: '', keyEnv: historicalReference, timeoutMs: 1000 } } };
+  const withHistorical = { ...historical.values, upstreams: { ...historical.values.upstreams, credential_history: { name: '', agentId: fixtureAgentId('agent-history'), enabled: true, routerEndpoint: '', maintainerEndpoint: '', keyEnv: historicalReference, timeoutMs: 1000 } } };
   assert.equal((await service.save({ revision: historical.revision, values: withHistorical })).ok, true);
   const adopted = await service.read();
   assert.equal((await service.save({ revision: adopted.revision, values: { ...adopted.values, upstreams: { ...withHistorical.upstreams, credential_history: { ...withHistorical.upstreams.credential_history, keyEnv: '' } } } })).ok, true);
