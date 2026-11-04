@@ -3,7 +3,7 @@ import { Context } from '@deepseek-ai/cordis';
 import { SessionStore, SessionId, SessionLogOffset, appendPluginRecord, pluginRecordOf } from '@deepseek-ai/dsh-session';
 import { afterEach, describe, expect, it } from 'vitest';
 import { resolveConfig } from '../../src/config.js';
-import { bindSession, sessionAllowed } from '../../src/dsh-adapter/session-binding.js';
+import { bindSession, markSessionEligible, sessionAllowed } from '../../src/dsh-adapter/session-binding.js';
 
 const contexts: Context[] = [];
 async function host() { const ctx = new Context(); contexts.push(ctx); await ctx.plugin(SessionStore); return ctx; }
@@ -14,7 +14,7 @@ declare module '@deepseek-ai/dsh-session' { interface PluginRecordMap { 'plugin:
 describe('durable session identity', () => {
   it('restores the same identity from its log without depending on the old header object', async () => {
     const first = await host(); const session = first.sessions.create(SessionId('original'));
-    bindSession(first, config, session.header); expect(sessionAllowed(first, config, session.header)).toBe(true);
+    markSessionEligible(first, session.header); bindSession(first, config, session.header); expect(sessionAllowed(first, config, session.header)).toBe(true);
     const restored = await host(); const next = restored.sessions.create(session.id, { seed: session.snapshotEvents() });
     bindSession(restored, config, next.header); expect(next.header).not.toBe(session.header);
     expect(sessionAllowed(restored, config, next.header)).toBe(true);
@@ -22,7 +22,7 @@ describe('durable session identity', () => {
   });
   it.each([{ agentId: 'agent-b' }, { home: '/tmp/example/other' }])('rejects an offline YAML change %j with the default epoch', async (change) => {
     const first = await host(); const session = first.sessions.create(SessionId('original'));
-    bindSession(first, config, session.header);
+    markSessionEligible(first, session.header); bindSession(first, config, session.header);
     const restored = await host(); const next = restored.sessions.create(session.id, { seed: session.snapshotEvents() });
     const changed = resolveConfig({ ...config, ...change });
     bindSession(restored, changed, next.header); expect(changed.sessionEpoch).toBe(0);
@@ -30,14 +30,14 @@ describe('durable session identity', () => {
   });
   it('keeps inherited identity records on forks even with a new creation timestamp', async () => {
     const first = await host(); const session = first.sessions.create(SessionId('original'));
-    bindSession(first, config, session.header);
+    markSessionEligible(first, session.header); bindSession(first, config, session.header);
     const other = await host(); const fork = other.sessions.create(SessionId('fork'), { seed: session.snapshotEvents(), inheritedEventCount: SessionLogOffset(session.snapshotEvents().length), meta: { parentSession: session.id, isSeeded: true } });
     const changed = resolveConfig({ ...config, agentId: 'agent-b' });
     bindSession(other, changed, fork.header); expect(sessionAllowed(other, changed, fork.header)).toBe(false);
   });
   it.each([false, true])('binds a fresh child of a verified parent with isSeeded=%s', async (isSeeded) => {
     const ctx = await host(); const parent = ctx.sessions.create(SessionId('parent'));
-    bindSession(ctx, config, parent.header);
+    markSessionEligible(ctx, parent.header); bindSession(ctx, config, parent.header);
     const child = ctx.sessions.create(SessionId('child'), { ...isSeeded ? { seed: [], inheritedEventCount: SessionLogOffset(0) } : {}, meta: { parentSession: parent.id, origin: 'subagent', delegationDepth: 1, isSeeded } });
     bindSession(ctx, config, child.header); expect(sessionAllowed(ctx, config, child.header)).toBe(true);
     const restored = await host(); const next = restored.sessions.create(child.id, { seed: child.snapshotEvents() });
@@ -45,7 +45,7 @@ describe('durable session identity', () => {
   });
   it('does not bind a fresh child to a parent from another identity', async () => {
     const ctx = await host(); const parent = ctx.sessions.create(SessionId('parent'));
-    bindSession(ctx, config, parent.header);
+    markSessionEligible(ctx, parent.header); bindSession(ctx, config, parent.header);
     const child = ctx.sessions.create(SessionId('child'), { meta: { parentSession: parent.id, origin: 'subagent', delegationDepth: 1 } });
     const changed = resolveConfig({ ...config, agentId: 'agent-b' });
     bindSession(ctx, changed, child.header); expect(sessionAllowed(ctx, changed, child.header)).toBe(false);

@@ -1,5 +1,5 @@
 // 命令保持在交互面，不向模型提交用户命令或其输出。
-import { sessionChanged, configurationBusy } from '../dsh-adapter/session-binding.js';
+import { sessionChanged, configurationBusy, unboundSession } from '../dsh-adapter/session-binding.js';
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import type {} from '../dsh-adapter/configuration-service.js';
 import type { Context } from '@deepseek-ai/cordis';
@@ -30,7 +30,7 @@ export function apply(ctx: Context): void {
   });
   const denied = (agent: Agent) => {
     if (applying()) return configurationBusy;
-    return pool.allowed(agent.session.header) ? undefined : sessionChanged;
+    return pool.allowed(agent.session.header) ? undefined : pool.unbound(agent.session.header) ? unboundSession : sessionChanged;
   };
   ctx.commands.register({ name: 'acn-status', description: 'Show ACN status or retry a failed job.', input: { hint: '[failed [page] | all [page] | retry <job_id>]' }, handler: async ({ agent, rawInput }) => {
     const reason = denied(agent); if (reason !== undefined) return { kind: 'error', text: commandMessage(reason) };

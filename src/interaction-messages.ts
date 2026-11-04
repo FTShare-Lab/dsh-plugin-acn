@@ -26,6 +26,8 @@ const messages = {
   retry_disabled: ['连接已停用或删除，不能重试。', 'This configuration is disabled or missing. Restore it in ACN settings before retrying.'],
   retry_queued: ['任务已重新入队。', 'The task has been queued again.'],
   session_unavailable: ['会话不可用，请重新打开或新建会话。', 'The session is unavailable. Reopen it or start a new session.'],
+  session_unbound: ['本会话未启用 ACN，聊天仍可继续。只有安装插件后新建且尚未发送消息的会话可选择工作配置；如需使用 ACN，请新建会话。', 'ACN is not enabled for this session; ordinary chat remains available. Only blank sessions created after installation can choose a work configuration. Start a new session to use ACN.'],
+  session_optional: ['本会话尚未启用 ACN，可直接聊天，或在首条消息前选择工作配置。', 'ACN is not enabled for this session. You can chat normally, or choose a work configuration before the first message.'],
   recap_disabled: ['知识形成组件未启用。', 'Knowledge formation is inactive. Enable the formation component in the plugin manager.'],
   recap_empty: ['没有可复盘的新增内容。', 'There is no new completed content to recap.'],
   recap_queued: ['复盘已入队，可在处理活动中查看。', 'The recap is queued. View it in Activity.'],

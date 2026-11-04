@@ -4,7 +4,7 @@ import Schema from '@deepseek-ai/schemastery';
 import { resolveConfig } from '../config.js';
 import { AcnKnowledge } from '../knowledge/service.js';
 import { UploadScheduler } from '../upload/scheduler.js';
-import { bindSession, sessionChanged, observeSelection, runningConfiguration, rememberConfiguration, sessionAllowed } from '../dsh-adapter/session-binding.js';
+import { bindSession, sessionChanged, unboundSession, observeSelection, runningConfiguration, rememberConfiguration, sessionAllowed } from '../dsh-adapter/session-binding.js';
 import { protectMemoryPaths } from '../dsh-adapter/memory-paths.js';
 import { RuntimePool } from '../dsh-adapter/runtime-pool.js';
 import { teamCredentials } from '../dsh-adapter/team-credentials.js';
@@ -58,10 +58,10 @@ export async function apply(ctx: Context, input: unknown = {}): Promise<void> {
   void ctx.inject(['agents', 'sessions', 'tools'], (child) => {
     child.on('session/event', (session, event) => { observeSelection(session.header, event); });
     child.on('agent/pre-step', async ({ agent }, next) => {
-      if (!pool.allowed(agent.session.header)) throw new Error(sessionChanged);
+      if (!pool.chatAllowed(agent.session.header)) throw new Error(sessionChanged);
       return next();
     });
-    child.tools.guard((execution) => ['claim', 'consult_router', 'memory'].includes(execution.name) && execution.agent !== undefined && !pool.allowed(execution.agent.session.header) ? sessionChanged : undefined);
+    child.tools.guard((execution) => ['claim', 'consult_router', 'memory'].includes(execution.name) && execution.agent !== undefined && !pool.allowed(execution.agent.session.header) ? pool.unbound(execution.agent.session.header) ? unboundSession : sessionChanged : undefined);
     child.on('agent/created', ({ agent }) => {
       if (config.upstreams === undefined) {
         bindSession(child, knowledge.config, agent.session.header);

@@ -17,6 +17,7 @@ type Props = Pick<PropsRuntime<'conversation.input.left'>, 'sessionId' | 'useSes
   suppressed?: boolean;
 };
 export const composerBlockReason = (view: SessionView, c: Copy = (zh) => zh): string | undefined => {
+  if (view.phase === 'unbound') return;
   if (view.available && view.phase !== 'blocked' && !(view.phase === 'syncing' && view.needsPreparation)) return;
   return displayMessage(view.message, c, view.messageInfo) || (view.phase === 'syncing'
     ? c('等待首次团队收件同步完成。', 'Waiting for the first team Inbox sync to complete.')
@@ -132,7 +133,7 @@ function SessionControls({ api, c, block, openSettings, openKnowledge, sessionId
   const choices = view?.choices.filter((item) => item.enabled && item.agentId) ?? [];
   const trouble = Boolean(loadError || view?.phase === 'failed' || view?.phase === 'blocked');
   const syncing = view?.phase === 'syncing';
-  const name = view?.name || c('选择工作配置', 'Choose configuration');
+  const name = view?.phase === 'unbound' ? c('未启用', 'Not enabled') : view?.name || c('选择工作配置', 'Choose configuration');
   const title = c('ACN 记忆与知识', 'ACN memory and knowledge');
   const label = title + ' · ' + name;
   const settingsLabel = c('ACN 插件设置', 'ACN settings');
@@ -143,10 +144,10 @@ function SessionControls({ api, c, block, openSettings, openKnowledge, sessionId
       <span className="acn-mark" data-state={trouble ? 'warning' : syncing || pending > 0 ? 'activity' : team ? 'team' : undefined}><Icon name="network" /></span><span className="acn-short-label">ACN · {name}</span><span className="acn-chevron"><Icon name="chevron" size={11} /></span>
     </button>
     {menu && <ComposerMenu anchor={anchor} id={menuId} label={title} close={close}>
-      <p>{c('当前会话', 'Current session')} · <strong>{name}</strong>{view?.locked && c('（已固定）', ' (fixed)')}</p>
+      <p>{c('当前会话', 'Current session')} · <strong>{name}</strong>{view?.locked && view.phase !== 'unbound' && c('（已固定）', ' (fixed)')}</p>
       {loadError && <><p role="alert">{loadError}</p><MenuItem icon="sync" disabled={busy} onClick={() => { choose({ action: 'session', sessionId }); }}>{c('重试读取状态', 'Reload status')}</MenuItem></>}
       {selected && <p>Agent ID · {selected.agentId} · {team ? c('团队', 'Team') : c('单人', 'Solo')}</p>}
-      {(trouble || syncing || view?.configurationChanged) && view?.message && <p role={trouble ? 'alert' : 'status'}>{displayMessage(view.message, c, view.messageInfo)}</p>}
+      {(trouble || syncing || view?.phase === 'unbound' || view?.configurationChanged) && view?.message && <p role={trouble ? 'alert' : 'status'}>{displayMessage(view.message, c, view.messageInfo)}</p>}
       {syncing && <MenuItem icon="close" onClick={() => { choose({ action: 'cancel', sessionId }); }}>{c('取消等待', 'Cancel waiting')}</MenuItem>}
       {view && !view.locked && choices.length > 0 && <>
         {view.choices.filter((item) => item.enabled && item.agentId).map((item) => <MenuItem key={item.key} icon={view.available && view.key === item.key ? 'check' : item.mode === 'solo' ? 'user' : 'network'} role="menuitemradio" aria-checked={view.available && view.key === item.key} disabled={busy || running || syncing} onClick={() => { if (view.key === item.key && view.available) { anchor.current?.focus(); close(); } else choose({ action: 'select', sessionId, key: item.key }); }}>{configurationLabel(item.name, item.agentId)}{item.key === view.defaultConnection && <small>{c('全局默认', 'Global default')}</small>}</MenuItem>)}
@@ -156,7 +157,7 @@ function SessionControls({ api, c, block, openSettings, openKnowledge, sessionId
       {configured && <MenuItem icon="book" onClick={() => { finishMenu(() => { openKnowledge(view?.key ?? 'personal', pending > 0); }); }}>{c('知识与活动', 'Knowledge and activity')}{pending > 0 && <small>{pending} {c('项待处理', 'need attention')}</small>}</MenuItem>}
       {configured && view?.available && <MenuItem icon="recap" disabled={busy || running || syncing || view.needsPreparation} onClick={() => { choose({ action: 'recap', sessionId }); }}>{c('复盘本次会话', 'Recap session')}</MenuItem>}
       {team && view?.available && !syncing && <MenuItem icon="sync" disabled={busy || running} onClick={() => { choose({ action: 'sync', sessionId }); }}>{view.phase === 'failed' ? c('重试同步', 'Retry sync') : c('同步收件', 'Sync Inbox')}</MenuItem>}
-      {!configured && !team && !loadError && view && <p>{c('在插件设置中新建工作配置，填写 Agent ID 后即可使用。', 'Create a work configuration with an Agent ID in ACN settings.')}</p>}
+      {!configured && !team && !loadError && view && !view.locked && choices.length === 0 && <p>{c('在插件设置中新建工作配置，填写 Agent ID 后即可使用。', 'Create a work configuration with an Agent ID in ACN settings.')}</p>}
       <hr className="acn-separator" /><MenuItem icon="settings" onClick={() => { finishMenu(() => { openSettings(team && trouble ? 'upstreams' : undefined); }); }}>{settingsLabel}</MenuItem>
     </ComposerMenu>}
     {notice && !suppressed && <Notice c={c} failed={notice.failed} close={() => { setNotice(undefined); }}>{notice.text}</Notice>}

@@ -95,3 +95,17 @@ it('initializes an unavailable blank session even when its default choice has th
   fireEvent.click(screen.getByRole('menuitemradio', { name: /开发/ }));
   await waitFor(() => { expect(interact).toHaveBeenCalledWith({ action: 'select', sessionId: 'reused-blank', key: 'coding' }); expect(block).toHaveBeenLastCalledWith('reused-blank', undefined); });
 });
+
+it.each([false, true])('does not block ordinary chat in an unbound session and only offers enrollment while blank=%s', async (blank) => {
+  const view = SessionViewSchema.parse({ sessionId: 'unbound-session', key: '', name: '选择工作配置', locked: !blank, available: false, phase: 'unbound', message: '本会话未启用 ACN，聊天仍可继续。', choices: [soloChoice, teamChoice], defaultConnection: '', showCompletion: true });
+  const interact = vi.fn<InteractionApi['interact']>().mockResolvedValue({ ok: true, message: '', session: view }); const block = vi.fn();
+  render(<SessionToolbar api={{ read: vi.fn(), save: vi.fn(), interact }} sessionId={SessionId('unbound-session')} useSession={useSession} c={c} block={block} openSettings={vi.fn()} openKnowledge={vi.fn()} />);
+  await waitFor(() => { expect(block).toHaveBeenLastCalledWith('unbound-session', undefined); });
+  fireEvent.click(await screen.findByRole('button', { name: /ACN.*未启用/ }));
+  expect(screen.getByRole('status').textContent).toContain('聊天仍可继续');
+  expect(screen.queryAllByRole('menuitemradio')).toHaveLength(blank ? 2 : 0);
+  expect(screen.queryByText('在插件设置中新建工作配置，填写 Agent ID 后即可使用。')).toBeNull();
+  expect(screen.queryByRole('menuitem', { name: '复盘本次会话' })).toBeNull();
+  expect(screen.queryByRole('menuitem', { name: '同步收件' })).toBeNull();
+  expect(interact.mock.calls.every(([request]) => request.action === 'session')).toBe(true);
+});

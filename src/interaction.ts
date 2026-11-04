@@ -7,7 +7,7 @@ import { ClaimIdSchema, TraceIdSchema } from './protocol/ids.js';
 export const RuntimeChoiceSchema = z.object({ key: z.string(), name: z.string(), agentId: z.string(), enabled: z.boolean(), mode: z.enum(['solo', 'team']) });
 export const SessionViewSchema = z.object({
   sessionId: z.string(), key: z.string(), name: z.string(), locked: z.boolean(), available: z.boolean(),
-  phase: z.enum(['ready', 'syncing', 'failed', 'blocked']), message: z.string(), messageInfo: MessageInfoSchema.optional(), defaultConnection: z.string(),
+  phase: z.enum(['ready', 'syncing', 'failed', 'blocked', 'unbound']), message: z.string(), messageInfo: MessageInfoSchema.optional(), defaultConnection: z.string(),
   needsPreparation: z.boolean().default(false), explicitSelection: z.boolean().default(false),
   activeMode: z.enum(['solo', 'team']).optional(), configurationChanged: z.boolean().optional(),
   choices: z.array(RuntimeChoiceSchema), showCompletion: z.boolean(),

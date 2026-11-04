@@ -8,10 +8,12 @@ import type { ResolvedConfig } from '../config.js';
 import { agentHomePath } from '../store/paths.js';
 
 const BindingSchema = z.strictObject({ schemaVersion: z.literal(1), identity: z.string().regex(/^[0-9a-f]{64}$/) });
+const EligibilitySchema = z.strictObject({ schemaVersion: z.literal(1) });
+const emptyIdentity = createHash('sha256').update('').digest('hex');
 export const SelectionSchema = z.strictObject({ schemaVersion: z.literal(1), key: z.string(), identity: z.string().regex(/^[0-9a-f]{64}$/), prepared: z.boolean().optional() });
 export type SessionSelection = z.infer<typeof SelectionSchema>;
 declare module '@deepseek-ai/dsh-session' {
-  interface PluginRecordMap { 'plugin:acn/session-binding': z.infer<typeof BindingSchema>; 'plugin:acn/team-selection': SessionSelection }
+  interface PluginRecordMap { 'plugin:acn/session-binding': z.infer<typeof BindingSchema>; 'plugin:acn/team-selection': SessionSelection; 'plugin:acn/session-eligibility': z.infer<typeof EligibilitySchema> }
 }
 // 身份随宿主会话日志持久化和继承；缓存只避免每次门禁重新扫描历史。
 const bindings = new WeakMap<SessionHeader, string | null>();
@@ -48,7 +50,41 @@ export function sessionSelection(ctx: Context, header: SessionHeader): SessionSe
   selections.set(header, value); return value;
 }
 
+export function sessionHasWork(events: readonly SessionEvent[]): boolean {
+  return events.some((event) => event.type === 'request/header' || event.type === 'assistant/message' || event.type === 'tool/result' || event.type === 'turn/start' || event.type === 'user/message' && event.data.source.kind === 'user');
+}
+export function sessionEligible(ctx: Context, header: SessionHeader, events = ctx.sessions.get(header.id)?.snapshotEvents()): boolean {
+  return events?.some((event) => {
+    const record = pluginRecordOf(event);
+    // 兼容旧版在未配置时写入的空身份；它只证明创建时插件已安装，不授予知识权限。
+    return record?.type === 'plugin:acn/session-eligibility' && EligibilitySchema.safeParse(record.data).success
+      || record?.type === 'plugin:acn/session-binding' && BindingSchema.safeParse(record.data).data?.identity === emptyIdentity;
+  }) ?? false;
+}
+export function markSessionEligible(ctx: Context, header: SessionHeader): void {
+  const session = ctx.sessions.get(header.id);
+  if (session === undefined || session.firstLiveSeq > 0 || header.isSeeded || header.parentSession !== undefined || sessionHasWork(session.snapshotEvents()) || sessionEligible(ctx, header)) return;
+  appendPluginRecord(session, 'plugin:acn/session-eligibility', { schemaVersion: 1 });
+}
+export function sessionUnbound(ctx: Context, header: SessionHeader, events?: readonly SessionEvent[]): boolean {
+  const seen = new Set<string>(); let current: SessionHeader | undefined = header;
+  while (current !== undefined) {
+    if (seen.has(current.id)) return false;
+    seen.add(current.id);
+    const history = current === header && events !== undefined ? events : ctx.sessions.get(current.id)?.snapshotEvents();
+    if (history === undefined) return current !== header;
+    for (const event of history) {
+      const record = pluginRecordOf(event);
+      if (record?.type === 'plugin:acn/team-selection') return false;
+      if (record?.type === 'plugin:acn/session-binding' && BindingSchema.safeParse(record.data).data?.identity !== emptyIdentity) return false;
+    }
+    current = current.parentSession === undefined ? undefined : ctx.sessions.get(current.parentSession)?.header;
+  }
+  return true;
+}
+
 export function bindSession(ctx: Context, config: ResolvedConfig, header: SessionHeader): void {
+  if (config.agentId === '') return;
   if (bindings.has(header)) return;
   const session = ctx.sessions.get(header.id);
   if (session === undefined) { bindings.set(header, null); return; }
@@ -66,7 +102,7 @@ export function bindSession(ctx: Context, config: ResolvedConfig, header: Sessio
   // 没有持久身份的旧日志无法证明归属；不能因重启后配置不同而自动改绑。
   // 全新子会话未必继承日志；只允许从当前已验证身份的父会话建立绑定。
   const verifiedParent = parent !== undefined && sessionAllowed(ctx, config, parent.header);
-  if (session.firstLiveSeq > 0 || (header.parentSession !== undefined || header.isSeeded) && !verifiedParent) { bindings.set(header, null); return; }
+  if (session.firstLiveSeq > 0 || !verifiedParent && (!sessionEligible(ctx, header) || sessionHasWork(session.snapshotEvents()) || header.parentSession !== undefined || header.isSeeded)) { bindings.set(header, null); return; }
   const identity = identityOf(config);
   bindings.set(header, identity);
   try { appendPluginRecord(session, 'plugin:acn/session-binding', { schemaVersion: 1, identity }); }
@@ -75,6 +111,7 @@ export function bindSession(ctx: Context, config: ResolvedConfig, header: Sessio
 
 export const sessionChanged = 'ACN 会话身份与当前配置不一致，或缺少可验证的历史身份记录，请新建会话。旧会话不能访问当前身份的知识和私有记忆。';
 export const configurationBusy = 'ACN 配置正在应用，请稍后重试。';
+export const unboundSession = '本会话未启用 ACN，聊天仍可继续。只有安装插件后新建且尚未发送消息的会话可选择工作配置；如需使用 ACN，请新建会话。';
 export function sessionAllowed(ctx: Context, config: ResolvedConfig, header: SessionHeader): boolean {
   // 未配置时没有可暴露的 ACN 数据，不干预宿主原有会话。
   if (config.agentId === '') return true;
