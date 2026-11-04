@@ -29,11 +29,15 @@ pnpm smoke:install
 | `pnpm test:contract` | 在临时目录启动真实 Router / Maintainer，验证查询、上传、裁决通知的双成员内化和整合依赖；内化模型使用本地测试适配器 |
 | `pnpm smoke:install` | 新 DSH profile 中的实际包安装、Loader 生命周期、公开资源和不兼容引擎拒绝 |
 | `pnpm check:security` | 版本控制文本中的凭据、邮箱和个人路径，以及提交元数据中的其他敏感内容；允许用户确认的 Git 身份邮箱 |
-| `pnpm check:docs` | Markdown 相对链接与标题锚点 |
+| `pnpm check:docs` | Markdown / HTML 相对链接、锚点与说明书内嵌图片一致性 |
 
 安装包包含运行 JS、类型声明、提示词、组合 patch、双语说明、本地化资源、图标、使用截图和许可证；不包含源码测试、依赖缓存、临时项目或运行日志。安装检查使用独立的 `DSH_HOME`，不会修改日常 profile。`smoke:install` 由 Node 脚本执行，可从 Windows PowerShell 或 POSIX 终端运行；Windows 的 pnpm / dsh 命令 shim 通过统一启动器调用，不要求安装 Bash。它需要可用的 `tar` 和 DSH CLI；`DSH_BIN` 也可指向桌面附带 CLI 的 `.js` 入口。
 
 安全扫描不识别截图文字。更新图片时应检查可见内容，使用中性示例，避免展示实际数据路径、提供商别名、邮箱或凭据。
+
+### 维护使用说明书
+
+`docs/user-guide.html` 是可独立转发的用户说明书；`docs/user-guide.md` 保留仓库阅读入口。编辑 HTML 正文即可修改说明。更新 `docs/assets/` 截图后，运行 `pnpm docs:images` 刷新内嵌图片，再运行 `pnpm check:docs`。不要添加外部字体、脚本或图片依赖；交付前用浏览器检查桌面和窄屏布局、目录、图片放大与打印。
 
 ## 隔离网页调试
 

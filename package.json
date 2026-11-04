@@ -123,6 +123,7 @@
     "README_EN.md",
     "CHANGELOG.md",
     "docs/**/*.md",
+    "docs/**/*.html",
     "docs/assets/*.png",
     "docs/assets/*.jpg",
     "locale/**/*.json",
@@ -247,6 +248,7 @@
     "prepack": "pnpm run build",
     "test:contract": "bash scripts/contract-up.sh",
     "check:docs": "node scripts/check-docs.mjs",
+    "docs:images": "node scripts/inline-guide-images.mjs",
     "smoke:web": "node scripts/smoke-web.mjs"
   },
   "peerDependenciesMeta": {

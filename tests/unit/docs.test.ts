@@ -22,6 +22,7 @@ describe('current configuration documentation', () => {
       // README 采用网页安装流程，完整 YAML 只在配置参考中维护。
       expect(text).toContain('](docs/config.md)');
       expect(text).toContain('](docs/user-guide.md)');
+      expect(text).toContain('](docs/user-guide.html)');
     }
     for (const row of rows) {
       const config = resolveConfig(row.config);

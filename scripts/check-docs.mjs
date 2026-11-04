@@ -1,26 +1,47 @@
-// 检查仓库内文档链接和锚点，防止整理目录后留下失效入口。
+// 检查文档链接、锚点与说明书内嵌图片，防止入口失效或截图不同步。
 import fs from 'node:fs/promises';
 import { dirname, extname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { JSDOM } from 'jsdom';
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-async function markdown(directory) { const files = []; for (const item of await fs.readdir(directory, { withFileTypes: true })) { const path = join(directory, item.name); if (item.isDirectory()) files.push(...await markdown(path)); else if (item.name.endsWith('.md')) files.push(path); } return files; }
-const files = [...await markdown(join(root, 'docs')), ...['README.md', 'README_EN.md', 'AGENTS.md', 'CHANGELOG.md'].map((name) => join(root, name))];
+async function documents(directory) { const files = []; for (const item of await fs.readdir(directory, { withFileTypes: true })) { const path = join(directory, item.name); if (item.isDirectory()) files.push(...await documents(path)); else if (['.md', '.html'].includes(extname(path))) files.push(path); } return files; }
+const files = [...await documents(join(root, 'docs')), ...['README.md', 'README_EN.md', 'AGENTS.md', 'CHANGELOG.md'].map((name) => join(root, name))];
 const slug = (text) => text.toLowerCase().replace(/<[^>]*>/g, '').replace(/[^\p{L}\p{N}\p{M}_ -]/gu, '').replace(/ /g, '-');
 const errors = [];
+const anchors = new Map();
+async function documentAnchors(file) {
+  if (!anchors.has(file)) {
+    const text = await fs.readFile(file, 'utf8');
+    anchors.set(file, extname(file) === '.html' ? [...new JSDOM(text).window.document.querySelectorAll('[id]')].map((node) => node.id) : [...text.replace(/```[\s\S]*?```/g, '').matchAll(/^#{1,6}\s+(.+)$/gm)].map((item) => slug(item[1])));
+  }
+  return anchors.get(file);
+}
 for (const file of files) {
   const text = await fs.readFile(file, 'utf8');
-  for (const match of text.matchAll(/\]\(([^\s)]+)\)/g)) {
-    const target = match[1]; if (/^(?:https?:|mailto:|data:)/.test(target)) continue;
+  let targets;
+  if (extname(file) === '.html') {
+    const dom = new JSDOM(text); const document = dom.window.document;
+    targets = [...document.querySelectorAll('[href], [src]')].flatMap((node) => ['href', 'src'].map((name) => node.getAttribute(name)).filter((value) => value !== null));
+    const ids = [...document.querySelectorAll('[id]')].map((node) => node.id);
+    if (new Set(ids).size !== ids.length) errors.push(`${relative(root, file)}: duplicate HTML id`);
+    for (const image of document.querySelectorAll('img[data-asset]')) {
+      const name = image.getAttribute('data-asset');
+      if (!/^[a-z0-9-]+\.jpg$/.test(name)) { errors.push(`${relative(root, file)}: invalid embedded asset name`); continue; }
+      const expected = 'data:image/jpeg;base64,' + (await fs.readFile(join(dirname(file), 'assets', name))).toString('base64');
+      if (image.getAttribute('src') !== expected) errors.push(`${relative(root, file)}: embedded image is outdated: ${name}; run pnpm docs:images`);
+    }
+    dom.window.close();
+  } else targets = [...text.matchAll(/\]\(([^\s)]+)\)/g)].map((match) => match[1]);
+  for (const target of targets) {
+    if (/^(?:https?:|mailto:|data:)/.test(target)) continue;
     const [path, anchor] = target.split('#'); const destination = path === '' ? file : resolve(dirname(file), decodeURIComponent(path));
     try {
       await fs.access(destination);
-      if (anchor && extname(destination) === '.md') {
-        const content = (await fs.readFile(destination, 'utf8')).replace(/```[\s\S]*?```/g, '');
-        const headings = [...content.matchAll(/^#{1,6}\s+(.+)$/gm)].map((item) => slug(item[1]));
-        if (!headings.includes(decodeURIComponent(anchor))) errors.push(`${relative(root, file)}: missing anchor ${target}`);
+      if (anchor && ['.md', '.html'].includes(extname(destination))) {
+        if (!(await documentAnchors(destination)).includes(decodeURIComponent(anchor))) errors.push(`${relative(root, file)}: missing anchor ${target}`);
       }
     } catch { errors.push(`${relative(root, file)}: missing target ${target}`); }
   }
 }
 if (errors.length > 0) { process.stderr.write(errors.join('\n') + '\n'); process.exitCode = 1; }
-else process.stdout.write(`Documentation links verified: ${files.length} Markdown files.\n`);
+else process.stdout.write(`Documentation links, anchors and embedded images verified: ${files.length} documents.\n`);

@@ -1,93 +1,69 @@
 # ACN记忆框架 · agent-claim-network
 
-[English](README_EN.md)
+[English](README_EN.md) · [使用说明书（HTML）](docs/user-guide.html) · [文档导航](docs/index.md)
 
 **从agent工作轨迹中沉淀可复用的知识与记忆，让知识经验在团队中流动。**
 
-ACN记忆框架是 DeepSeek Harness（DSH）的知识与记忆插件。它把工作中的经验整理成可引用、可修订的知识，让新会话有机会复用之前的成果；也可连接 ACN 团队服务，在多个 Agent 之间分享知识和处理争议。
+ACN记忆框架是 DeepSeek Harness（DSH）的知识与记忆插件。它从工作对话中提炼有依据、带适用范围的经验，让后续会话可以查询和复用；也能连接 ACN 团队服务，让多个 Agent 共享知识、处理冲突。
 
-本仓库包含插件的 TypeScript 实现、网页配置界面、模型提示词和自动化测试。Router 与 Maintainer 是独立部署的 ACN 服务，插件提供与它们通信的客户端。
+本仓库包含插件的 TypeScript 实现、网页配置界面、模型提示词和测试。DSH 继续负责 Agent 主循环、上下文压缩、会话和默认文件工具；本插件负责知识与记忆。Router 和 Maintainer 由团队另行部署。
 
-DSH 继续负责 Agent 主循环、上下文压缩、会话和读写文件等默认工具。ACN 负责知识与记忆，不替换这些宿主能力。
+## 主要能力
 
-插件使用同一 JavaScript 安装包，桌面可用平台以 DSH 宿主支持范围为准。macOS 已完成本机回归；Windows 路径及文件保护已补齐，并配置 Windows CI，尚未完成 Windows 桌面实机验收。平台验证范围见 [DSH 兼容边界](docs/dsh-compat.md#操作系统)。
+| 能力 | 用途 |
+| --- | --- |
+| 工作复盘 | 从新增对话中提炼 Claim，记录 Trace 来源；支持手动复盘、空闲自动复盘和归档收尾 |
+| 知识复用 | Agent 按需查询已有经验，结合适用范围、证据和当前任务判断是否采用 |
+| 团队协作 | 通过 Router 查找团队知识，通过 Maintainer 共享结论、上报争议并接收处理建议 |
+| Dream 整理 | 清理临时记录、整合相关知识；保留版本、例外与证据限制，并限制单次模型请求次数 |
+| 私有 Memory | 保存持续有用的个人经验与偏好，与团队共享知识分开管理 |
+| 知识与活动 | 在网页查看知识、来源、后台进度、投递状态和失败后的恢复入口 |
 
-## 从哪里开始
-
-- **第一次安装：** [带截图的使用指南](docs/user-guide.md)，从本地安装包到模型配置，再完成一次知识形成与复用。
-- **已经在使用：** [配置说明](docs/config.md)、[命令与行为参考](docs/command-reference.md)、[常见限制](docs/outstanding-issues.md)。
-- **参与开发：** [架构说明](docs/architecture.md)、[开发指南](docs/development.md)。
+每份“工作配置”都有自己的 Agent ID、知识和私有记忆，可以单人使用，也可接入团队。同一配置下的项目共享知识，不同配置相互隔离。单人模式无需团队服务，不发送团队请求。
 
 ![DSH 中的 ACN 插件设置](docs/assets/upstream-settings.jpg)
 
-## 能做什么
+## 安装与开始使用
 
-| 能力 | 使用效果 |
-| --- | --- |
-| Claim 知识与 Trace 来源 | 保存带适用范围、证据摘要和置信度的经验；按需检索、阅读、修订并追溯工作来源 |
-| Recap / Finalize | 手动 `/recap`、批量或尾部空闲、宿主压缩及归档收尾时提炼知识；只处理增量，归档后暂停自动触发 |
-| 私有 Memory | 用 `MEMORY.md` / `USER.md` 保存个人经验与偏好，新会话读取冻结快照，定期复核优先保留对话信号；不直接上传团队 |
-| Dream | 清理一次性记录、整合同主题知识、追溯关联 Trace；可选工作区查证，保留有效条件与证据限制，工具参数 JSON 格式失败时有限自动重试 |
-| 团队协作 | 管理多份单人或团队工作配置，按项目最近会话或全局默认预选归属；经 Router 查找知识，经 Maintainer 接收建议，内化后才改变本地知识 |
-| 知识与活动界面 | 按身份浏览 Claim、Dispute、Trace，查看后台结果、警告、未完成项、历史失败与投递恢复；浏览不触发模型 |
-| 持久任务与迁移 | 中断后恢复后台任务，模型失败显示分类并有界重试；只读导入已有 ACN 的 Claim、Trace 和私有文件 |
-
-单人模式无需团队服务，也不会发送团队请求。同一 upstream 下的不同项目共用知识和私有记忆，不同 upstream 独立存储。可以为原单人配置添加团队服务，继续使用原身份与知识库。后台模型和聊天模型分别选择，均可使用 DSH 中已配置的模型。
-
-ACN 后台任务默认输出上限为 32768 token，可通过 `llm.maxOutputTokens` 调整；已有显式配置保持生效，详见[配置参考](docs/config.md)。
-
-知识的形成、团队投递和接收内化是不同阶段：
-
-```mermaid
-flowchart LR
-  Work[在 DSH 完成工作] --> Recap[Recap / Finalize]
-  Recap --> Local[本地知识与 Trace]
-  Local -->|仅 Claim 与 Dispute| Upload[团队上传队列]
-  Upload --> Maintainer[Maintainer 团队知识]
-  Maintainer --> Router[Router 检索]
-  Router --> Use[成员判断适用性后复用]
-  Maintainer -->|仲裁建议：仅直接涉争持有者| Inbox[本地持久收件]
-  Inbox -->|模型内化并校验| Local
-```
-
-上图展示团队路径；单人模式只保留本地链路。Trace 与私有 Memory 不进入团队上传队列。仲裁完成或收件已确认，都不等于本地 Claim 已完成修订。
-
-## 安装概览
-
-当前 `0.1.0` 尚未发布，可从源码构建本地安装包，需要 Node `^22.19.0 || >=24.0.0` 与 pnpm `11.25.0`：
+当前 `0.1.0` 尚未公开发布。已有可信 `.tgz` 安装包时，可直接在 DSH 网页安装；从源码构建需要 Node `^22.19.0 || >=24.0.0` 与 pnpm `11.25.0`：
 
 ```sh
 pnpm install --frozen-lockfile
 pnpm pack --pack-destination .artifacts
 ```
 
-启动 DSH，在「插件 → 添加插件」填入生成的 `.tgz` 绝对路径，安装并启用。打开「设置 → ACN 插件设置」，在「工作配置」创建 Agent 身份，首份配置成为全局默认；在「知识与模型」选择后台模型。每份配置都能单人使用，也能在原身份上接入团队。新会话自动沿用同项目最近新建会话的配置，没有可用记录时采用全局默认，首发前可改选；无需单独设置项目默认或安装额外兼容扩展。聊天框的 **ACN** 菜单提供知识浏览、复盘和团队同步。完整步骤见[使用指南](docs/user-guide.md)。
+1. 启动 DSH，在「插件 → 添加插件 → 安装第三方插件」填写安装包在 **DSH 所在电脑上的绝对路径**，安装并启用。
+2. 打开「设置 → ACN 插件设置」，新建工作配置，填写 Agent ID 并保存。单人使用可自取固定名称；团队成员使用管理员确认的身份。
+3. 在「知识与模型」选择知识处理模型。它与聊天框旁的对话模型分别设置；知识目录通常保留默认值即可。
+4. 新建空白会话，在首条消息前确认 ACN 工作配置，然后正常开展工作。完成一段有价值的工作后，可在「ACN → 复盘本次会话」主动整理，再到「知识与活动」查看结果。
 
-在工作配置的「配置」页调整启用状态和「设为默认」，点击「保存配置」生效；替换已有默认配置时需要确认，取消编辑会放弃草稿。
+新会话优先沿用同项目最近新建会话的有效配置，否则使用全局默认；首发后归属固定。安装前的旧会话、未选择配置就已开始聊天的会话仍可普通聊天，但不能中途启用 ACN，需另建会话使用知识与记忆。
 
-「偏好」提供结果提示和六项高级参数。知识页支持分类、状态与同步状态筛选，活动页支持类型、来源与结果筛选。
+完整图解见 **[使用说明书（HTML）](docs/user-guide.html)**。下载该文件后直接用浏览器打开即可，图片已内嵌，无需联网，也可打印或另存为 PDF。[Markdown 入口](docs/user-guide.md)适合在仓库中快速查阅。
 
-只有安装插件后新建、尚未发送消息的空白会话可选择工作配置；首次配置前创建的这类草稿也可使用。安装前的旧会话，以及未选择配置就已开始聊天的会话，都能继续普通聊天，但不能中途绑定团队，也不启用 ACN 知识或私有 Memory。已绑定的会话首发后不能切换归属。
+## 团队使用
 
-团队鉴权密钥可直接粘贴、切换显隐，并随配置保存到 DSH 托管存储；插件配置只保留内部引用。
+向管理员取得 Router、Maintainer 地址与对应 Agent ID；启用鉴权时还需团队密钥。在工作配置中开启「连接团队服务」，填写、检查并保存。密钥可直接输入，默认隐藏明文，由 DSH 托管；插件配置只保存内部引用。
 
-DSH 版本声明范围为 `>=0.2.1-rc.2 <0.3.0`，兼容基线为 `0.2.1-rc.2`。包名为 `dsh-plugin-acn`；中文名为 **ACN记忆框架**，英文名为 **agent-claim-network**。
+成员复盘形成的共享知识进入团队投递队列，其他成员按需通过 Router 查询。Maintainer 的建议先进入收件箱，经本地 Agent 内化后才可能修改本地知识。**本地处理完成、团队投递完成和成员采用是不同阶段**；仲裁反馈发给直接涉争 Claim 的持有者，并非向所有成员广播。
 
-## 仓库结构
+Trace 与私有 Memory 不直接上传团队。私有记忆复核仍会使用所选模型服务。当前建议 Router 不启用 LLM 重排，以免候选集合变化阻止自动仲裁采纳；部署与边界见[使用说明书的团队章节](docs/user-guide.html#team)及[兼容限制](docs/outstanding-issues.md)。
 
-| 路径 | 内容 |
+## 兼容与文档
+
+DSH 声明支持范围为 `>=0.2.1-rc.2 <0.3.0`。macOS 已完成本机验收；Windows 已补齐路径、文件保护和 CI，尚未完成 Windows 桌面实机验收。同一 JavaScript 安装包用于宿主支持的平台，详见 [DSH 兼容边界](docs/dsh-compat.md)。
+
+| 需要了解 | 文档 |
 | --- | --- |
-| `src/` | 知识、记忆、存储、团队客户端，以及 DSH 适配和网页配置界面 |
-| `prompts/` | 知识形成、整理、内化与记忆复核的模型提示词 |
-| `cordis.patch.yml` | 插件组件的组合与注册配置 |
-| `locale/` | 中英文本地化资源 |
-| `tests/` | 单元、集成、协议契约、并发与崩溃恢复测试 |
-| `scripts/` | 兼容性检查、安装检查和本地团队服务测试脚本 |
-| `docs/` | 使用、配置、架构和开发文档 |
+| 安装、配置、日常操作和常见问题 | [使用说明书（HTML）](docs/user-guide.html) |
+| 参数、目录、模型和配置生效规则 | [配置说明](docs/config.md) |
+| 命令、工具、数据迁移与恢复 | [命令与行为参考](docs/command-reference.md) |
+| 模块职责与数据所有权 | [架构说明](docs/architecture.md) |
+| 构建、测试和安装检查 | [开发指南](docs/development.md) |
 
-## 开发与测试
+## 仓库结构与开发
 
-安装依赖后，在仓库根目录运行：
+`src/` 为实现与网页界面，`prompts/` 为知识处理提示词，`tests/` 为回归和团队契约测试，`scripts/` 为验证脚本，`docs/` 为文档。`cordis.patch.yml` 注册插件组件，`locale/` 提供中英文本地化。
 
 ```sh
 pnpm typecheck
@@ -97,17 +73,10 @@ pnpm check:docs
 pnpm test
 ```
 
-`pnpm test` 会先构建插件。常规自动化测试使用临时目录和本地测试模型；团队契约测试需要独立的 ACN 源码仓库。构建、测试、打包和安装检查应串行执行，完整命令见[开发指南](docs/development.md)。
-
-## 团队使用
-
-团队成员各自维护本地知识，通过 Router 发现其他成员分享的 Claim。遇到知识冲突时，可向 Maintainer 提交争议；自动仲裁还需在服务端配置模型并启用。可采纳的裁决建议通过 Inbox 送达直接涉争 Claim 的持有者，经各自内化后才可能更新本地知识。其他成员通过 Router 查询后续共享版本，并非接收全员广播。
-
-
-[文档导航](docs/index.md) · [架构](docs/architecture.md) · [开发指南](docs/development.md) · [更新记录](CHANGELOG.md)
+自动化测试使用临时目录和本地测试模型。团队契约测试还需要独立的 ACN 源码仓库；完整验证流程见[开发指南](docs/development.md)。版本变化见[更新记录](CHANGELOG.md)。
 
 许可证：[MIT](LICENSE-MIT) 或 [Apache-2.0](LICENSE-APACHE)。
 
 ## ACN 原仓库
 
-ACN 原生应用、Router 和 Maintainer 的源码与使用说明见 [FTShare-Lab/agent-claim-network](https://github.com/FTShare-Lab/agent-claim-network)。本仓库维护其 DSH 插件实现。
+ACN 原生应用、Router 和 Maintainer 的源码与部署说明见 [FTShare-Lab/agent-claim-network](https://github.com/FTShare-Lab/agent-claim-network)。本仓库维护其 DSH 插件实现。

@@ -1,91 +1,67 @@
-# agent-claim-network
+# agent-claim-network · ACN memory framework
 
-[中文](README.md)
+[中文](README.md) · [Illustrated user handbook (HTML, Chinese)](docs/user-guide.html) · [Documentation](docs/index.md)
 
-**Distill reusable knowledge and memories from agent work traces, and let experience flow across your team.**
+A knowledge and memory plugin for DeepSeek Harness (DSH). It extracts scoped, evidence-backed lessons from work, makes them available to later conversations, and optionally connects agents to ACN team services.
 
-ACN adds knowledge and private memory to DeepSeek Harness (DSH). DSH still owns the agent loop, context compaction, sessions and default file tools. ACN does not replace the host harness.
-
-This repository contains the TypeScript plugin, its web configuration page, model prompts and automated tests. Router and Maintainer are separately deployed ACN services; the plugin provides their clients.
-
-The same JavaScript package is used across platforms; desktop availability follows the DSH host. macOS has local regression coverage. Windows path handling and file protection have been updated and Windows CI is configured; Windows desktop acceptance remains unverified. See the [platform scope](docs/dsh-compat.md#操作系统).
+This repository contains the TypeScript plugin, web settings, prompts and tests. DSH owns the agent loop, context compaction, sessions and default file tools. The plugin manages knowledge and memory. Router and Maintainer are separate services deployed by your team.
 
 ## Capabilities
 
-| Feature | What it does |
+| Capability | Purpose |
 | --- | --- |
-| Claims and Traces | Store scoped, referenceable knowledge with evidence, confidence and provenance; read and revise it when relevant |
-| Recap and Finalize | Form knowledge through `/recap`, batch or tail idle periods, host compaction, and archive finalization; process increments and pause automatic work after archival |
-| Private Memory | Maintain `MEMORY.md` and `USER.md`, with frozen session snapshots, periodic reviews that prioritize dialogue, and no direct team upload |
-| Dream | Clean up and consolidate knowledge, trace its local provenance, and optionally check workspace files while preserving valid conditions and evidence limits; retry malformed tool JSON within a fixed limit |
-| Work configurations | Save multiple solo or team upstreams, inherit the newest conversation configuration per project, with a global fallback, and keep session ownership and private stores separate |
-| Team collaboration | Discover claims through ACN Router, deliver knowledge to Maintainer and internalize its suggestions locally |
-| Recovery and import | Resume interrupted background work, classify model failures with bounded retries, and import existing ACN knowledge without overwriting targets |
+| Recap and Finalize | Extract reusable Claims and source Traces from new conversation content, manually, after idle thresholds, or at archive time |
+| Knowledge reuse | Let agents retrieve existing lessons and assess their scope and evidence for the current task |
+| Team collaboration | Query Router, share Claims, report disputes and internalize suggestions from Maintainer |
+| Dream | Clean up temporary records and consolidate related knowledge while preserving conditions, versions and evidence limits; model requests have a per-run budget |
+| Private Memory | Keep stable experience and user preferences separate from team knowledge |
+| Knowledge and activity UI | Inspect local knowledge, sources, processing results, delivery and recovery actions |
 
-## Install and configure
+Each work configuration owns an Agent ID, knowledge and private memory. Projects using the same configuration share that store; configurations are isolated. Solo mode requires no team services and sends no team requests.
 
-Version `0.1.0` remains unpublished. Build a local package from source with Node `^22.19.0 || >=24.0.0` and pnpm `11.25.0`:
+![ACN work configurations in DSH, Chinese UI](docs/assets/upstream-settings.jpg)
+
+## Install and start
+
+Version `0.1.0` is not publicly released. If you already have a trusted `.tgz`, install it directly in DSH. To build from source, use Node `^22.19.0 || >=24.0.0` and pnpm `11.25.0`:
 
 ```sh
 pnpm install --frozen-lockfile
 pnpm pack --pack-destination .artifacts
 ```
 
-In DSH, open **Plugins**, add the tarball by its absolute local path, then enable **agent-claim-network**. **Settings → ACN settings** and the plugin detail share three tabs: **Work configurations**, **Knowledge and model**, and **Preferences**. Create a work configuration with an Agent ID; its display name is optional. The first configuration becomes the global default. Open **Configure**, change **Use as default**, and save to select another default; replacing an existing default requires confirmation. Preferences expose completion notices and six advanced parameters. New sessions inherit the configuration of the most recently created ordinary conversation in the same project. They fall back to the global default when no valid record is available. Users can change the selection before the first message; existing sessions and drafts retain their bindings. No project preference UI or additional host compatibility package is required.
+1. Start DSH. In **Plugins → Add plugin → Install third-party plugin**, enter the tarball's absolute path on the **computer running DSH**, then install and enable it.
+2. Open **Settings → ACN settings**, create a work configuration, enter a stable Agent ID and save. Team members should confirm the ID with their administrator.
+3. Choose a **Knowledge model** under **Knowledge and model**. This is separate from the chat model beside the composer; the default knowledge directory is usually sufficient.
+4. Create a blank conversation, confirm the ACN configuration before sending the first message, and work normally. Use **ACN → Recap this conversation**, then inspect **Knowledge and activity**.
 
-Only blank conversations created after plugin installation can choose a work configuration, including drafts created before initial setup. Pre-install conversations and conversations that started chatting without a configuration remain usable for ordinary chat, with no ACN knowledge or private Memory access; they cannot join a team midway. A bound conversation cannot switch ownership after its first message. Disabled configurations retain their key and data for restoration. Source links open exact local details with back navigation and explain missing team sources without automatic network requests.
+New conversations prefer the valid configuration of the most recently created ordinary conversation in the same project, otherwise the global default. Ownership is fixed after the first message. Pre-install conversations and conversations started without a configuration remain available for ordinary chat, but cannot enable ACN midway; create a new conversation to use knowledge and memory.
 
-Each upstream can run solo or connect to team services. Enable team services in the existing configuration and supply both URLs and paste the Team authentication key directly. The input is masked by default; the eye button toggles visibility of the current entry. Saving the configuration also stores the key in DSH; reference names are generated internally. Connection checks use the draft key without saving it. Reopening shows only configured status; leave the field empty to keep the saved key. Plugin YAML and responses never contain the credential value. Existing environment references remain supported. Change enabled state under Configure and save to apply it. Changing a keyed team Agent ID requires a new member key or explicit removal of the binding. Conflicting edits keep the Agent ID, URLs and key together; refresh preserves the draft and asks which complete connection to keep. Old credential references are retained for other resident instances. A cold resume keeps the upstream and Agent ID, but uses its currently saved team connection; create a separate upstream to isolate teams. The same Agent ID and local knowledge are retained. Team members use distinct IDs matching their authorization. The composer waits while team preparation is running. If synchronization fails, the selected identity is retained and local work remains available; retry synchronization or fix settings before team sync can resume. Solo history is not automatically uploaded when joining. Changing team URLs keeps the pending queue, so eligible pending records may be delivered to the new service after activation. Create another upstream to isolate teams.
+The **[HTML user handbook](docs/user-guide.html)** contains the complete illustrated walkthrough in Chinese. Download and open it in a browser; images are embedded for offline sharing and printing. A short [Markdown entry](docs/user-guide.md) remains available for repository browsing.
 
-Opening a full source conversation uses the host navigation flow, which may resume its Agent and synchronize the Inbox according to the team startup setting. Knowledge browsing and read-only binding inspection do not activate an Agent.
+## Team use
 
-Configuration edits take effect in newly started runtime instances; running sessions retain their starting clients. **Reload saved configuration** discards unsaved edits. New stores use `<home>/<upstream>/data/agents/<agentId>/`; existing installations retain their original directories through migration mappings.
+Obtain Router and Maintainer URLs, your Agent ID and, if required, a team key from the administrator. Enable team services in the configuration, enter the details, check connectivity and save. The key is masked by default and stored by DSH; plugin configuration retains only its managed reference.
 
-Chat and background models are selected separately from the models configured in DSH. Changing identity or storage location does not migrate data; start a new session after either change. Private memory review sends its input to the configured model provider, not to team services.
+Shared knowledge enters the delivery queue after formation. Other members discover it through Router. Maintainer suggestions enter Inbox and may update local knowledge only after agent internalization. **Local completion, team delivery and member adoption are separate stages.** Arbitration suggestions go to direct holders of the disputed Claims, rather than every member.
 
-ACN background tasks default to a 32,768-token output limit. Explicit `llm.maxOutputTokens` settings continue to take precedence; see the [configuration reference](docs/config.md).
+Traces and private Memory are not directly uploaded to the team. Private memory review still uses the selected model provider. A Router without LLM reranking is currently recommended: changing candidate sets can block automatic arbitration adoption. See the [team walkthrough](docs/user-guide.html#team) and [known limitations](docs/outstanding-issues.md).
 
-Knowledge formation, team delivery and local internalization are separate stages:
+## Compatibility and documentation
 
-```mermaid
-flowchart LR
-  Work[Work in DSH] --> Recap[Recap / Finalize]
-  Recap --> Local[Local knowledge and Traces]
-  Local -->|Claims and Disputes only| Upload[Team upload queue]
-  Upload --> Maintainer[Maintainer team knowledge]
-  Maintainer --> Router[Router retrieval]
-  Router --> Use[Members assess and reuse]
-  Maintainer -->|Arbitration advice to direct holders only| Inbox[Durable local inbox]
-  Inbox -->|Model internalization and validation| Local
-```
+Declared DSH range: `>=0.2.1-rc.2 <0.3.0`. macOS has local acceptance coverage. Windows path and file protection support and CI are included; Windows desktop device acceptance is still pending. The same JavaScript package is used across supported host platforms. See [DSH compatibility](docs/dsh-compat.md).
 
-Solo mode keeps the local path only. Traces and private Memory do not enter the upload queue. A completed resolution or receipt acknowledgment does not mean that local Claims have been revised.
-
-![ACN configuration page in DSH, Chinese UI](docs/assets/upstream-settings.jpg)
-
-The declared DSH version range is `>=0.2.1-rc.2 <0.3.0`, with `0.2.1-rc.2` as the compatibility baseline. The package identifier is `dsh-plugin-acn`; the Chinese display name is **ACN记忆框架**.
-
-Browse public Claims, Disputes and Traces from the conversation **ACN → Knowledge and activity** menu. The **Activity** tab shows results, source sessions and explicit retry controls. Browsing never syncs or calls a model. Local completion and team delivery are separate states. Brief result notices appear only in the visible, focused source session.
-
-Claims and Disputes show **Synced**, **Pending delivery** or **Local**. Synced requires a successful receipt for the exact current version and team destination; historical records without a receipt remain Local. Source sessions are linked by title, checked before opening, and marked unavailable when deleted or unreadable. Source Claim and Trace links stay within the selected local knowledge store and preserve the previous detail view.
-
-Configuration rows show mode and default badges. Enablement and default selection are edited under Configure and applied on save; replacing an existing default requires confirmation. The knowledge directory field provides the desktop host's native folder chooser and a separate Open directory action. Choosing a folder changes the draft until saved. Routine setting feedback appears briefly at the top of the window.
-
-## Repository layout
-
-| Path | Contents |
+| Topic | Reference |
 | --- | --- |
-| `src/` | Knowledge, memory, storage, team clients, DSH integration and web configuration |
-| `prompts/` | Model prompts for knowledge formation, consolidation, internalization and memory review |
-| `cordis.patch.yml` | Plugin component composition and registration |
-| `locale/` | Chinese and English localization resources |
-| `tests/` | Unit, integration, protocol contract, concurrency and crash recovery tests |
-| `scripts/` | Compatibility checks, installation checks and local team service tests |
-| `docs/` | Usage, configuration, architecture and development documentation |
+| Installation and everyday use | [Illustrated HTML handbook](docs/user-guide.html) |
+| Settings, storage and model behavior | [Configuration](docs/config.md) |
+| Commands, tools, migration and recovery | [Command reference](docs/command-reference.md) |
+| Modules and data ownership | [Architecture](docs/architecture.md) |
+| Building and testing | [Development](docs/development.md) |
 
-## Development and testing
+## Repository and development
 
-After installing dependencies, run these commands from the repository root:
+`src/` contains implementation and web UI; `prompts/` contains knowledge-processing prompts; `tests/` covers regression and service contracts; `scripts/` contains verification tooling; `docs/` contains documentation. `cordis.patch.yml` registers components and `locale/` contains Chinese and English resources.
 
 ```sh
 pnpm typecheck
@@ -95,21 +71,10 @@ pnpm check:docs
 pnpm test
 ```
 
-`pnpm test` builds the plugin first. Regular automated tests use temporary directories and local test models. Team contract tests require a separate ACN source checkout. Run builds, tests, packaging and installation checks sequentially; see the [development guide](docs/development.md) for the complete commands.
-
-## Team usage and limitations
-
-Each team member maintains local knowledge and uses Router to discover Claims shared by others. Members can submit conflicting knowledge to Maintainer as disputes. Automatic arbitration requires its own service-side model and configuration. Adopted advice goes only to direct Claim holders through Inbox, and may revise their local knowledge after internalization; other members discover subsequent shared revisions through Router. It is not a broadcast to every member.
-
-Use a **Router without LLM reranking**: changes in reranked candidate sets can block automatic arbitration adoption. Knowledge reuse depends on the agent retrieving and applying relevant Claims. Evidence records and Dream's citation checks do not guarantee factual accuracy; scope and evidence limitations still matter. Memory protection is not an operating-system sandbox.
-
-Activity distinguishes local completion, warnings, budget closure, unfinished groups and team delivery failures. Filters run before paging so older failures remain reachable. Rejected disputes remain undelivered after acknowledgment. A new Dream reads current claims. Credential replacement adopts a new managed reference only after configuration saves; failed saves retain the draft and old credentials. Existing sessions keep their startup connection. Configuration conflicts offer a refresh that preserves draft edits. An inactive knowledge component leaves ordinary chat available and links to plugin management.
-
-
-Further documentation is in Chinese: [documentation index](docs/index.md), [illustrated user guide](docs/user-guide.md), [configuration](docs/config.md), [command reference](docs/command-reference.md), [limitations](docs/outstanding-issues.md), [development](docs/development.md), [architecture](docs/architecture.md). See the [changelog](CHANGELOG.md) for version changes.
+Automated tests use temporary directories and local test models. Service contract tests also require an ACN source checkout. See the [development guide](docs/development.md) for all checks and the [changelog](CHANGELOG.md) for changes.
 
 License: [MIT](LICENSE-MIT) OR [Apache-2.0](LICENSE-APACHE).
 
 ## Original ACN repository
 
-The native ACN application, Router and Maintainer are maintained in [FTShare-Lab/agent-claim-network](https://github.com/FTShare-Lab/agent-claim-network), along with their usage documentation. This repository maintains the DSH plugin implementation.
+The native ACN application, Router, Maintainer and deployment instructions are maintained in [FTShare-Lab/agent-claim-network](https://github.com/FTShare-Lab/agent-claim-network). This repository maintains the DSH plugin implementation.
