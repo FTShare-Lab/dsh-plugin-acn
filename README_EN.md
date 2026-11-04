@@ -67,6 +67,10 @@ The declared DSH version range is `>=0.2.1-rc.2 <0.3.0`, with `0.2.1-rc.2` as th
 
 Browse public Claims, Disputes and Traces from the conversation **ACN → Knowledge and activity** menu. The **Activity** tab shows results, source sessions and explicit retry controls. Browsing never syncs or calls a model. Local completion and team delivery are separate states. Brief result notices appear only in the visible, focused source session.
 
+Claims and Disputes show **Synced**, **Pending delivery** or **Local**. Synced requires a successful receipt for the exact current version and team destination; historical records without a receipt remain Local. Source sessions are linked by title, checked before opening, and marked unavailable when deleted or unreadable. Source Claim and Trace links stay within the selected local knowledge store and preserve the previous detail view.
+
+Configuration rows show mode and default badges. Enablement and default selection are edited under Configure and applied on save; replacing an existing default requires confirmation. The knowledge directory field provides the desktop host's native folder chooser and a separate Open directory action. Choosing a folder changes the draft until saved. Routine setting feedback appears briefly at the top of the window.
+
 ## Repository layout
 
 | Path | Contents |

@@ -1,7 +1,9 @@
 // 配置只保存非敏感参数和环境变量名；领域层不依赖宿主配置运行时。
 import { z } from 'zod';
 import { AgentIdSchema } from './protocol/ids.js';
+import { portableLocalName } from './local-name.js';
 
+const localName = (value: string) => typeof process === 'undefined' || process.platform !== 'win32' || portableLocalName(value);
 const positive = () => z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const nonnegative = () => z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const endpoint = z.string().refine((value) => {
@@ -10,14 +12,15 @@ const endpoint = z.string().refine((value) => {
   catch { return false; }
 });
 
-export const UpstreamNameSchema = z.string().regex(/^[a-z0-9_-]+$/).refine((value) => !['data', 'skills', 'config.toml', 'acn.md', 'logs', 'tmp', '.git'].includes(value));
+export const UpstreamNameSchema = z.string().regex(/^[a-z0-9_-]+$/).refine((value) => localName(value) && !['data', 'skills', 'config.toml', 'acn.md', 'logs', 'tmp', '.git'].includes(value));
+const LocalAgentIdSchema = AgentIdSchema.refine(localName);
 export const UpstreamSchema = z.strictObject({
-  name: z.string().trim().max(80).default(''), agentId: AgentIdSchema, enabled: z.boolean().default(true),
+  name: z.string().trim().max(80).default(''), agentId: LocalAgentIdSchema, enabled: z.boolean().default(true),
   routerEndpoint: endpoint.default(''), maintainerEndpoint: endpoint.default(''),
   keyEnv: z.string().regex(/^(?:[A-Za-z_][A-Za-z0-9_]*)?$/).default(''), timeoutMs: positive().default(15_000),
   // 旧安装只记录可推导的目录种类，不能把网页输入变成任意存储路径。
   legacyStorage: z.enum(['base', 'personal', 'connection']).optional(),
-  legacyKey: z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/).optional(),
+  legacyKey: z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/).refine(localName).optional(),
 }).superRefine((value, ctx) => {
   if (Boolean(value.routerEndpoint) !== Boolean(value.maintainerEndpoint)) ctx.addIssue({ code: 'custom', path: ['routerEndpoint'], message: 'Configure both team endpoints or neither.' });
   if ((value.legacyStorage === 'connection') !== (value.legacyKey !== undefined)) ctx.addIssue({ code: 'custom', path: ['legacyStorage'], message: 'Invalid legacy storage mapping.' });
@@ -25,8 +28,8 @@ export const UpstreamSchema = z.strictObject({
 export type Upstream = z.infer<typeof UpstreamSchema>;
 
 export const ConnectionSchema = z.strictObject({
-  id: z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/).refine((id) => !['personal', 'legacy'].includes(id)),
-  name: z.string().trim().min(1).max(80), enabled: z.boolean().default(true), agentId: AgentIdSchema,
+  id: z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/).refine((id) => localName(id) && !['personal', 'legacy'].includes(id)),
+  name: z.string().trim().min(1).max(80), enabled: z.boolean().default(true), agentId: LocalAgentIdSchema,
   routerEndpoint: endpoint.refine(Boolean), maintainerEndpoint: endpoint.refine(Boolean),
   keyEnv: z.string().regex(/^(?:[A-Za-z_][A-Za-z0-9_]*)?$/).default(''), timeoutMs: positive().default(15_000),
 });
@@ -34,7 +37,7 @@ export type Connection = z.infer<typeof ConnectionSchema>;
 
 export const ConfigSchema = z.strictObject({
   upstream: z.string().default(''), upstreams: z.record(UpstreamNameSchema, UpstreamSchema).optional(),
-  agentId: z.union([z.literal(''), AgentIdSchema]).default(''),
+  agentId: z.union([z.literal(''), LocalAgentIdSchema]).default(''),
   home: z.string().trim().min(1).default('~/.acn-dsh'),
   sessionEpoch: nonnegative().default(0),
   connections: z.array(ConnectionSchema).max(50).default([]),

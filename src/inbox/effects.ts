@@ -104,7 +104,7 @@ export class InboxEffectStore {
       else for (const member of effect.members) await new InboxStore(this.context).completeSnapshotLocked(member.message);
     }
   }
-  async commit(messages: readonly InboxMessage[], analysisClaims: Claim[], prepared: PreparedFormation, control: JobControl): Promise<{ applied: number; warnings: string[] }> {
+  async commit(messages: readonly InboxMessage[], analysisClaims: Claim[], prepared: PreparedFormation, control: JobControl): Promise<{ applied: number; warnings: string[]; entityIds?: string[] }> {
     return withFileLock(this.context.paths.knowledgeLock, async () => {
       await new DreamStore(this.context).recoverLocked();
       await ensureKnowledgeReady(this.context.paths.root);
@@ -141,7 +141,7 @@ export class InboxEffectStore {
       const effect = InboxEffectSchema.parse({ schemaVersion: 1, type: 'effect', canonicalId: first.id, batchHash: batchHash(members), members, status: 'prepared', teamAuthorized: this.context.mode === 'team', syncClaims: prepared.syncClaims ?? [], analysisClaims, preparedClaims: prepared.claims, appliedClaims: [], disputes, trace, warnings: prepared.warnings, retiredPolicies: messages.filter((message) => message.message_type === 'policy_update' && message.policy.status === 'deprecated').map((message) => message.policy.id) });
       control.signal.throwIfAborted(); control.prepared();
       await this.write(effect); await this.references(effect); await this.applyLocked(effect);
-      return { applied: effect.appliedClaims.length, warnings: effect.warnings };
+      return { applied: effect.appliedClaims.length, warnings: effect.warnings, entityIds: [...effect.appliedClaims.map((claim) => claim.id), ...effect.disputes.map((dispute) => dispute.id), ...effect.trace === null ? [] : [effect.trace.id]] };
     }, { timeoutMs: this.context.lockTimeoutMs, signal: control.signal });
   }
   private async applyLocked(effect: InboxEffect): Promise<void> {

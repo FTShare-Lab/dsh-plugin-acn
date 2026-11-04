@@ -13,9 +13,11 @@ export const SessionViewSchema = z.object({
   choices: z.array(RuntimeChoiceSchema), showCompletion: z.boolean(),
 });
 export type SessionView = z.infer<typeof SessionViewSchema>;
-export const KnowledgeItemSchema = z.object({ kind: z.enum(['claim', 'dispute', 'trace']), id: z.string(), name: z.string(), status: z.string(), detail: z.string(), summary: z.string().optional(), updatedAt: z.string().optional(), delivery: z.enum(['pending', 'local']).optional() });
+export const SourceSessionSchema = z.object({ id: z.string(), available: z.boolean(), title: z.string().optional() });
+export type SourceSession = z.infer<typeof SourceSessionSchema>;
+export const KnowledgeItemSchema = z.object({ kind: z.enum(['claim', 'dispute', 'trace']), id: z.string(), name: z.string(), status: z.string(), detail: z.string(), summary: z.string().optional(), updatedAt: z.string().optional(), delivery: z.enum(['pending', 'synced', 'local']).optional(), sources: z.array(SourceSessionSchema).optional() });
 export const ActivitySchema = z.object({
-  id: z.string(), kind: z.string(), state: z.string(), attempts: z.number(), updatedAt: z.number(), unseen: z.boolean().default(false), sessionId: z.string().optional(), summary: z.string(), error: z.string().optional(),
+  id: z.string(), kind: z.string(), state: z.string(), attempts: z.number(), updatedAt: z.number(), unseen: z.boolean().default(false), sessionId: z.string().optional(), source: SourceSessionSchema.optional(), summary: z.string(), error: z.string().optional(),
   summaryInfo: MessageInfoSchema.optional(), errorInfo: MessageInfoSchema.optional(), counts: z.record(z.string(), z.number()).optional(),
   warnings: z.array(z.string()).optional(), budgetLimited: z.boolean().optional(), requiresAttention: z.boolean().optional(),
   incompleteCandidates: z.array(z.object({ groupId: z.string(), claimIds: z.array(ClaimIdSchema), reason: z.string() })).optional(),
@@ -35,9 +37,11 @@ export const InteractionRequestSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('select'), sessionId: z.string(), key: z.string() }),
   z.object({ action: z.literal('cancel'), sessionId: z.string() }),
   z.object({ action: z.literal('sync'), sessionId: z.string() }),
-  z.object({ action: z.literal('knowledge'), key: z.string(), query: z.string().max(500).default(''), kind: z.enum(['claim', 'dispute', 'trace']).default('claim'), status: z.string().max(30).default(''), delivery: z.enum(['all', 'pending', 'local']).default('all'), offset: z.number().int().nonnegative().default(0) }),
+  z.object({ action: z.literal('knowledge'), key: z.string(), query: z.string().max(500).default(''), kind: z.enum(['claim', 'dispute', 'trace']).default('claim'), status: z.string().max(30).default(''), delivery: z.enum(['all', 'pending', 'synced', 'local']).default('all'), offset: z.number().int().nonnegative().default(0) }),
   z.object({ action: z.literal('activity'), key: z.string(), attentionOnly: z.boolean().default(false), sourceSession: z.string().default(''), kind: z.string().max(30).default(''), state: z.string().max(30).default(''), offset: z.number().int().nonnegative().default(0) }),
   z.object({ action: z.literal('reference'), key: z.string(), id: ReferenceIdSchema }),
+  z.object({ action: z.literal('source_session'), sessionId: z.string().regex(/^[a-zA-Z0-9_-]+$/) }),
+  z.object({ action: z.literal('open_directory'), path: z.string().trim().min(1).max(32767) }),
   z.object({ action: z.literal('retry_delivery'), key: z.string() }),
   z.object({ action: z.literal('dream_again'), key: z.string(), id: z.string() }),
   z.object({ action: z.literal('retry'), key: z.string(), id: z.string() }),
@@ -50,6 +54,7 @@ export type InteractionRequest = z.input<typeof InteractionRequestSchema>;
 export const InteractionResultSchema = z.object({
   ok: z.boolean(), message: z.string(), messageInfo: MessageInfoSchema.optional(), serviceAvailable: z.boolean().optional(), session: SessionViewSchema.optional(), knowledge: KnowledgeViewSchema.optional(),
   reference: KnowledgeReferenceSchema.optional(),
+  sourceSession: SourceSessionSchema.optional(),
   checks: ConnectionChecksSchema.optional(),
 });
 export type InteractionResult = z.infer<typeof InteractionResultSchema>;

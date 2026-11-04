@@ -2,13 +2,18 @@
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { AgentIdSchema, ClaimIdSchema, DisputeIdSchema, InboxIdSchema, TraceIdSchema } from '../protocol/ids.js';
+import { portableLocalName } from '../local-name.js';
+
+export function expandHomePath(path: string): string {
+  return path === '~' ? homedir() : path.startsWith('~/') || process.platform === 'win32' && path.startsWith('~\\') ? join(homedir(), path.slice(2)) : path;
+}
 
 export function agentHomePath(home: string, agentId: string): string {
-  const expanded = home === '~' ? homedir() : home.startsWith('~/') ? join(homedir(), home.slice(2)) : home;
-  return join(resolve(expanded), 'agents', AgentIdSchema.parse(agentId));
+  if (process.platform === 'win32' && !portableLocalName(agentId)) throw new Error('Agent ID is a reserved local directory name.');
+  return join(resolve(expandHomePath(home)), 'agents', AgentIdSchema.parse(agentId));
 }
 export function safeKey(value: string): string {
-  if (!/^[a-zA-Z0-9_-]+$/.test(value)) throw new Error('Invalid local document identifier.');
+  if (!/^[a-zA-Z0-9_-]+$/.test(value) || process.platform === 'win32' && !portableLocalName(value)) throw new Error('Invalid local document identifier.');
   return value;
 }
 export class AgentPaths {

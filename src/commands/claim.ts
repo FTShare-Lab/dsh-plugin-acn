@@ -3,7 +3,7 @@ import { ClaimIdSchema } from '../protocol/ids.js';
 import { KnowledgeError, RevisionConflict } from '../knowledge/errors.js';
 import type { AcnKnowledge } from '../knowledge/service.js';
 
-export function commandWords(input: string): string[] {
+export function commandWords(input: string, literalBackslashes = false): string[] {
   const words: string[] = [];
   let current = '';
   let quote: string | undefined;
@@ -11,7 +11,7 @@ export function commandWords(input: string): string[] {
   let started = false;
   for (const char of input) {
     if (escaped) { current += char; escaped = false; started = true; }
-    else if (char === '\\') { escaped = true; started = true; }
+    else if (char === '\\' && !literalBackslashes) { escaped = true; started = true; }
     else if (quote !== undefined) { if (char === quote) quote = undefined; else current += char; }
     else if (char === '"' || char === "'") { quote = char; started = true; }
     else if (/\s/u.test(char)) { if (started) words.push(current); current = ''; started = false; }

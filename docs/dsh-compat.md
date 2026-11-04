@@ -10,6 +10,8 @@
 
 私有文件读取会检查符号链接、硬链接以及路径与打开文件的身份；在 Windows 缺少 `O_NOFOLLOW` 等 POSIX 标志时仍执行这些检查。普通文件工具仅拒绝指向私有数据的硬链接，公开项目的硬链接不阻断搜索。安装验收使用 Node 脚本和系统临时目录；Windows CI 覆盖 Node 22 / 24 的核心存储、交互和实际安装。CI 配置已加入不代表已经在 Windows 桌面完成手工验收。Rust 参考服务契约脚本继续在 Linux 执行。
 
+Windows 导入命令保留原生路径的反斜杠，支持盘符、UNC、含空格的引号路径与 `~\` 主目录前缀。Agent ID、配置标识等本地目录名会拒绝 `con`、`nul`、`com1` 等 Windows 设备保留名称；其他平台已有合法名称继续兼容。
+
 安装由宿主读取 tarball 的 `dsh.bundle.patch`，九行组合（网页配置入口和八个领域组件）按隔离服务依赖装配。只有 `plugins/` 与 `dsh-adapter/` 导入宿主运行时；协议与核心模块可独立使用。按 id 覆盖整体替换 config，插件再补字段默认值。
 
 | 公开接口 | 用途与约束 |
@@ -24,6 +26,7 @@
 | `conversation.input.left`、conversation blocks、`uiWorkspace.openSession` | 会话团队选择、首次准备反馈、知识活动与返回来源 |
 | `sessionPersistence.list/open`、`sessions.list` | 同项目按创建时间选择最近普通会话的 upstream，只读历史，不恢复 Agent |
 | `sessionController.inspect` / `resolveAgent` | 只读历史与显式恢复分离，不因浏览启动同步 |
+| `uiWorkspace.pickDirectory`、`sessionController.openWorkspacePath` | 目录选择与系统文件管理器由桌面宿主提供，选择只更新草稿；打开前展开主目录并检查目录存在 |
 | Typert Remote / Gateway、`configEditor.edit` | 宿主认证、严格入参、profile 文件锁、原子写和普通字段重载 |
 | `workspaceRegistry.archiveSession`、`archivedSessionIds` | 归档前冻结范围，归档后暂停；包裹公开方法，卸载时恢复。宿主升级需重验普通及停止归档 |
 | `credentials.resolve/describe/set` | 每次团队请求解析引用，设置页只回传可用状态；密码独立写入宿主托管存储 |

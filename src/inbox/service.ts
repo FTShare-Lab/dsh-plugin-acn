@@ -71,6 +71,7 @@ export class AcnInbox {
     const claimed = await store.claimPending();
     let applied = 0;
     let handled = 0;
+    const entityIds = new Set<string>();
     try {
       for (let offset = 0; offset < claimed.length;) {
         const first = claimed[offset];
@@ -91,13 +92,14 @@ export class AcnInbox {
         // prepared 只保护本批固定提交；卸载期间完成该批后不得启动下一批或投递。
         control.committed?.();
         applied += result.applied; handled += messages.length;
+        for (const id of result.entityIds ?? []) entityIds.add(id);
         control.signal.throwIfAborted();
       }
     } finally { for (const item of claimed) await store.release(item); }
     control.signal.throwIfAborted();
     const delivery = await new UploadDelivery(context, this.knowledge.team).deliver(control.signal);
     if ((await store.listPending()).length > 0) await this.enqueue();
-    return { ...sync, applied, handled, uploadedClaims: delivery.deliveredClaims, reportedDisputes: delivery.deliveredDisputes, warnings: [...sync.warnings, ...delivery.warnings] };
+    return { ...sync, applied, handled, entityIds: [...entityIds], uploadedClaims: delivery.deliveredClaims, reportedDisputes: delivery.deliveredDisputes, warnings: [...sync.warnings, ...delivery.warnings] };
   }
   async close(): Promise<void> {
     this.stopping.abort(new JobError('suspended', 'Inbox 已暂停，未完成消息保留。')); this.unregister();

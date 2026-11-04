@@ -2,6 +2,8 @@
 import type { Copy } from './interaction-ui.js';
 const statuses: Record<string, string> = { active: '活跃', stale: '陈旧', deprecated: '废弃', deprecate: '废弃', open: '待处理', resolved: '已处理', live: '最近活跃', lagging: '最近未同步', idle: '长期未同步' };
 export function knowledgeStatus(value: string, c: Copy): string { return c(statuses[value.toLowerCase()] ?? value, value); }
+// 置信度沿用桌面知识页的高、中、低；不改变状态枚举和知识正文。
+export function knowledgeConfidence(value: string, c: Copy): string { return c(({ high: '高', medium: '中', low: '低' })[value.toLowerCase()] ?? value, value); }
 const formatter = new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
 export function knowledgeDate(value: string | number): string { const date = new Date(value); return Number.isNaN(date.getTime()) ? String(value) : formatter.format(date).replace(',', ''); }
 export function knowledgeLabels(c: Copy): Record<string, string> {

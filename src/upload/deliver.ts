@@ -13,6 +13,7 @@ import { RejectedDisputeStore, disputeVersion } from '../store/rejected-disputes
 import { TeamError } from '../team/errors.js';
 import type { TeamFacade } from '../team/service.js';
 import { nowSeconds } from '../protocol/time.js';
+import { claimRevision } from '../protocol/revision.js';
 
 export interface DeliveryReport { deliveredClaims: number; deliveredDisputes: number; pendingClaims: number; pendingDisputes: number; warnings: string[] }
 export class UploadDelivery {
@@ -47,7 +48,7 @@ export class UploadDelivery {
           attempted.add(claim.id); progressed = true;
           try {
             await team.request('maintainer', () => team.maintainer.upload(claim, signal));
-            lease.check(); await queue.removeDeliveredClaims([claim]); report.deliveredClaims += 1; await status.clear('claim', claim.id);
+            lease.check(); await status.acknowledge('claim', claim.id, claimRevision(claim), team.maintainer.http.endpoint); await queue.removeDeliveredClaims([claim]); report.deliveredClaims += 1;
           } catch (error) { if (!(error instanceof TeamError)) throw error; if (error.kind !== 'cancelled') await status.record({ kind: 'claim', id: claim.id, reason: error.kind === 'legacy_route' ? 'client' : error.kind, ...(error.status === undefined ? {} : { status: error.status }) }); report.warnings.push(error.message); if (error.kind === 'auth' || error.kind === 'cancelled') { stopped = true; break; } }
         }
         if (!progressed) break;
@@ -62,7 +63,7 @@ export class UploadDelivery {
           const recorded = (await ledger.read()).reported_claim_sets[reportedClaimSetKey(dispute.claims)];
           if (recorded === undefined) {
             await team.request('maintainer', () => team.maintainer.report(dispute, signal));
-            lease.check(); await ledger.record(dispute.claims, dispute.id, nowSeconds()); report.deliveredDisputes += 1;
+            lease.check(); await status.acknowledge('dispute', dispute.id, disputeVersion(dispute), team.maintainer.http.endpoint); await ledger.record(dispute.claims, dispute.id, nowSeconds()); report.deliveredDisputes += 1;
           }
           await queue.removeDeliveredDisputes([dispute]); await status.clear('dispute', dispute.id);
         } catch (error) {

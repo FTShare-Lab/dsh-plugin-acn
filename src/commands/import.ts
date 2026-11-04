@@ -1,7 +1,7 @@
 // 导入先验证只读源快照，再逐文件独占发布；中断后重试只补缺失文件。
 import fs from 'node:fs/promises';
 import { openSingleFile } from '../store/regular-file.js';
-import { homedir } from 'node:os';
+import { expandHomePath } from '../store/paths.js';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { z } from 'zod';
 import type { AcnKnowledge } from '../knowledge/service.js';
@@ -57,12 +57,11 @@ async function entities<T extends { id: string }>(root: string, name: string, sc
 function inside(parent: string, child: string): boolean { const path = relative(parent, child); return path === '' || (!path.startsWith(`..${sep}`) && path !== '..' && !isAbsolute(path)); }
 export async function importCommand(knowledge: AcnKnowledge, input: string, readOnly: boolean, signal?: AbortSignal): Promise<ImportReport> {
   if (readOnly) throw new KnowledgeError('ownership', 'Subagents cannot import private knowledge.');
-  const words = commandWords(input); const options = new Set(words.filter((word) => word.startsWith('--')));
+  const words = commandWords(input, process.platform === 'win32'); const options = new Set(words.filter((word) => word.startsWith('--')));
   const paths = words.filter((word) => !word.startsWith('--'));
   if (paths.length !== 1 || paths[0] === '' || [...options].some((option) => !['--dry-run', '--without-memory'].includes(option))) invalid('Usage: /acn-import [--dry-run] [--without-memory] <acn_agent_home>');
   const inputPath = paths[0] ?? '';
-  const expanded = inputPath === '~' ? homedir() : inputPath.startsWith('~/') ? join(homedir(), inputPath.slice(2)) : inputPath;
-  const source = resolve(expanded); await directory(source, true);
+  const source = resolve(expandHomePath(inputPath)); await directory(source, true);
   const context = knowledge.context(); const canonical = await fs.realpath(source);
   // 目标可能尚未创建；逐级 realpath 保留不存在的末尾，避免父目录别名绕过重叠检查。
   async function actual(path: string): Promise<string> { try { return await fs.realpath(path); } catch (error) { if (!hasCode(error, 'ENOENT')) throw error; const parent = resolve(path, '..'); if (parent === path) throw error; return join(await actual(parent), basename(path)); } }

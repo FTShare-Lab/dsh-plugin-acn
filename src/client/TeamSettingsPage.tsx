@@ -11,12 +11,16 @@ import type { Upstream } from '../config.js';
 import type { InteractionRequest, InteractionResult } from '../interaction.js';
 import type { CredentialRequest, CredentialResult } from '../credentials.js';
 import { TeamCredentialField } from './TeamCredentialField.js';
+import { ConnectionCheckDialog } from './ConnectionCheckDialog.js';
+import type { ConnectionCheckResult } from './ConnectionCheckDialog.js';
+import { SettingsToast } from './SettingsToast.js';
+import { KnowledgeDirectoryField } from './KnowledgeDirectoryField.js';
 import type { ConfigurationText } from './locales.js';
-import { Button, Row, Select, Tabs, configurationLabel, inputStyle, muted } from './interaction-ui.js';
-export interface InteractionApi extends ConfigurationApi { interact: (request: InteractionRequest, signal?: AbortSignal) => Promise<InteractionResult>; credential?: (request: CredentialRequest, signal?: AbortSignal) => Promise<CredentialResult> }
+import { Button, Modal, Row, Select, Tabs, inputStyle, muted } from './interaction-ui.js';
+export interface InteractionApi extends ConfigurationApi { interact: (request: InteractionRequest, signal?: AbortSignal) => Promise<InteractionResult>; credential?: (request: CredentialRequest, signal?: AbortSignal) => Promise<CredentialResult>; pickDirectory?: () => Promise<string | null> }
 export type SettingsTab = 'upstreams' | 'knowledge' | 'preferences';
 export interface TeamSettingsProps { api: InteractionApi; t: (key: ConfigurationText) => string; openKnowledge: (key: string) => void; initialTab?: SettingsTab; openPlugins?: (() => void) | undefined }
-type Draft = { key: string; existing: boolean; team: boolean; value: Omit<Upstream, 'agentId'> & { agentId: string }; secret: string; reference: string; credentialIdentity: string; removeSecret: boolean; base?: Upstream; connectionConflict?: Upstream; pendingReference?: string; pendingValue?: string };
+type Draft = { key: string; existing: boolean; team: boolean; defaultChoice: boolean; value: Omit<Upstream, 'agentId'> & { agentId: string }; secret: string; reference: string; credentialIdentity: string; removeSecret: boolean; base?: Upstream; connectionConflict?: Upstream; pendingReference?: string; pendingValue?: string };
 // 引用名属于存储接口；新配置自动分配，避免不同 upstream 意外共用密钥。
 const newCredentialReference = () => `ACN_TEAM_${Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, '0')).join('').toUpperCase()}`;
 export function settingsUpstreams(values: ConfigurationValues) {
@@ -29,15 +33,17 @@ export function TeamSettingsPage({ api, t, openKnowledge, initialTab = 'upstream
   const [editor, setEditor] = useState<Draft>(); const [home, setHome] = useState('');
   const [conflict, setConflict] = useState(false);
   const [message, setMessage] = useState(''); const [error, setError] = useState(false);
+  const [notice, setNotice] = useState<{ id: number; text: string }>(); const noticeSequence = useRef(0);
+  const [defaultConfirm, setDefaultConfirm] = useState<{ from: string; to: string }>();
   const confirmedSaveRejection = useRef(false); const stagedReference = useRef<string>();
   useEffect(() => { const previous = stagedReference.current; stagedReference.current = editor?.pendingReference; if (previous && previous !== editor?.pendingReference) void api.credential?.({ action: 'discard', reference: previous }).catch(() => undefined); }, [api, editor?.pendingReference]);
   // 关闭面板不会取消已提交的异步保存；卸载时保留暂存引用，避免先删除再落盘。
   const [busy, setBusy] = useState(false); const [probing, setProbing] = useState(false);
   const [credentialRefresh, setCredentialRefresh] = useState(0);
-  const [checks, setChecks] = useState<InteractionResult['checks']>(); const probe = useRef<AbortController>();
-  const feedback = (text: string, failed = false) => { setMessage(text); setError(failed); };
+  const [checkResult, setCheckResult] = useState<ConnectionCheckResult>(); const probe = useRef<AbortController>();
+  const feedback = (text: string, failed = false) => { setMessage(failed ? text : ''); setError(failed); setNotice(text && !failed ? { id: ++noticeSequence.current, text } : undefined); };
   const checkInput = editor === undefined ? undefined : JSON.stringify([editor.value.agentId, editor.team, editor.value.routerEndpoint, editor.value.maintainerEndpoint, editor.value.timeoutMs, editor.value.keyEnv, editor.secret, editor.removeSecret]);
-  useEffect(() => { if (checkInput !== undefined) { setChecks(undefined); setMessage(''); setError(false); } }, [checkInput]);
+  useEffect(() => { if (checkInput !== undefined) { setCheckResult(undefined); setMessage(''); setError(false); setNotice(undefined); } }, [checkInput]);
   useEffect(() => { const controller = new AbortController(); void api.read(controller.signal).then((value) => { if (!controller.signal.aborted) { setSnapshot(value); setHome(value.values.home); } }, () => { if (!controller.signal.aborted) { setMessage(t('errorLoad')); setError(true); } }); return () => { controller.abort(); probe.current?.abort(); }; }, [api, t]);
   async function persist(values: ConfigurationValues, keyStaged = false): Promise<boolean> {
     if (snapshot === undefined) return false;
@@ -48,12 +54,12 @@ export function TeamSettingsPage({ api, t, openKnowledge, initialTab = 'upstream
       const result = await api.save({ revision: snapshot.revision, values: next });
       if (!result.ok) { confirmedSaveRejection.current = ['busy', 'conflict', 'invalid', 'unavailable'].includes(result.code); setConflict(['conflict', 'persistence', 'inactive'].includes(result.code)); const keyMessage = keyStaged && confirmedSaveRejection.current ? c('本次密钥替换尚未生效，输入已保留。', 'The key replacement has not taken effect; your input is retained. ') : ''; feedback(keyMessage + t(result.code === 'inactive' ? 'activation' : result.code) + (result.code === 'invalid' ? '\n' + result.fields.map((field) => configurationFieldError(field, c)).join('\n') : ''), true); return false; }
       setConflict(false); setSnapshot(result.snapshot); setHome((draft) => draft === snapshot.values.home || draft === values.home ? result.snapshot.values.home : draft);
-      feedback((keyStaged ? c('配置与团队鉴权密钥已保存。', 'Configuration and team authentication key saved. ') : c('已保存。', 'Saved. ')) + c('新启动的会话使用新配置，现有会话保留启动时的连接。', 'Newly started sessions use the new configuration; running sessions retain their connection.')); return true;
+      feedback(keyStaged ? c('配置与团队鉴权密钥已保存。', 'Configuration and team authentication key saved.') : c('已保存。', 'Saved.')); return true;
     } catch { setConflict(true); feedback(t('errorTransport'), true); return false; } finally { setBusy(false); }
   }
-  async function reload() {
+  async function retryLoad() {
     setBusy(true);
-    try { const value = await api.read(); setConflict(false); setSnapshot(value); setHome(value.values.home); setEditor(undefined); setChecks(undefined); feedback(c('已重新加载，未保存的修改已丢弃。', 'Reloaded. Unsaved changes were discarded.')); }
+    try { const value = await api.read(); setSnapshot(value); setHome(value.values.home); feedback(''); }
     catch { feedback(t('errorLoad'), true); } finally { setBusy(false); }
   }
   async function refreshDraft() {
@@ -78,7 +84,7 @@ export function TeamSettingsPage({ api, t, openKnowledge, initialTab = 'upstream
         }
       }
       setHome((value) => value === snapshot.values.home ? current.values.home : value);
-      setSnapshot(current); setConflict(false); setChecks(undefined);
+      setSnapshot(current); setConflict(false); setCheckResult(undefined);
       feedback(occupied ? c('该配置标识已被其他配置使用，草稿已保留。请展开「配置标识」更换后保存。', 'This configuration key is already in use. Your draft is retained; choose another Configuration key before saving.') : c('已刷新远端配置并保留你的修改，请核对后保存。', 'Latest configuration loaded and your edits retained. Review and save.'), occupied);
     } catch { feedback(t('errorLoad'), true); } finally { setBusy(false); }
   }
@@ -94,18 +100,13 @@ export function TeamSettingsPage({ api, t, openKnowledge, initialTab = 'upstream
     } catch { if (!controller.signal.aborted) feedback(c('检查未完成，原模型保留。', 'Check failed; the previous model is retained.'), true); }
     finally { if (probe.current === controller) { probe.current = undefined; setProbing(false); } }
   }
-  if (snapshot === undefined) return <div className="acn-page"><p role={error ? 'alert' : 'status'}>{message || t('loading')}</p>{error && <Button onClick={() => { void reload(); }}>{t('reload')}</Button>}</div>;
+  if (snapshot === undefined) return <div className="acn-page"><p role={error ? 'alert' : 'status'}>{message || t('loading')}</p>{error && <Button disabled={busy} onClick={() => { void retryLoad(); }}>{c('重试加载', 'Retry loading')}</Button>}</div>;
   const values = snapshot.values; const profiles = settingsUpstreams(values); const disabled = busy || probing;
   const defaultKey = values.upstream ?? (profiles['personal'] === undefined ? '' : 'personal');
   const withProfiles = (next: Record<string, Upstream>, upstream = defaultKey): ConfigurationValues => ({ ...values, upstreams: next, upstream });
-  async function toggleProfile(key: string, item: Upstream) {
-    const enabled = !item.enabled;
-    if (await persist(withProfiles({ ...profiles, [key]: { ...item, enabled } }, !enabled && defaultKey === key ? '' : defaultKey))) feedback(enabled
-      ? c('已启用此配置，Agent ID 和团队连接保持不变。可在 ACN 菜单中选择使用。', 'Configuration enabled. The Agent ID and team connection are unchanged; select it from the ACN menu.')
-      : c('已停用此配置，关联会话暂停聊天和知识处理，数据保留。', 'Configuration disabled. Associated sessions pause chat and knowledge processing; data is retained.'));
-  }
-  const add = () => { setEditor({ key: '', existing: false, team: false, secret: '', removeSecret: false, credentialIdentity: '', reference: newCredentialReference(), value: { name: '', agentId: '', enabled: true, routerEndpoint: '', maintainerEndpoint: '', keyEnv: '', timeoutMs: snapshot?.values.timeoutMs ?? 15000 } }); setChecks(undefined); feedback(''); };
-  async function saveProfile() {
+  const cancelEditor = () => { probe.current?.abort(); setEditor(undefined); setCheckResult(undefined); feedback(''); };
+  const add = () => { setEditor({ key: '', existing: false, team: false, defaultChoice: Object.keys(profiles).length === 0, secret: '', removeSecret: false, credentialIdentity: '', reference: newCredentialReference(), value: { name: '', agentId: '', enabled: true, routerEndpoint: '', maintainerEndpoint: '', keyEnv: '', timeoutMs: snapshot?.values.timeoutMs ?? 15000 } }); setCheckResult(undefined); feedback(''); };
+  async function saveProfile(confirmedDefault = false) {
     if (editor === undefined) return;
     if (identityCredentialMismatch) { feedback(c('Agent ID 已改变，请填写新身份的团队鉴权密钥，或明确移除密钥绑定后保存。', 'The Agent ID changed. Enter the new identity’s team key, or explicitly remove the key binding before saving.'), true); return; }
     if (editor.connectionConflict) { feedback(c('请先选择保留哪一份团队连接。', 'Choose which team connection to retain first.'), true); return; }
@@ -116,6 +117,8 @@ export function TeamSettingsPage({ api, t, openKnowledge, initialTab = 'upstream
     if (!parsed.success) { feedback([...new Set(parsed.error.issues.map((issue) => configurationFieldError(String(issue.path[0] ?? ''), c)))].join('\n'), true); return; }
     if (!UpstreamNameSchema.safeParse(key).success) { feedback(configurationFieldError('key', c), true); return; }
     if (!editor.existing && profiles[key] !== undefined) { feedback(c('配置标识已被使用，请更换后保存。', 'This configuration key is already in use. Choose another key.'), true); return; }
+    const nextDefault = parsed.data.enabled && editor.defaultChoice ? key : defaultKey === key ? '' : defaultKey;
+    if (nextDefault && defaultKey && nextDefault !== defaultKey && !confirmedDefault) { setDefaultConfirm({ from: profiles[defaultKey]?.name || defaultKey, to: parsed.data.name || key }); return; }
     const submitted = { ...editor, key, base: editor.base ?? parsed.data };
     setEditor(submitted);
     let staged = ''; let saved = false;
@@ -130,8 +133,8 @@ export function TeamSettingsPage({ api, t, openKnowledge, initialTab = 'upstream
         if (!result.ok) { feedback(displayMessage(result.message, c, result.messageInfo), true); return; }
         staged = reference;
       }
-      saved = await persist(withProfiles({ ...profiles, [key]: parsed.data }, Object.keys(profiles).length === 0 ? key : defaultKey), Boolean(staged));
-      if (saved) { setEditor(undefined); setChecks(undefined); setCredentialRefresh((value) => value + 1); }
+      saved = await persist(withProfiles({ ...profiles, [key]: parsed.data }, nextDefault), Boolean(staged));
+      if (saved) { setEditor(undefined); setCheckResult(undefined); setCredentialRefresh((value) => value + 1); }
     } catch { feedback(c('无法确认密钥保存结果，配置未更新；请重新检查后保存。', 'Could not confirm the key save; configuration was not updated. Check and save again.'), true); }
     finally {
       // 未知保存结果交给服务端检查引用是否已被采用，不能删除已落盘配置使用的密钥。
@@ -147,19 +150,19 @@ export function TeamSettingsPage({ api, t, openKnowledge, initialTab = 'upstream
     if (!parsed.success || !connection.routerEndpoint || !connection.maintainerEndpoint) {
       const field = parsed.success ? undefined : parsed.error.issues[0]?.path[0];
       let message = c('请检查工作配置中的填写内容。', 'Check the values in this configuration.');
-      if (field === 'agentId') message = c('请检查 Agent ID：只能使用小写字母、数字、下划线或连字符。', 'Check the Agent ID: use lowercase letters, numbers, underscores or hyphens.');
+      if (field === 'agentId') message = configurationFieldError('agentId', c);
       else if (field === 'name') message = c('显示名称不能超过 80 个字符。', 'The display name must not exceed 80 characters.');
       else if (field === 'timeoutMs') message = c('团队请求超时必须为正整数，单位为毫秒。', 'Team request timeout must be a positive integer in milliseconds.');
       else if (field === 'maintainerEndpoint' || connection.routerEndpoint && !connection.maintainerEndpoint) message = c('请填写有效的 Maintainer 地址，以 http:// 或 https:// 开头；不能包含用户名、密码、查询参数或片段。', 'Enter a valid Maintainer URL starting with http:// or https://, without a username, password, query or fragment.');
       else if (field === 'routerEndpoint' || !connection.routerEndpoint) message = c('请填写有效的 Router 地址，以 http:// 或 https:// 开头；不能包含用户名、密码、查询参数或片段。', 'Enter a valid Router URL starting with http:// or https://, without a username, password, query or fragment.');
-      setChecks(undefined); feedback(message, true); return;
+      setCheckResult(undefined); feedback(message, true); return;
     }
-    const controller = new AbortController(); probe.current = controller; setProbing(true); setChecks(undefined);
+    const controller = new AbortController(); probe.current = controller; setProbing(true); setCheckResult(undefined); feedback('');
     try {
       const result = editor.secret === '' ? await api.interact({ action: 'check', connection: parsed.data }, controller.signal) : api.credential === undefined ? { ok: false, message: c('密钥检查接口不可用，请重新打开插件。', 'Key check is unavailable; reopen the plugin.') } : await api.credential({ action: 'check', connection: parsed.data, value: editor.secret }, controller.signal);
-      if (!controller.signal.aborted) { setChecks('checks' in result ? result.checks : undefined); feedback(displayMessage(result.message, c, result.messageInfo), !result.ok); }
+      if (!controller.signal.aborted) { setCheckResult({ checks: 'checks' in result ? result.checks : undefined, message: displayMessage(result.message, c, result.messageInfo), failed: !result.ok }); }
     }
-    catch { if (!controller.signal.aborted) feedback(c('未能完成连接检查，请稍后重试。本次检查不会保存配置，输入已保留。', 'The connection check could not complete. Retry later; this check does not save configuration, and your input is retained.'), true); }
+    catch { if (!controller.signal.aborted) setCheckResult({ checks: undefined, message: c('未能完成连接检查，请稍后重试。本次检查不会保存配置，输入已保留。', 'The connection check could not complete. Retry later; this check does not save configuration, and your input is retained.'), failed: true }); }
     finally { if (probe.current === controller) { probe.current = undefined; setProbing(false); } }
   }
   const guide = <p style={muted}>{c('向团队管理员索取 Router、Maintainer 地址及成员凭据。尚未部署时，可参考原 ACN 仓库。', 'Ask your team administrator for Router and Maintainer URLs and a member credential, or deploy services using the original ACN repository.')} <a href="https://github.com/FTShare-Lab/agent-claim-network" target="_blank" rel="noopener noreferrer">{c('ACN 部署说明（GitHub）', 'ACN deployment guide (GitHub)')}</a></p>;
@@ -168,50 +171,47 @@ export function TeamSettingsPage({ api, t, openKnowledge, initialTab = 'upstream
   const changingTeam = editor?.existing && original !== undefined && original.agentId === editor.value.agentId && Boolean(original.routerEndpoint) && (original.routerEndpoint !== (editor.team ? editor.value.routerEndpoint : '') || original.maintainerEndpoint !== (editor.team ? editor.value.maintainerEndpoint : ''));
   const pendingCount = editor === undefined ? 0 : snapshot.upstreamPending?.[editor.key];
   const pendingText = pendingCount === null ? c('待投数量读取失败，请检查本地队列。', 'The pending count is unavailable. Check the local queue.') : c(`当前有 ${pendingCount ?? 0} 项团队待投记录。`, `There are ${pendingCount ?? 0} pending team records.`);
-  return <div className="acn-page">{!snapshot.active && <div role="status"><p>{c('ACN 知识组件未启用。聊天可继续，启用后会自动恢复状态读取。', 'The ACN knowledge component is inactive. Chat remains available; status refresh resumes when enabled.')}</p>{openPlugins ? <Button onClick={openPlugins}>{c('前往插件管理', 'Open plugin manager')}</Button> : <p style={muted}>{c('打开 DSH「插件 → ACN记忆框架」，启用知识组件。', 'Open DSH Plugins → agent-claim-network and enable the knowledge component.')}</p>}</div>}<Tabs<SettingsTab> label={c('ACN 插件设置', 'ACN settings')} value={tab} disabled={disabled} choices={[
+  return <div className="acn-page acn-settings-page">{checkResult && <ConnectionCheckDialog result={checkResult} close={() => { setCheckResult(undefined); }} c={c} />}{notice && <SettingsToast key={notice.id} text={notice.text} />}{defaultConfirm && <Modal compact title={c('更改默认配置', 'Change default configuration')} closeLabel={c('关闭确认框', 'Close confirmation')} close={() => { setDefaultConfirm(undefined); setEditor((draft) => draft === undefined ? undefined : { ...draft, defaultChoice: false }); }}><p className="acn-confirm-message">{c('确认将默认配置从', 'Change the default configuration from')} <strong>{defaultConfirm.from}</strong> {c('修改为', 'to')} <strong>{defaultConfirm.to}</strong>{c('？', '?')}</p><div className="acn-confirm-actions"><Button onClick={() => { setDefaultConfirm(undefined); setEditor((draft) => draft === undefined ? undefined : { ...draft, defaultChoice: false }); }}>{c('取消', 'Cancel')}</Button><Button primary onClick={() => { setDefaultConfirm(undefined); void saveProfile(true); }}>{c('确认', 'Confirm')}</Button></div></Modal>}{!snapshot.active && <div role="status"><p>{c('ACN 知识组件未启用。聊天可继续，启用后会自动恢复状态读取。', 'The ACN knowledge component is inactive. Chat remains available; status refresh resumes when enabled.')}</p>{openPlugins ? <Button onClick={openPlugins}>{c('前往插件管理', 'Open plugin manager')}</Button> : <p style={muted}>{c('打开 DSH「插件 → ACN记忆框架」，启用知识组件。', 'Open DSH Plugins → agent-claim-network and enable the knowledge component.')}</p>}</div>}<Tabs<SettingsTab> label={c('ACN 插件设置', 'ACN settings')} value={tab} disabled={disabled} choices={[
     ['upstreams', c('工作配置', 'Work configurations')], ['knowledge', c('知识与模型', 'Knowledge and model')], ['preferences', c('偏好', 'Preferences')],
   ]} change={(next) => { setTab(next); feedback(''); }}>
     {message && (tab !== 'upstreams' || editor === undefined) && <p role={error ? 'alert' : 'status'} className={`acn-feedback ${error ? 'is-error' : ''}`}>{message}</p>}
     {conflict && <Button disabled={disabled} onClick={() => { void refreshDraft(); }}>{c('刷新并保留草稿', 'Refresh and keep edits')}</Button>}
     {tab === 'upstreams' && <>
-      <p style={muted}>{c('每份工作配置（upstream）有自己的 Agent ID、知识与私有记忆。可以单人使用，也可以随时配置团队服务。', 'Each work configuration (upstream) owns an Agent ID, knowledge and private memory. Use it solo or configure team services.')}</p>
+      {editor === undefined && <p className="acn-settings-intro">{c('每份工作配置有自己的 Agent ID、知识与私有记忆，可单人使用或连接团队。', 'Each work configuration owns an Agent ID, knowledge and private memory, for solo or team use.')}</p>}
       {editor === undefined ? <>
-        <div className="acn-profiles">{Object.entries(profiles).map(([key, item]) => <Row key={key} title={item.name || key} description={`${item.agentId} · ${item.enabled ? item.routerEndpoint ? c('团队', 'Team') : c('单人', 'Solo') : c('已停用', 'Disabled')}${key === defaultKey ? c(' · 全局默认', ' · Global default') : ''}${snapshot.upstreamPending?.[key] === null ? c(' · 待投记录读取失败', ' · Pending queue unreadable') : ''}`}>
-          {item.enabled && key !== defaultKey && <Button disabled={disabled} aria-label={c(`将 ${item.name || key} 设为默认`, `Use ${item.name || key} as default`)} onClick={() => { void persist(withProfiles(profiles, key)); }}>{c('设为默认', 'Set as default')}</Button>}
+        <div className="acn-profiles">{Object.entries(profiles).map(([key, item]) => <Row key={key} title={item.name || key} badges={<><span className="acn-badge acn-profile-kind" data-mode={item.routerEndpoint ? 'team' : 'solo'}>{item.routerEndpoint ? c('团队', 'Team') : c('单人', 'Solo')}</span>{key === defaultKey && <span className="acn-badge acn-profile-default">{c('默认', 'Default')}</span>}{!item.enabled && <span className="acn-badge">{c('已停用', 'Disabled')}</span>}</>} description={`${item.agentId}${snapshot.upstreamPending?.[key] === null ? c(' · 待投记录读取失败', ' · Pending queue unreadable') : ''}`}>
           <Button disabled={disabled} onClick={() => { openKnowledge(key); }}>{c('知识与活动', 'Knowledge and activity')}</Button>
-          <Button disabled={disabled} onClick={() => { setEditor({ key, existing: true, team: Boolean(item.routerEndpoint), secret: '', removeSecret: false, credentialIdentity: item.agentId, base: item, reference: item.keyEnv || newCredentialReference(), value: { ...item } }); setChecks(undefined); feedback(''); }}>{c('配置', 'Configure')}</Button>
-          <Button disabled={disabled} aria-label={c(`${item.enabled ? '停用' : '启用'}配置 ${item.name || key}`, `${item.enabled ? 'Disable' : 'Enable'} configuration ${item.name || key}`)} onClick={() => { void toggleProfile(key, item); }}>{item.enabled ? c('停用', 'Disable') : c('启用', 'Enable')}</Button>
+          <Button disabled={disabled} onClick={() => { setEditor({ key, existing: true, team: Boolean(item.routerEndpoint), defaultChoice: key === defaultKey, secret: '', removeSecret: false, credentialIdentity: item.agentId, base: item, reference: item.keyEnv || newCredentialReference(), value: { ...item } }); setCheckResult(undefined); feedback(''); }}>{c('配置', 'Configure')}</Button>
         </Row>)}</div>
         <div className="acn-actions"><Button primary disabled={disabled} onClick={add}>{c('新建工作配置', 'New configuration')}</Button></div>
         {guide}
       </> : <form onSubmit={(event) => { event.preventDefault(); void saveProfile(); }}>
+        <div className="acn-backbar"><button type="button" className="acn-back-link" disabled={busy} onClick={cancelEditor}><span aria-hidden="true">←</span>{c('返回工作配置', 'Back to work configurations')}</button></div>
         <h3>{editor.existing ? c('编辑工作配置', 'Edit configuration') : c('新建工作配置', 'New configuration')}</h3>
+        <div className="acn-setting-group acn-profile-options"><Row title={c('启用此配置', 'Enable configuration')} description={c('保存后生效。停用会暂停关联会话，知识保留。', 'Applied on save. Disabling pauses associated sessions and retains knowledge.')}><input type="checkbox" role="switch" aria-label={c('启用此配置', 'Enable configuration')} disabled={disabled} checked={editor.value.enabled} onChange={(event) => { setEditor({ ...editor, value: { ...editor.value, enabled: event.target.checked }, defaultChoice: event.target.checked && editor.defaultChoice }); }} /></Row><Row title={c('设为默认', 'Use as default')} description={c('项目没有可用历史时，新会话采用此配置。', 'Used for new sessions when the project has no valid history.')}><input type="checkbox" role="switch" aria-label={c('设为默认', 'Use as default')} disabled={disabled || !editor.value.enabled} checked={editor.defaultChoice} onChange={(event) => { setEditor({ ...editor, defaultChoice: event.target.checked }); }} /></Row></div>
         <label className="acn-field">{c('显示名称（可选）', 'Display name (optional)')}<input style={inputStyle} disabled={disabled} value={editor.value.name} onChange={(event) => { setEditor({ ...editor, value: { ...editor.value, name: event.target.value } }); }} /></label>
         <label className="acn-field">Agent ID<input required style={inputStyle} disabled={disabled} value={editor.value.agentId} placeholder="coding" autoComplete="off" onChange={(event) => { setEditor({ ...editor, value: { ...editor.value, agentId: event.target.value } }); }} /></label>
         <p style={muted}>{c('使用小写字母、数字、下划线或连字符。单人使用可自取固定名称，接入团队继续使用此 ID。', 'Use lowercase letters, numbers, underscores or hyphens. Choose a stable ID for solo use; the same ID is used when joining a team.')}</p>
         {original !== undefined && original.agentId !== editor.value.agentId && <p role="status">{c('修改 Agent ID 将使用另一份知识库，原数据保留。若要让旧会话继续，请把 Agent ID 改回原来的值并保存。', 'Changing the Agent ID selects a different store. Original data is retained. To continue old sessions, change the Agent ID back to its original value and save.')}</p>}
         <details className="acn-disclosure"><summary><span>{c('配置标识（upstream）', 'Configuration key (upstream)')}</span></summary><div className="acn-disclosure-body"><input aria-label={c('配置标识', 'Configuration key')} style={inputStyle} disabled={disabled || editor.existing} value={editor.key} placeholder={editor.value.agentId || 'coding'} onChange={(event) => { setEditor({ ...editor, key: event.target.value }); }} /><p style={muted}>{c('新建时留空将按 Agent ID 生成。创建后固定，显示名称仍可修改。', 'Generated from the Agent ID when empty. The key is fixed after creation; the display name can be changed.')}</p></div></details>
-        <Row title={c('连接团队服务', 'Connect team services')} description={c('关闭时使用本地知识。开启后填写两个服务地址，Agent ID 保持同一个。', 'Use local knowledge when off. When on, enter both service URLs; the Agent ID stays the same.')}><input type="checkbox" role="switch" aria-label={c('连接团队服务', 'Connect team services')} checked={editor.team} disabled={disabled} onChange={(event) => { setEditor({ ...editor, team: event.target.checked, secret: event.target.checked ? editor.secret : '' }); setChecks(undefined); }} /></Row>
+        <Row title={c('连接团队服务', 'Connect team services')} description={c('关闭时使用本地知识。开启后填写两个服务地址，Agent ID 保持同一个。', 'Use local knowledge when off. When on, enter both service URLs; the Agent ID stays the same.')}><input type="checkbox" role="switch" aria-label={c('连接团队服务', 'Connect team services')} checked={editor.team} disabled={disabled} onChange={(event) => { setEditor({ ...editor, team: event.target.checked, secret: event.target.checked ? editor.secret : '' }); setCheckResult(undefined); }} /></Row>
         {editor.value.keyEnv !== '' && !editor.team && editor.credentialIdentity !== editor.value.agentId && <p role="status">{c('此身份改为单人使用后，不再绑定原成员密钥；旧凭据保留，避免影响其他已启动实例。', 'Saving this identity in solo mode removes the previous member key binding. The old credential is retained for other resident instances.')}</p>}
         {identityCredentialMismatch && <p role="alert">{c('团队 Agent ID 已改变，原成员密钥可能不匹配。请填写新身份的团队鉴权密钥；仅在服务无需鉴权时选择「移除密钥绑定」。', 'The team Agent ID changed and the previous member key may not match. Enter the new identity’s key, or remove the key binding only if authentication is not required.')}</p>}
         {editor.connectionConflict && <div role="alert"><p>{c('团队连接在另一窗口也有修改。Agent ID、地址和密钥不会混合，请选择一整份连接后再保存。', 'Both windows changed the team connection. Agent IDs, URLs and keys will not be mixed. Choose one complete connection before saving.')}</p><p>{c('已保存连接', 'Saved connection')}: {editor.connectionConflict.routerEndpoint || c('单人模式', 'Solo')} · {editor.connectionConflict.maintainerEndpoint}</p><Button onClick={() => { const next = { ...editor }; delete next.connectionConflict; setEditor(next); }}>{c('保留我的团队连接', 'Keep my team connection')}</Button><Button onClick={() => { const remote = editor.connectionConflict; if (!remote) return; const next = { ...editor, value: { ...editor.value, agentId: remote.agentId, routerEndpoint: remote.routerEndpoint, maintainerEndpoint: remote.maintainerEndpoint, keyEnv: remote.keyEnv }, team: Boolean(remote.routerEndpoint), secret: '', removeSecret: false, reference: remote.keyEnv || newCredentialReference(), credentialIdentity: remote.agentId }; delete next.connectionConflict; delete next.pendingReference; delete next.pendingValue; setEditor(next); }}>{c('采用已保存的团队连接', 'Use the saved team connection')}</Button></div>}
-        {editor.team && <>{guide}<div className="acn-connection-fields">{([['routerEndpoint', t('router')], ['maintainerEndpoint', t('maintainer')]] as const).map(([field, label]) => <label key={field} className="acn-field">{label}<input style={inputStyle} required type="url" autoComplete="off" disabled={disabled} value={editor.value[field]} onChange={(event) => { setEditor({ ...editor, value: { ...editor.value, [field]: event.target.value } }); setChecks(undefined); }} /></label>)}<label className="acn-field">{t('timeout')}<input type="number" min="1" style={inputStyle} value={editor.value.timeoutMs} disabled={disabled} onChange={(event) => { setEditor({ ...editor, value: { ...editor.value, timeoutMs: Number(event.target.value) } }); }} /></label></div><TeamCredentialField reference={editor.reference} api={api.credential} c={c} disabled={disabled} value={editor.secret} refresh={credentialRefresh} removed={editor.removeSecret} bound={editor.value.keyEnv !== ''} remove={() => { setEditor({ ...editor, secret: '', removeSecret: !editor.removeSecret }); setChecks(undefined); }} change={(secret) => { setEditor({ ...editor, secret, removeSecret: false }); setChecks(undefined); }} /><p style={muted}>{c('单人期间的历史 Claim 可继续本地使用，接入团队后不会整库补传。', 'Solo claims remain available locally and are not automatically uploaded when joining.')}</p></>}
+        {editor.team && <>{guide}<div className="acn-connection-fields">{([['routerEndpoint', t('router')], ['maintainerEndpoint', t('maintainer')]] as const).map(([field, label]) => <label key={field} className="acn-field">{label}<input style={inputStyle} required type="url" autoComplete="off" disabled={disabled} value={editor.value[field]} onChange={(event) => { setEditor({ ...editor, value: { ...editor.value, [field]: event.target.value } }); setCheckResult(undefined); }} /></label>)}<label className="acn-field">{t('timeout')}<input type="number" min="1" style={inputStyle} value={editor.value.timeoutMs} disabled={disabled} onChange={(event) => { setEditor({ ...editor, value: { ...editor.value, timeoutMs: Number(event.target.value) } }); }} /></label></div><TeamCredentialField reference={editor.reference} api={api.credential} c={c} disabled={disabled} value={editor.secret} refresh={credentialRefresh} removed={editor.removeSecret} bound={editor.value.keyEnv !== ''} remove={() => { setEditor({ ...editor, secret: '', removeSecret: !editor.removeSecret }); setCheckResult(undefined); }} change={(secret) => { setEditor({ ...editor, secret, removeSecret: false }); setCheckResult(undefined); }} /><p style={muted}>{c('单人期间的历史 Claim 可继续本地使用，接入团队后不会整库补传。', 'Solo claims remain available locally and are not automatically uploaded when joining.')}</p></>}
         {changingTeam && <p role="status">{c('修改地址会沿用当前知识库。', 'Changing URLs keeps this knowledge store.')}{pendingText}{c('新配置启动后，符合重试条件的记录可能发往新地址。需要隔离团队时请新建工作配置。', 'Eligible pending records may be sent to the new URLs after activation. Create another configuration to isolate teams.')}</p>}
-        <div className="acn-actions">{editor.team && <Button disabled={disabled} onClick={() => { void checkProfile(); }}>{c('检查连接', 'Check connection')}</Button>}<Button primary disabled={disabled || Boolean(editor.connectionConflict) || identityCredentialMismatch} type="submit">{c('保存配置', 'Save configuration')}</Button><Button disabled={busy} onClick={() => { probe.current?.abort(); setEditor(undefined); setChecks(undefined); feedback(''); }}>{c('取消编辑', 'Cancel editing')}</Button></div>
+        <div className="acn-actions">{editor.team && <Button disabled={disabled} onClick={() => { void checkProfile(); }}>{probing ? c('正在检查…', 'Checking…') : c('检查连接', 'Check connection')}</Button>}<Button primary disabled={disabled || Boolean(editor.connectionConflict) || identityCredentialMismatch} type="submit">{c('保存配置', 'Save configuration')}</Button><Button disabled={busy} onClick={cancelEditor}>{c('取消编辑', 'Cancel editing')}</Button></div>
         {message && <p role={error ? 'alert' : 'status'} style={muted}>{message}</p>}
-        {editor.team && <div className="acn-status-list" aria-label={c('团队连接检查结果', 'Team connection results')}>{(['maintainer', 'router'] as const).map((service) => { const item = checks?.find((check) => check.service === service); return <div className="acn-status-row" key={service} role={item?.state === 'failed' ? 'alert' : 'status'}><span className="acn-status-icon" aria-hidden="true">{item?.state === 'ok' ? '✅' : item?.state === 'failed' ? '❌' : '❓'}</span><strong>{service === 'router' ? 'Router' : 'Maintainer'}</strong><span>{item === undefined ? probing ? c('正在检查…', 'Checking…') : c('尚未检查', 'Not checked') : displayMessage(item.message, c)}</span></div>; })}</div>}
-        <p style={muted}>{c('启用和停用在工作配置列表中操作；请先保存修改或取消编辑。启用不会更改 Agent ID 或团队连接。', 'Enable or disable configurations in the list after saving or cancelling edits. Enabling does not change the Agent ID or team connection.')}</p>
+
       </form>}
     </>}
     {tab === 'knowledge' && <>
       <Row title={c('知识处理模型', 'Knowledge model')} description={t('modelHint')}><Select aria-label={c('知识处理模型', 'Knowledge model')} disabled={disabled} value={JSON.stringify([values.provider, values.model])} onChange={(event) => { void chooseModel(event.target.value); }}><option value={JSON.stringify(['', ''])}>{t('automatic')}</option>{values.provider && !snapshot.models.some((item) => item.provider === values.provider && item.id === values.model) && <option value={JSON.stringify([values.provider, values.model])}>{values.model} — {t('unavailableModel')}</option>}{snapshot.models.map((item) => <option key={JSON.stringify([item.provider, item.id])} value={JSON.stringify([item.provider, item.id])}>{item.providerName} / {item.name}</option>)}</Select></Row>
-      <form onSubmit={(event) => { event.preventDefault(); void persist({ ...values, home }); }}><label className="acn-field">{t('home')}<input required style={inputStyle} disabled={disabled} value={home} onChange={(event) => { setHome(event.target.value); }} /></label><p style={muted}>{c('所有工作配置的知识根目录。修改后使用新目录，原数据保留。', 'Knowledge root for all configurations. Changing it selects a new directory and retains original data.')}</p><div className="acn-actions"><Button primary type="submit" disabled={disabled || home === values.home}>{c('保存目录', 'Save directory')}</Button></div></form>
+      <form onSubmit={(event) => { event.preventDefault(); void persist({ ...values, home }); }}><KnowledgeDirectoryField value={home} change={setHome} busy={disabled} api={api} c={c} label={t('home')} feedback={feedback} /><p style={muted}>{c('所有工作配置的知识根目录。修改后使用新目录，原数据保留。', 'Knowledge root for all configurations. Changing it selects a new directory and retains original data.')}</p><div className="acn-actions"><Button primary type="submit" disabled={disabled || home === values.home}>{c('保存目录', 'Save directory')}</Button></div></form>
     </>}
-    {tab === 'preferences' && <><h3>{c('默认连接与通知', 'Default connection and notifications')}</h3><div className="acn-setting-group">
-        <Row title={c('默认工作配置', 'Default work configuration')} description={c('可选择团队连接或个人知识。项目没有可用历史时采用。新会话优先沿用同项目最近新建会话的配置，首发前可改选。', 'Choose a team connection or personal knowledge. Used when the project has no valid history. New sessions inherit its most recently created conversation configuration and can change it before the first message.')}><Select aria-label={c('默认工作配置', 'Default work configuration')} disabled={disabled} value={defaultKey} onChange={(event) => { void persist(withProfiles(profiles, event.target.value)); }}><option value="">{c('不设全局默认', 'No global default')}</option>{Object.entries(profiles).filter(([, item]) => item.enabled).map(([key, item]) => <option key={key} value={key}>{configurationLabel(item.name || key, item.agentId)}</option>)}</Select></Row>
-      <Row title={c('显示知识处理结果', 'Show knowledge results')} description={c('在来源会话显示简短结果，完整记录可在知识与活动中查看。', 'Show short results in the source session. Full records are available in knowledge and activity.')}><input type="checkbox" role="switch" aria-label={c('显示知识处理结果', 'Show knowledge results')} disabled={disabled} checked={values.showCompletion !== false} onChange={(event) => { void persist({ ...values, showCompletion: event.target.checked }); }} /></Row>
+    {tab === 'preferences' && <><div className="acn-setting-group">
+      <Row title={c('显示知识处理结果', 'Show knowledge results')} description={c('在来源会话显示任务完成或失败的短暂提示。关闭后仍可在「知识与活动」查看。', 'Briefly show task completion or failure in its source session. Results remain in Knowledge and activity when disabled.')}><input type="checkbox" role="switch" aria-label={c('显示知识处理结果', 'Show knowledge results')} disabled={disabled} checked={values.showCompletion !== false} onChange={(event) => { void persist({ ...values, showCompletion: event.target.checked }); }} /></Row>
       </div>{editor !== undefined && <p className="acn-help">{c('有未保存的工作配置，请先返回工作配置保存或取消，再调整高级参数。', 'Save or cancel the work-configuration draft before editing advanced parameters.')}</p>}<AdvancedPreferences value={values.advanced ?? advancedConfiguration({})} busy={disabled || editor !== undefined} c={c} save={(advanced) => persist({ ...values, advanced })} /></>}
     {probing && <Button onClick={() => { probe.current?.abort(); setProbing(false); feedback(c('已取消检查。', 'Check cancelled.')); }}>{c('取消检查', 'Cancel check')}</Button>}
-    <div className="acn-actions"><Button disabled={disabled} title={t('reloadHint')} onClick={() => { void reload(); }}>{t('reload')}</Button></div><p style={muted}>{c('重新加载将丢弃未保存的修改。', 'Reloading discards unsaved changes.')}</p>
   </Tabs></div>;
 }
