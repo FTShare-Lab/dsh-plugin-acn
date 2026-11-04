@@ -58,7 +58,7 @@ export class FormationStore {
       }
     }
   }
-  async commit(input: { sessionId: string; jobId: string; kind: 'recap' | 'finalize'; fromSeq: number; untilSeq: number; analysisClaims: Claim[]; prepared: PreparedFormation; task: string }, control: JobControl): Promise<{ applied: boolean; warnings: string[]; claimCount: number; disputeCount: number; traceCount: number }> {
+  async commit(input: { sessionId: string; jobId: string; kind: 'recap' | 'finalize'; fromSeq: number; untilSeq: number; analysisClaims: Claim[]; prepared: PreparedFormation; task: string }, control: JobControl): Promise<{ applied: boolean; warnings: string[]; claimCount: number; disputeCount: number; traceCount: number; entityIds?: string[] }> {
     return withFileLock(this.context.paths.knowledgeLock, async () => {
       await new DreamStore(this.context).recoverLocked();
       await ensureKnowledgeReady(this.context.paths.root);
@@ -87,7 +87,7 @@ export class FormationStore {
       control.signal.throwIfAborted(); control.prepared();
       await this.write(checkpoint);
       await this.applyLocked(checkpoint);
-      return { applied: true, warnings: checkpoint.warnings, claimCount: checkpoint.appliedClaims.length, disputeCount: checkpoint.disputes.length, traceCount: checkpoint.trace === null ? 0 : 1 };
+      return { applied: true, warnings: checkpoint.warnings, claimCount: checkpoint.appliedClaims.length, disputeCount: checkpoint.disputes.length, traceCount: checkpoint.trace === null ? 0 : 1, entityIds: [...checkpoint.appliedClaims.map((claim) => claim.id), ...checkpoint.disputes.map((dispute) => dispute.id), ...checkpoint.trace === null ? [] : [checkpoint.trace.id]] };
     }, { timeoutMs: this.context.lockTimeoutMs, signal: control.signal });
   }
   private async applyLocked(checkpoint: FormationCheckpoint): Promise<void> {

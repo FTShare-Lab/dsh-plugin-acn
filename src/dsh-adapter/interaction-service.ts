@@ -21,6 +21,14 @@ import { TeamError } from '../team/errors.js';
 import { resolveConfig } from '../config.js';
 import { PresentationStore } from '../store/presentation.js';
 import { teamCredentials } from './team-credentials.js';
+import { DeliveryStatusStore, deliveryTarget } from '../store/delivery-status.js';
+import { claimRevision } from '../protocol/revision.js';
+import { disputeVersion } from '../store/rejected-disputes.js';
+import { knowledgeSources } from '../knowledge/sources.js';
+import { sourceSession } from './source-sessions.js';
+import { stat } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import { expandHomePath } from '../store/paths.js';
 import type { RuntimePool } from './runtime-pool.js';
 import type { CredentialResolver } from '../team/http.js';
 
@@ -53,14 +61,28 @@ export async function readKnowledge(pool: RuntimePool, key: string, kind: 'claim
     const values = !entities ? [] : kind === 'claim' ? await new ClaimStore(context).list() : kind === 'dispute' ? await new DisputeStore(context).list() : await new TraceStore(context).list();
     const pending = await new UploadStore(context).read();
     const pendingIds = new Set<string>([...pending.claims, ...pending.disputes].map((item) => item.id));
+    const delivered = (await new DeliveryStatusStore(context).read()).delivered;
+    const target = knowledge.team === null ? '' : deliveryTarget(config.team.maintainerEndpoint);
+    const delivery = (item: typeof values[number]) => {
+      if (pendingIds.has(item.id)) return 'pending' as const;
+      const receipt = delivered[`${kind}-${item.id}`];
+      const version = 'statement' in item ? claimRevision(item) : 'reporter_agent_id' in item ? disputeVersion(item) : '';
+      return target !== '' && receipt?.target === target && receipt.version === version ? 'synced' as const : 'local' as const;
+    };
     const text = query.toLocaleLowerCase();
     const matching = values.filter((item) => ('holder' in item ? item.holder === context.agentId : 'agent' in item ? item.agent === context.agentId : item.reporter_agent_id === context.agentId)
       && JSON.stringify(item).toLocaleLowerCase().includes(text) && (!filters.status || 'status' in item && item.status === filters.status)
-      && (!filters.delivery || filters.delivery === 'all' || (pendingIds.has(item.id) ? 'pending' : 'local') === filters.delivery)).sort((a, b) => a.id.localeCompare(b.id));
+      && (!filters.delivery || filters.delivery === 'all' || delivery(item) === filters.delivery)).sort((a, b) => a.id.localeCompare(b.id));
     const rows = await allActivities(knowledge, (kind) => pool.supportsJob(key, kind));
+    const page = activityPage(rows, activityOptions);
+    const sessions = new Map<string, Promise<Awaited<ReturnType<typeof sourceSession>>>>();
+    const sessionInfo = (id: string) => { const current = sessions.get(id) ?? sourceSession(pool.ctx, id); sessions.set(id, current); return current; };
+    const sources = entities ? await knowledgeSources(context, matching.slice(offset, offset + 30).map((item) => item.id)) : new Map<string, string[]>();
+    const items = await Promise.all(matching.slice(offset, offset + 30).map(async (item) => ({ kind, id: item.id, name: item.name, status: 'status' in item ? String(item.status) : '', detail: JSON.stringify(item, null, 2), summary: ('statement' in item ? item.statement : 'summary' in item ? item.summary : item.task).slice(0, 500), updatedAt: ('updated_at' in item ? item.updated_at : undefined) ?? item.created_at, delivery: delivery(item), sources: await Promise.all((sources.get(item.id) ?? []).map(sessionInfo)) })));
+    const activities = await Promise.all(page.activities.map(async (item) => item.sessionId === undefined ? item : { ...item, source: await sessionInfo(item.sessionId) }));
     const issues = rows.filter((item) => item.kind === 'delivery' && item.state === 'rejected' && item.requiresAttention).length;
     const attentionCount = pending.claims.length + pending.disputes.length + issues + rows.filter((item) => item.kind !== 'delivery' && item.requiresAttention).length;
-    return { key, name: pool.choices().find((item) => item.key === key)?.name ?? key, items: matching.slice(offset, offset + 30).map((item) => ({ kind, id: item.id, name: item.name, status: 'status' in item ? String(item.status) : '', detail: JSON.stringify(item, null, 2), summary: ('statement' in item ? item.statement : 'summary' in item ? item.summary : item.task).slice(0, 500), updatedAt: ('updated_at' in item ? item.updated_at : undefined) ?? item.created_at, delivery: pendingIds.has(item.id) ? 'pending' : 'local' })), omitted: Math.max(0, matching.length - offset - 30), ...activityPage(rows, activityOptions), activityKinds: [...new Set(rows.map((item) => item.kind))], activitySources: [...new Set(rows.flatMap((item) => item.sessionId === undefined ? [] : [item.sessionId]))], attentionCount, runningCount: rows.filter((item) => item.kind !== 'delivery' && (item.state === 'queued' || item.state === 'running')).length, pendingClaims: pending.claims.length, pendingDisputes: pending.disputes.length };
+    return { key, name: pool.choices().find((item) => item.key === key)?.name ?? key, items, omitted: Math.max(0, matching.length - offset - 30), ...page, activities, activityKinds: [...new Set(rows.map((item) => item.kind))], activitySources: [...new Set(rows.flatMap((item) => item.sessionId === undefined ? [] : [item.sessionId]))], attentionCount, runningCount: rows.filter((item) => item.kind !== 'delivery' && (item.state === 'queued' || item.state === 'running')).length, pendingClaims: pending.claims.length, pendingDisputes: pending.disputes.length };
   } finally { if (knowledge !== pool.base) await knowledge.team?.close(); }
 }
 export async function executeInteraction(ctx: Context, input: InteractionRequest, runtimePool?: RuntimePool, signal?: AbortSignal): Promise<InteractionResult> {
@@ -68,8 +90,18 @@ export async function executeInteraction(ctx: Context, input: InteractionRequest
   if (!parsed.success) return { ok: false, message: '请求字段不合法，请重新加载页面。' };
   const request = parsed.data;
   const pool = runtimePool ?? ctx.get('acnRuntime');
-  if (pool === undefined) return { ok: false, serviceAvailable: false, message: '知识组件尚未启用，聊天仍可继续。请在插件管理中启用 ACN 知识组件。' };
   try {
+    if (request.action === 'open_directory') {
+      const controller = ctx.get('sessionController');
+      if (controller === undefined || !controller.canOpenWorkspacePath()) return { ok: false, message: '当前主机无法打开系统文件管理器。' };
+      const path = resolve(expandHomePath(request.path));
+      try { if (!(await stat(path)).isDirectory()) return { ok: false, message: '请选择已有的目录。' }; }
+      catch { return { ok: false, message: '目录不存在或无法访问，请检查路径。' }; }
+      await controller.openWorkspacePath({ path }, signal ?? AbortSignal.timeout(15_000));
+      return { ok: true, message: '' };
+    }
+    if (pool === undefined) return { ok: false, serviceAvailable: false, message: '知识组件尚未启用，聊天仍可继续。请在插件管理中启用 ACN 知识组件。' };
+    if (request.action === 'source_session') { const source = await sourceSession(ctx, request.sessionId, signal); return { ok: source.available, message: source.available ? '' : '来源会话不可用，可能已删除或无法读取。', sourceSession: source }; }
     if (request.action === 'check') return await checkTeamConnection(ctx, request.connection, teamCredentials(ctx), signal);
     if (request.action === 'probe') {
       if (!request.provider || !request.model) return { ok: true, message: '沿用会话模型；首次同步前请先选择聊天模型。' };
@@ -91,7 +123,9 @@ export async function executeInteraction(ctx: Context, input: InteractionRequest
         const trace = request.id.startsWith('trace_');
         const entries = trace ? await new TraceStore(knowledge.context()).list() : await new ClaimStore(knowledge.context()).list();
         const item = entries.find((value) => value.id === request.id && ('holder' in value ? value.holder : value.agent) === knowledge.agentId);
-        return { ok: true, message: '', reference: { key: request.key, id: request.id, ...(item === undefined ? {} : { item: { kind: trace ? 'trace' : 'claim', id: item.id, name: item.name, status: 'status' in item ? String(item.status) : '', detail: JSON.stringify(item, null, 2) } }) } };
+        const origins = item === undefined ? [] : (await knowledgeSources(knowledge.context(), [item.id])).get(item.id) ?? [];
+        const sources = await Promise.all(origins.map((id) => sourceSession(ctx, id, signal)));
+        return { ok: true, message: '', reference: { key: request.key, id: request.id, ...(item === undefined ? {} : { item: { kind: trace ? 'trace' : 'claim', id: item.id, name: item.name, status: 'status' in item ? String(item.status) : '', detail: JSON.stringify(item, null, 2), sources } }) } };
       } finally { if (knowledge !== pool.base) await knowledge.team?.close(); }
     }
     if (request.action === 'activity') return { ok: true, message: '', knowledge: await readKnowledge(pool, request.key, 'claim', '', 0, false, request) };

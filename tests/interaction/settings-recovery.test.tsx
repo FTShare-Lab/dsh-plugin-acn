@@ -14,7 +14,7 @@ function mount(enabled = true, locale = zh) {
   const api: InteractionApi = { read: vi.fn().mockResolvedValue(snapshot), save: vi.fn<InteractionApi['save']>((request) => Promise.resolve({ ok: true, snapshot: { ...snapshot, revision: 'next', values: request.values } })), interact: vi.fn(), credential: vi.fn().mockResolvedValue({ ok: true, message: '', configured: true, writable: true }) };
   render(<TeamSettingsPage api={api} t={(key) => locale[key]} openKnowledge={vi.fn()} />);return { api, snapshot };
 }
-it.each([true, false])('requires ending edits before changing enabled=%s and never saves the draft implicitly', async (enabled) => {
+it.each([true, false])('cancels unsaved edits and then saves enabled=%s explicitly', async (enabled) => {
   const { api } = mount(enabled);fireEvent.click(await screen.findByRole('button', { name: '配置' }));
   fireEvent.change(screen.getByLabelText('显示名称（可选）'), { target: { value: 'Unsaved name' } });
   fireEvent.change(screen.getByLabelText('Agent ID'), { target: { value: 'agent-draft' } });
@@ -22,16 +22,15 @@ it.each([true, false])('requires ending edits before changing enabled=%s and nev
   fireEvent.change(await screen.findByLabelText('团队鉴权密钥'), { target: { value: crypto.randomUUID() } });
   expect(screen.queryByRole('button', { name: /^(停用|启用)/ })).toBeNull();expect(api.save).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole('button', { name: '取消编辑' }));
-  fireEvent.click(await screen.findByRole('button', { name: `${enabled ? '停用' : '启用'}配置 Example` }));
+  fireEvent.click(await screen.findByRole('button', { name: '配置' })); fireEvent.click(screen.getByRole('switch', { name: '启用此配置' })); fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
   await waitFor(() => { expect(api.save).toHaveBeenCalledTimes(1); });
   expect(vi.mocked(api.save).mock.calls[0]?.[0].values.upstreams?.['coding']).toMatchObject({ ...item, enabled: !enabled });
   expect(vi.mocked(api.credential as NonNullable<InteractionApi['credential']>).mock.calls.some(([request]) => request.action === 'store')).toBe(false);
 });
-it.each([zh, en])('shows precise Agent ID and enablement guidance in both languages', async (locale) => {
+it.each([zh, en])('shows Agent ID recovery guidance in both languages', async (locale) => {
   mount(true, locale);fireEvent.click(await screen.findByRole('button', { name: locale === zh ? '配置' : 'Configure' }));
   fireEvent.change(screen.getByLabelText('Agent ID'), { target: { value: 'agent-other' } });
   expect(screen.getByText(locale === zh ? /把 Agent ID 改回原来的值并保存/ : /change the Agent ID back to its original value and save/)).toBeDefined();
-  expect(screen.getByText(locale === zh ? /启用和停用在工作配置列表中操作/ : /Enable or disable configurations in the list/)).toBeDefined();
 });
 it('recognizes a newly saved configuration after a lost response without creating another upstream', async () => {
   const snapshot: ConfigurationSnapshot = { revision: 'initial', active: true, dataDirectory: '', models: [], values: configurationValues({ upstreams: {}, upstream: '' }) };
@@ -65,6 +64,7 @@ it('does not adopt a competing configuration after an unknown first save', async
   fireEvent.click(screen.getByRole('button', { name: '刷新并保留草稿' }));await screen.findByText(/该配置标识已被其他配置使用/);
   fireEvent.click(screen.getByRole('button', { name: '保存配置' }));expect(api.save).toHaveBeenCalledTimes(1);
   fireEvent.change(screen.getByLabelText('配置标识'), { target: { value: 'agent-new-2' } });fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
+  fireEvent.click(await screen.findByRole('button', { name: '确认' }));
   await waitFor(() => { expect(api.save).toHaveBeenCalledTimes(2); });expect(vi.mocked(api.save).mock.calls[1]?.[0].values.upstreams).toMatchObject({ 'agent-new': { agentId: 'other-agent' }, 'agent-new-2': { agentId: 'agent-new' } });
 });
 it('requires a matching key or explicit removal when changing a team identity even without credential storage', async () => {

@@ -14,6 +14,7 @@ export function agentHomePath(home: string, agentId: string): string {
 }
 export function safeKey(value: string): string {
   if (!/^[a-zA-Z0-9_-]+$/.test(value)) throw new Error('Invalid local document identifier.');
+  assertStorageName(value);
   return value;
 }
 export class AgentPaths {

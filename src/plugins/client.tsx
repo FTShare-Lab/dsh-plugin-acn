@@ -6,6 +6,7 @@ import type { TypertClientRemote } from '@deepseek-ai/dsh-typert-protocol';
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client';
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client';
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client';
+import type {} from '@deepseek-ai/dsh-client-ui-commands/client';
 import type {} from '@deepseek-ai/dsh-client-ui-workspace/client';
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots';
 import type { SessionId } from '@deepseek-ai/dsh-session/types';
@@ -18,6 +19,8 @@ import { KnowledgePanel } from '../client/KnowledgePanel.js';
 import { SessionToolbar } from '../client/SessionToolbar.js';
 import { interactionStyles } from '../client/interaction-styles.js';
 import { Modal } from '../client/interaction-ui.js';
+import { BlankCommandFeedback } from '../client/BlankCommandFeedback.js';
+import type { ComponentProps } from 'react';
 import { InteractionResultSchema } from '../interaction.js';
 import { CredentialResultSchema } from '../credentials.js';
 import { en, zh } from '../client/locales.js';
@@ -47,6 +50,7 @@ function registerPage(ctx: Context): void {
     return result.value;
   }
   const api: InteractionApi = {
+    pickDirectory: async () => { const workspace = ctx.get('uiWorkspace'); if (!workspace) throw new Error('Directory chooser unavailable.'); return workspace.pickDirectory(); },
     read: async (signal) => ConfigurationSnapshotSchema.parse(await invoke('acnConfiguration/read', {}, signal)),
     save: async (request) => ConfigurationResultSchema.parse(await invoke('acnConfiguration/save', { request })),
     interact: async (request, signal) => InteractionResultSchema.parse(await invoke('acnConfiguration/interact', { request }, signal)),
@@ -62,8 +66,8 @@ function registerPage(ctx: Context): void {
     const previous = useRef<HTMLElement | null>(null); const back = useRef<HTMLButtonElement>(null);
     useEffect(() => { if (key !== undefined) back.current?.focus(); else if (previous.current?.isConnected) previous.current.focus({ preventScroll: true }); }, [key]);
     return <><div hidden={key !== undefined}><TeamSettingsPage initialTab={initialTab} api={api} t={t} openPlugins={close === undefined || ctx.get('pluginNavigation') === undefined ? undefined : () => { close(); ctx.get('pluginNavigation')?.openBundle('dsh-plugin-acn'); }} openKnowledge={(value) => { previous.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setKey(value); }} /></div>{key !== undefined && <>
-      <div className="acn-backbar"><button ref={back} type="button" className="acn-back-link" onClick={() => { setKey(undefined); }}><span aria-hidden="true">←</span>{c('返回 ACN 插件设置', 'Back to ACN settings')}</button></div>
-      <KnowledgePanel api={api} initialKey={key} showHeading c={c} openSettings={() => { setKey(undefined); }} openSource={(id) => { openSource(id, close); }} />
+      <div className="acn-knowledge-shell"><div className="acn-backbar"><button ref={back} type="button" className="acn-back-link" onClick={() => { setKey(undefined); }}><span aria-hidden="true">←</span>{c('返回 ACN 插件设置', 'Back to ACN settings')}</button></div>
+      <KnowledgePanel api={api} initialKey={key} showHeading c={c} openSettings={() => { setKey(undefined); }} openComponents={ctx.get('pluginNavigation') === undefined ? undefined : () => { close?.(); ctx.get('pluginNavigation')?.openBundle('dsh-plugin-acn'); }} openSource={(id) => { openSource(id, close); }} /></div>
     </>}</>;
   }
   ctx.effect(() => ctx.slots.inject('plugins.bundle.config', () => ctx.slots.register({
@@ -72,13 +76,16 @@ function registerPage(ctx: Context): void {
   ctx.effect(() => ctx.slots.inject('settings.section', () => ctx.slots.register({ name: 'settings.section', id: 'acn', order: 65, label: settingsTitle, locale: 'acn.configuration' }, ({ close }) => <SettingsEntry close={close} />)));
   void ctx.inject(['conversation'], (child) => {
     const block = (id: string, reason?: string) => { child.conversation.blocks.set(id as SessionId, reason === undefined ? undefined : { reason }); };
+    const subscribeCommand: ComponentProps<typeof BlankCommandFeedback>['subscribe'] = (listener) => child.on('command/executed', listener);
     function Toolbar(props: PropsRuntime<'conversation.input.left'>) { return <ToolbarSession key={props.sessionId} {...props} />; }
     function ToolbarSession(props: PropsRuntime<'conversation.input.left'>) {
+      const blank = props.useSession((session) => session.blank && session.subagent === null);
       const [settings, setSettings] = useState<SettingsTab>(); const [knowledge, setKnowledge] = useState<{ key: string; activity: boolean }>();
       const title = c('知识与活动', 'Knowledge and activity');
       return <><SessionToolbar {...props} api={api} c={c} block={block} suppressed={settings !== undefined || knowledge !== undefined} openSettings={(tab = 'upstreams') => { setSettings(tab); }} openKnowledge={(key, activity = false) => { setKnowledge({ key, activity }); }} />
+        <BlankCommandFeedback sessionId={props.sessionId} blank={blank} subscribe={subscribeCommand} c={c} />
         {settings !== undefined && <Modal title={settingsTitle()} closeLabel={closeLabel()} close={() => { setSettings(undefined); }}><SettingsEntry initialTab={settings} close={() => { setSettings(undefined); }} /></Modal>}
-        {knowledge && <Modal title={title} closeLabel={closeLabel()} close={() => { setKnowledge(undefined); }}><KnowledgePanel api={api} initialKey={knowledge.key} initialTab={knowledge.activity ? 'activity' : 'knowledge'} c={c} openSettings={() => { setKnowledge(undefined); setSettings('upstreams'); }} openSource={(id) => { openSource(id, () => { setKnowledge(undefined); }); }} /></Modal>}
+        {knowledge && <Modal title={title} closeLabel={closeLabel()} close={() => { setKnowledge(undefined); }}><KnowledgePanel api={api} initialKey={knowledge.key} initialTab={knowledge.activity ? 'activity' : 'knowledge'} c={c} openSettings={() => { setKnowledge(undefined); setSettings('upstreams'); }} openComponents={ctx.get('pluginNavigation') === undefined ? undefined : () => { setKnowledge(undefined); ctx.get('pluginNavigation')?.openBundle('dsh-plugin-acn'); }} openSource={(id) => { openSource(id, () => { setKnowledge(undefined); }); }} /></Modal>}
       </>;
     }
     child.effect(() => child.slots.inject('conversation.input.left', () => child.slots.register({ name: 'conversation.input.left', id: 'acn', order: 50, locale: 'acn.configuration' }, Toolbar)));

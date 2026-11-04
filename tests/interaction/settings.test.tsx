@@ -20,19 +20,24 @@ function setup(current = snapshot, translate = t) {
   const open = vi.fn(); render(<TeamSettingsPage api={api} t={translate} openKnowledge={open} />); return { api, open };
 }
 describe('upstream settings', () => {
-  it('deduplicates the default selector label and knowledge identity selector', async () => {
+  it('keeps default actions in the editor and deduplicates knowledge identity labels', async () => {
     const current = { ...snapshot, values: configurationValues({ upstream: 'agent-a', upstreams: { 'agent-a': { name: '', agentId: 'agent-a' } } }) };
     const { api } = setup(current);
-    fireEvent.click(await screen.findByRole('tab', { name: '偏好' }));
-    const selector = await screen.findByRole('combobox', { name: '默认工作配置' });
-    expect(selector.querySelector('option[value="agent-a"]')?.textContent).toBe('agent-a');
+    fireEvent.click(await screen.findByRole('button', { name: '配置' }));
+    fireEvent.click(screen.getByRole('switch', { name: '设为默认' })); fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
+    await waitFor(() => { expect(vi.mocked(api.save).mock.calls[0]?.[0].values.upstream).toBe(''); });
+    fireEvent.click(await screen.findByRole('button', { name: '配置' }));
+    fireEvent.click(screen.getByRole('switch', { name: '设为默认' })); fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
+    await waitFor(() => { expect(vi.mocked(api.save).mock.calls[1]?.[0].values.upstream).toBe('agent-a'); });
+    fireEvent.click(screen.getByRole('tab', { name: '偏好' }));
+    expect(screen.queryByRole('combobox', { name: '默认工作配置' })).toBeNull();
     cleanup(); render(<KnowledgePanel api={api} initialKey="agent-a" c={c} />);
     await waitFor(() => { expect(screen.getByRole('combobox', { name: '知识身份' }).querySelector('option[value="agent-a"]')?.textContent).toBe('agent-a'); });
   });
   it('shows a unified configuration entry and browsing never synchronizes', async () => {
     const { api, open } = setup();
     expect((await screen.findByRole('tab', { name: '工作配置' })).getAttribute('aria-selected')).toBe('true');
-    expect(screen.queryByRole('heading', { level: 1 })).toBeNull(); expect(screen.getByTitle(zh.reloadHint)).toBeDefined();
+    expect(screen.queryByRole('heading', { level: 1 })).toBeNull(); expect(screen.queryByRole('button', { name: zh.reload })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: '知识与活动' })); expect(open).toHaveBeenCalledWith('coding'); expect(api.interact).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('tab', { name: '知识与模型' })); expect(screen.getByLabelText(zh.home)).toBeDefined();
   });
@@ -74,6 +79,8 @@ describe('upstream settings', () => {
     vi.mocked(api.interact).mockRejectedValueOnce(new Error('offline'));
     fireEvent.click(screen.getByRole('button', { name: '检查连接' }));
     await screen.findByText('未能完成连接检查，请稍后重试。本次检查不会保存配置，输入已保留。');
+    fireEvent.keyDown(screen.getByRole('dialog', { name: '连接检查结果' }), { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
     expect(vi.mocked(api.interact).mock.calls[0]?.[0]).toMatchObject({ action: 'check', connection: { routerEndpoint: 'https://router.example.org/team-a/' } });
     expect(vi.mocked(api.interact).mock.calls[0]?.[1]).toBeInstanceOf(AbortSignal);
     expect(screen.getByLabelText<HTMLInputElement>(zh.router).value).toBe('https://router.example.org/team-a/');
@@ -94,13 +101,13 @@ describe('upstream settings', () => {
     expect(vi.mocked(api.save).mock.calls[0]?.[0].values.upstreams?.['coding']).toMatchObject({ agentId: 'agent-a', routerEndpoint: 'https://router.example.org', maintainerEndpoint: 'https://maintainer.example.org', keyEnv: 'EXAMPLE_TEAM_TOKEN' });
     expect(api.interact).not.toHaveBeenCalled();
   });
-  it('keeps a draft while changing tabs and discards it only on explicit reload', async () => {
+  it('keeps a draft across unrelated preference saves and discards it on cancel', async () => {
     const { api } = setup(); fireEvent.click(await screen.findByRole('button', { name: '配置' }));
     fireEvent.change(screen.getByLabelText('Agent ID'), { target: { value: 'draft-agent' } });
     fireEvent.click(screen.getByRole('tab', { name: '偏好' })); fireEvent.click(screen.getByRole('switch', { name: '显示知识处理结果' }));
     await waitFor(() => { expect(api.save).toHaveBeenCalled(); }); expect(vi.mocked(api.save).mock.calls[0]?.[0].values.upstreams?.['coding']?.agentId).toBe('agent-a');
     fireEvent.click(screen.getByRole('tab', { name: '工作配置' })); expect(screen.getByLabelText<HTMLInputElement>('Agent ID').value).toBe('draft-agent');
-    fireEvent.click(screen.getByRole('button', { name: zh.reload })); await screen.findByText('已重新加载，未保存的修改已丢弃。');
+    fireEvent.click(screen.getByRole('button', { name: '取消编辑' }));
     fireEvent.click(screen.getByRole('button', { name: '配置' })); expect(screen.getByLabelText<HTMLInputElement>('Agent ID').value).toBe('agent-a');
   });
   it('shows the pending-record consequence when changing team addresses', async () => {
@@ -149,12 +156,12 @@ it.each(['inbox', 'dream', 'recap', 'finalize', 'memory_review'] as const)('show
   expect(interact.mock.calls.every(([request]) => request.action !== 'sync')).toBe(true);
 });
 
-it('disables and enables the saved configuration from the list without editing its fields', async () => {
+it('saves enabled state in the editor and clears a disabled default', async () => {
   const { api } = setup();
-  fireEvent.click(await screen.findByRole('button', { name: '停用配置 开发' }));
+  fireEvent.click(await screen.findByRole('button', { name: '配置' })); fireEvent.click(screen.getByRole('switch', { name: '启用此配置' })); fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
   await waitFor(() => { expect(api.save).toHaveBeenCalledTimes(1); });
   expect(vi.mocked(api.save).mock.calls[0]?.[0].values).toMatchObject({ upstream: '', upstreams: { coding: { name: '开发', agentId: 'agent-a', enabled: false } } });
-  fireEvent.click(await screen.findByRole('button', { name: '启用配置 开发' }));
+  fireEvent.click(await screen.findByRole('button', { name: '配置' })); fireEvent.click(screen.getByRole('switch', { name: '启用此配置' })); fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
   await waitFor(() => { expect(api.save).toHaveBeenCalledTimes(2); });
   expect(vi.mocked(api.save).mock.calls[1]?.[0].values).toMatchObject({ upstream: '', upstreams: { coding: { name: '开发', agentId: 'agent-a', enabled: true } } });
 });
@@ -165,7 +172,7 @@ it.each([false, true])('opens exact source details, explains missing team source
   render(<KnowledgePanel api={{ read: vi.fn().mockResolvedValue(snapshot), save: vi.fn(), interact }} initialKey="coding" c={c} />);
   const name = await screen.findByText('来源任务', { selector: 'strong' }); const details = name.closest('details'); if (!details) throw new Error('Expected origin details.'); fireEvent.click(name); details.open = true;
   fireEvent.click(screen.getByRole('button', { name: 'claim_00000002' }));
-  if (local) await screen.findByText('来源正文'); else await screen.findByText(/尚未内化的团队知识/);
+  if (local) await screen.findByText('来源正文'); else await screen.findByText('此来源未保存在当前知识库。');
   expect(screen.queryByText('暂无符合条件的知识。')).toBeNull();
   expect(interact.mock.calls.filter(([request]) => request.action === 'reference')).toHaveLength(1);
   fireEvent.click(screen.getByRole('button', { name: '返回上一条详情' }));
@@ -212,6 +219,7 @@ it('checks a draft key without storing it and retains the saved key when the fie
   fireEvent.change(input, { target: { value } }); fireEvent.click(screen.getByRole('button', { name: '检查连接' }));
   await waitFor(() => { expect(api.credential).toHaveBeenCalledWith(expect.objectContaining({ action: 'check', value }), expect.any(AbortSignal)); });
   expect(credential.mock.calls.some(([request]) => request.action === 'store')).toBe(false); expect(api.save).not.toHaveBeenCalled();
+  fireEvent.click(await screen.findByRole('button', { name: '确认' }));
   await waitFor(() => { expect(screen.getByRole<HTMLButtonElement>('button', { name: '保存配置' }).disabled).toBe(false); });
   fireEvent.change(input, { target: { value: '' } }); fireEvent.click(screen.getByRole('button', { name: '保存配置' })); await waitFor(() => { expect(api.save).toHaveBeenCalled(); });
   expect(vi.mocked(api.save).mock.calls[0]?.[0].values.upstreams?.['coding']?.keyEnv).toBe('EXAMPLE_TEAM_TOKEN');

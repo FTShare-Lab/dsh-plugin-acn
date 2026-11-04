@@ -127,12 +127,12 @@ it('keeps budget closure, unfinished groups and terminal delivery distinct in En
   const { ActivitySchema } = await import('../../src/interaction.js'); const action = vi.fn();
   const partial = ActivitySchema.parse({ id: 'dream-a', kind: 'dream', state: 'succeeded', attempts: 1, updatedAt: 1, summary: '额度收尾', budgetLimited: true, counts: { modelSteps: 2 }, incompleteCandidates: [{ groupId: 'group-a', claimIds: ['claim_00000001'], reason: '额度已耗尽' }] });
   const copy = (_zh: string, english: string) => english;
-  const mounted = render(<ActivityDetails item={partial} runtimeKey="coding" busy={false} c={copy} action={action} openClaim={vi.fn()} />);
+  const mounted = render(<ActivityDetails api={{ read: vi.fn(), save: vi.fn(), interact: vi.fn() }} item={partial} runtimeKey="coding" busy={false} c={copy} action={action} openClaim={vi.fn()} />);
   expect(mounted.container.textContent).not.toMatch(/[\u4e00-\u9fff]/);
   fireEvent.click(screen.getByRole('button', { name: 'Start a new Dream' })); expect(action).toHaveBeenCalledWith({ action: 'dream_again', key: 'coding', id: 'dream-a' });
   mounted.unmount();
   const rejected = ActivitySchema.parse({ id: 'delivery-a', kind: 'delivery', state: 'rejected', attempts: 0, updatedAt: 1, summary: '团队拒绝，未投递', summaryInfo: { code: 'delivery.rejected', entityId: 'dispute_00000001', status: 409 } });
-  render(<ActivityDetails item={rejected} runtimeKey="coding" busy={false} c={copy} action={action} openClaim={vi.fn()} />);
+  render(<ActivityDetails api={{ read: vi.fn(), save: vi.fn(), interact: vi.fn() }} item={rejected} runtimeKey="coding" busy={false} c={copy} action={action} openClaim={vi.fn()} />);
   expect(screen.queryByRole('button', { name: 'Retry task' })).toBeNull(); expect(screen.queryByRole('button', { name: 'Retry team delivery' })).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Mark acknowledged' })); expect(action).toHaveBeenCalledWith({ action: 'ack', key: 'coding', id: 'delivery-a', version: 1 });
 });
