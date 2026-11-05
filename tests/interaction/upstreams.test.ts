@@ -21,20 +21,18 @@ import Knowledge from '../../src/plugins/knowledge.js';
 import { mergeConfiguration, configurationValues } from '../../src/configuration.js';
 
 const solo = (name: string, agentId = 'agent-a') => UpstreamSchema.parse({ name, agentId });
-const configuration = () => ({ upstream: 'coding', upstreams: { coding: solo('开发'), review: solo('审查') }, llm: { provider: 'mock', model: 'mock' }, formation: { idleRecap: false }, dream: { enabled: false }, memory: { review: { enabled: false } } });
+const configuration = () => ({ upstream: 'coding', upstreams: { coding: solo('开发'), review: solo('审查') }, llm: { provider: 'mock', model: 'mock' }, formation: { idleRecap: false }, dream: { enabled: false } });
 const response = (path: string) => path === '/inbox/pull' ? { body: [] } : path.endsWith('/overview') ? { body: { scopes: [] } } : { body: { status: 'ok', team_auth_enabled: false } };
 describe('upstream selection and ownership', () => {
   it('starts with the real default, separates equal Agent IDs, and shares a store across sessions', async () => {
     const adapter = new ScriptAdapter([textResponse('Task completed.'), textResponse('Review completed.')]);
-    const flow = await flowHarness(adapter, { formation: true, memory: true, inbox: true, config: configuration() });
+    const flow = await flowHarness(adapter, { formation: true, inbox: true, config: configuration() });
     try {
       const first = await flow.create(); const pool = flow.ctx.acnRuntime;
       expect(pool.view(first.session.header)).toMatchObject({ key: 'coding', available: true, locked: false });
       const knowledge = await pool.knowledge(first.session.header);
       expect(knowledge.context().paths.root).toBe(join(flow.root, 'knowledge', 'coding', 'data', 'agents', 'agent-a'));
       await new ClaimStore(knowledge.context()).write(sampleClaim({ name: 'CODING_ONLY_KNOWLEDGE' }));
-      const result = await flow.ctx.tools.execute({ name: 'memory', agent: first, callId: ToolCallId('coding-private'), arguments: { ops: [{ op: 'add', target: 'memory', entry: 'CODING_ONLY_PRIVATE' }] }, signal: new AbortController().signal });
-      expect(result.isError).toBe(false);
       const next = await flow.create('another-project-session');
       expect((await pool.knowledge(next.session.header)).context().paths.root).toBe(knowledge.context().paths.root);
       expect((await callTool(flow.ctx, next, { action: 'list' })).value).toMatchObject({ items: [expect.objectContaining({ name: { text: 'CODING_ONLY_KNOWLEDGE', truncated: false } })] });
@@ -42,7 +40,7 @@ describe('upstream selection and ownership', () => {
       expect((await callTool(flow.ctx, next, { action: 'list' })).value).toMatchObject({ items: [] });
       expect((await pool.knowledge(next.session.header)).context().paths.root).not.toBe(knowledge.context().paths.root);
       const prompt = JSON.stringify(await flow.ctx.systemPrompt.assemble(assembleContextFor(next)));
-      expect(prompt).not.toContain('CODING_ONLY_PRIVATE'); expect(prompt).not.toContain('CODING_ONLY_KNOWLEDGE');
+      expect(prompt).not.toContain('CODING_ONLY_KNOWLEDGE');
       await turn(first); await turn(next); expect(adapter.requests).toHaveLength(2);
       await expect(pool.select(first.session.header, 'review')).rejects.toMatchObject({ kind: 'bound' });
       const child = await flow.ctx.agents.create({ sessionId: SessionId('upstream-child'), parentAgent: first, meta: { parentSession: first.session.id, origin: 'subagent', delegationDepth: 1 }, agentOptions: { provider: 'mock', model: 'mock' } });
@@ -163,7 +161,7 @@ describe('upstream selection and ownership', () => {
   });
   it('attaches the selected offline upstream instructions and disposes its own lifecycle', async () => {
     const server = await teamServer(() => ({ status: 503 })); const adapter = new ScriptAdapter([textResponse('Offline task.')]);
-    const flow = await flowHarness(adapter, { formation: true, inbox: true, memory: true, config: { ...configuration(), upstreams: { coding: solo('开发'), review: { ...solo('审查'), routerEndpoint: server.endpoint, maintainerEndpoint: server.endpoint } }, team: { retryCount: 0 } } });
+    const flow = await flowHarness(adapter, { formation: true, inbox: true, config: { ...configuration(), upstreams: { coding: solo('开发'), review: { ...solo('审查'), routerEndpoint: server.endpoint, maintainerEndpoint: server.endpoint } }, team: { retryCount: 0 } } });
     try {
       await fs.mkdir(join(flow.root, 'knowledge', 'coding'), { recursive: true }); await fs.mkdir(join(flow.root, 'knowledge', 'review'), { recursive: true });
       await fs.writeFile(join(flow.root, 'knowledge', 'coding', 'ACN.md'), 'DEFAULT_INSTRUCTIONS_PRIVATE'); await fs.writeFile(join(flow.root, 'knowledge', 'review', 'ACN.md'), 'TARGET_OFFLINE_INSTRUCTIONS');
@@ -224,7 +222,7 @@ describe('upstream selection and ownership', () => {
   it('refreshes the legacy base assembly after cancellation without starting a new Router overview', async () => {
     const server = await teamServer((request) => request.path === '/inbox/pull' ? { delayMs: 1000, body: [] } : response(request.path));
     const adapter = new ScriptAdapter([textResponse('Legacy cancellation continued.')]);
-    const flow = await flowHarness(adapter, { inbox: true, memory: true, config: { team: { routerEndpoint: server.endpoint, maintainerEndpoint: server.endpoint }, inbox: { pullOnSessionStart: false }, dream: { enabled: false }, memory: { review: { enabled: false } } } });
+    const flow = await flowHarness(adapter, { inbox: true, config: { team: { routerEndpoint: server.endpoint, maintainerEndpoint: server.endpoint }, inbox: { pullOnSessionStart: false }, dream: { enabled: false } } });
     let release: (() => void) | undefined; const gate = new Promise<void>((resolve) => { release = resolve; });
     let started: (() => void) | undefined; const refreshing = new Promise<void>((resolve) => { started = resolve; });
     // 仅通过 apply(this, args) 调用原方法，保留竞态中的真实实例。
@@ -232,7 +230,6 @@ describe('upstream selection and ownership', () => {
     const freeze = KnowledgeSessions.prototype.freeze; let restore: (() => void) | undefined;
     try {
       const agent = await flow.create(); await new ClaimStore(flow.knowledge.context()).write(sampleClaim({ name: 'LEGACY_REFRESHED_CLAIM' }));
-      await flow.ctx.acnMemory.apply({ ops: [{ op: 'add', target: 'memory', entry: 'LEGACY_REFRESHED_MEMORY' }] });
       const spy = vi.spyOn(KnowledgeSessions.prototype, 'freeze').mockImplementation(async function (this: KnowledgeSessions, ...args) { if (args[1] === 'clear') { started?.(); await gate; } return freeze.apply(this, args); });
       restore = () => { spy.mockRestore(); };
       const pool = flow.ctx.acnRuntime; const syncing = pool.sync(agent.session.header);
@@ -241,7 +238,7 @@ describe('upstream selection and ownership', () => {
       const cancelling = pool.cancel(agent.session.header); const running = turn(agent);
       await refreshing; expect(adapter.requests).toHaveLength(0); release?.();
       await Promise.all([syncing, cancelling, running]);
-      const first = JSON.stringify(adapter.requests[0]); expect(first).toContain('LEGACY_REFRESHED_CLAIM'); expect(first).toContain('LEGACY_REFRESHED_MEMORY');
+      const first = JSON.stringify(adapter.requests[0]); expect(first).toContain('LEGACY_REFRESHED_CLAIM');
       expect(server.requests.filter((request) => request.path === '/claims/scopes/overview')).toHaveLength(before);
     } finally { release?.(); restore?.(); await flow.close(); await server.close(); }
   });

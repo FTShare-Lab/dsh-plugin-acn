@@ -6,7 +6,6 @@ import { AgentQuerySchema, ArbitrationResolutionContextSchema, AuthEnvelopeSchem
 import { decodeYaml, encodeJson, encodeYaml, PendingClaimEditSchema, PendingUploadsSchema, ReportedSetsSchema } from '../../src/store/index.js';
 import { DreamStateSchema, CheckpointSchema as DreamCheckpointSchema, ValidationSchema } from '../../src/dream/schema.js';
 import { valueHash } from '../../src/dream/plan.js';
-import { MemoryOpSchema, MemoryReportSchema, MemorySnapshotSchema, MemoryUsageSchema } from '../../src/memory/operations.js';
 
 const directory = new URL('../fixtures/protocol/', import.meta.url);
 const manifest = z.object({ acn_version: z.string(), fixtures: z.array(z.object({ name: z.string(), kind: z.string(), revision: z.string().optional() })) }).parse(JSON.parse(await readFile(new URL('manifest.json', directory), 'utf8')));
@@ -16,7 +15,6 @@ const schemas: Record<string, z.ZodType> = {
   overview: ScopesOverviewSnapshotSchema, auth: AuthEnvelopeSchema, 'auth-query': authRequestSchema(AgentQuerySchema),
   'inbox-ack': InboxAckRequestSchema, uploads: PendingUploadsSchema, 'pending-edit': PendingClaimEditSchema, 'reported-sets': ReportedSetsSchema,
   'dream-state': DreamStateSchema, 'dream-checkpoint': DreamCheckpointSchema, 'dream-validation': ValidationSchema, 'dream-pending': z.string(),
-  'memory-ops': z.array(MemoryOpSchema), 'memory-report': MemoryReportSchema, 'memory-snapshot': MemorySnapshotSchema, 'memory-usage': MemoryUsageSchema,
 };
 const readback = new URL('../../.artifacts/acn-roundtrip/', import.meta.url);
 await mkdir(readback, { recursive: true });

@@ -13,7 +13,7 @@ export function apply(ctx: Context): void {
   if (!ctx.acnKnowledge.configured && ctx.acnKnowledge.config.upstreams === undefined) return;
   const denied = (exec: Readonly<ToolExecution>): string | undefined => {
     const args = exec.arguments;
-    const writing = exec.name === 'memory' || (exec.name === 'claim' && typeof args === 'object' && args !== null && 'action' in args && args.action === 'update');
+    const writing = (exec.name === 'claim' && typeof args === 'object' && args !== null && 'action' in args && args.action === 'update');
     return writing && exec.agent !== undefined && isSubagent(exec.agent.session.header) ? 'Subagents cannot modify ACN knowledge.' : undefined;
   };
   ctx.on('tools/pre-execute', (exec, next) => {

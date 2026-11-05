@@ -1,4 +1,4 @@
-// 普通文件能力不能读取私有 Agent 根，避免从快照、回执或别名绕过双文件工具。
+// 普通文件能力不能读取私有 Agent 根，避免从快照、回执或别名绕过领域工具。
 import fs from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import type { Context } from '@deepseek-ai/cordis';
@@ -11,7 +11,7 @@ import { agentHomePath } from '../store/paths.js';
 import { hasCode } from '../store/errors.js';
 
 const fileTools = new Set(['read', 'read_image', 'write', 'edit', 'grep', 'glob', 'str_replace_editor']);
-const denial = '普通文件工具不能访问私有 Agent 数据或包含它的搜索根；请使用 Claim/Memory 专用工具，或缩小搜索目录。';
+const denial = '普通文件工具不能访问私有 Agent 数据或包含它的搜索根；请使用 Claim 专用工具，或缩小搜索目录。';
 const fingerprint = (execution: Readonly<ToolExecution>): string => createHash('sha256').update(JSON.stringify(execution.arguments) ?? 'undefined').digest('hex');
 async function* linkedFiles(root: string, signal: AbortSignal): AsyncGenerator<string> {
   const directories = [root];
@@ -26,7 +26,7 @@ async function* linkedFiles(root: string, signal: AbortSignal): AsyncGenerator<s
     }
   }
 }
-export function protectMemoryPaths(ctx: Context, knowledge: AcnKnowledge): void {
+export function protectKnowledgePaths(ctx: Context, knowledge: AcnKnowledge): void {
   const privateHome = dirname(dirname(agentHomePath(knowledge.config.home, 'private-root')));
   const privateAlias = async (path: string, recursive: boolean, signal: AbortSignal) => {
     const privateLinks = new Set<string>();

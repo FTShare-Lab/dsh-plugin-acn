@@ -131,7 +131,7 @@ export class ConfigurationService extends TypertRemoteService {
       if (this.pending > 0) throw new Error(configurationBusy);
       return decision;
     });
-    ctx.tools.guard((execution) => this.pending > 0 && ['claim', 'consult_router', 'memory'].includes(execution.name) ? configurationBusy : undefined);
+    ctx.tools.guard((execution) => this.pending > 0 && ['claim', 'consult_router'].includes(execution.name) ? configurationBusy : undefined);
   }
 
   private checkIdle(): void {

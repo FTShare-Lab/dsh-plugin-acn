@@ -2,11 +2,6 @@
 use agent_claim_network::{
     auth::{sha256_hex, AuthEnvelope, AuthRequest},
     claim::*,
-    config::{DEFAULT_MEMORY_CHAR_LIMIT, DEFAULT_USER_CHAR_LIMIT},
-    memory::{
-        apply_ops_to_texts, snapshot_texts, MemoryApplyReport, MemoryOp, MemorySnapshot,
-        MemoryUsage,
-    },
     router::{AgentQuery, RouterQueryResult, ScopesOverviewSnapshot},
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -275,77 +270,6 @@ fn main() -> Result<()> {
     );
     fs::create_dir_all(out)?;
     let mut manifest = Vec::new();
-    emit::<Vec<MemoryOp>>(
-        out,
-        verify,
-        "memory-ops",
-        "memory-ops",
-        json!([
-            {"op":"add","target":"memory","entry":"Example stable environment."},
-            {"op":"replace","target":"user","old_text":"old preference","new_text":"Concise 中文 😀 explanations."},
-            {"op":"remove","target":"memory","old_text":"obsolete"}
-        ]),
-        &mut manifest,
-    )?;
-    emit::<MemorySnapshot>(
-        out,
-        verify,
-        "memory-snapshot",
-        "memory-snapshot",
-        serde_json::to_value(snapshot_texts(
-            "One\n§\nTwo",
-            "中文 😀",
-            DEFAULT_MEMORY_CHAR_LIMIT,
-            DEFAULT_USER_CHAR_LIMIT,
-        ))?,
-        &mut manifest,
-    )?;
-    emit::<MemorySnapshot>(
-        out,
-        verify,
-        "memory-snapshot-empty",
-        "memory-snapshot",
-        serde_json::to_value(snapshot_texts(
-            "",
-            "",
-            DEFAULT_MEMORY_CHAR_LIMIT,
-            DEFAULT_USER_CHAR_LIMIT,
-        ))?,
-        &mut manifest,
-    )?;
-    emit::<MemoryUsage>(
-        out,
-        verify,
-        "memory-usage",
-        "memory-usage",
-        json!({"chars":7,"cap_chars":10,"percent":70,"entry_count":1}),
-        &mut manifest,
-    )?;
-    let ops: Vec<MemoryOp> =
-        serde_json::from_value(json!([{"op":"add","target":"memory","entry":"中文 😀"}]))?;
-    let (_, _, memory_report) = apply_ops_to_texts(
-        String::new(),
-        String::new(),
-        DEFAULT_MEMORY_CHAR_LIMIT,
-        DEFAULT_USER_CHAR_LIMIT,
-        &ops,
-    )?;
-    emit::<MemoryApplyReport>(
-        out,
-        verify,
-        "memory-report",
-        "memory-report",
-        serde_json::to_value(memory_report)?,
-        &mut manifest,
-    )?;
-    emit::<MemoryApplyReport>(
-        out,
-        verify,
-        "memory-report-legacy",
-        "memory-report",
-        json!({"memory_chars":0,"memory_cap_chars":DEFAULT_MEMORY_CHAR_LIMIT,"memory_percent":0,"memory_entry_count":0,"user_chars":0,"user_cap_chars":DEFAULT_USER_CHAR_LIMIT,"user_percent":0,"user_entry_count":0}),
-        &mut manifest,
-    )?;
     let claim = json!({"id":"claim_00000001","name":"example","statement":"中文 😀 / \\ \" \n\t\u{0000}\u{0001}\u{0008}\u{000c}\r","scope":"example / scope","holder":"agent-a","confidence":"high","status":"active","created_at":"2026-10-21T00:00:00Z","source_claim_ids":[],"evidence_summary":"example evidence"});
     for (name, at) in [
         ("claim-seconds", "2026-10-21T00:00:00Z"),
@@ -774,7 +698,7 @@ fn main() -> Result<()> {
             ),
             (
                 "session_recap",
-                json!({"memory_enabled":false}),
+                json!({}),
                 "session-recap",
             ),
             ("what_is_claim", json!({}), "what_is_claim"),
@@ -793,18 +717,7 @@ fn main() -> Result<()> {
             ("claim_dream", json!({}), "claim-dream"),
             ("dream_evidence", json!({}), "dream-evidence"),
             ("dream_compaction", json!({}), "dream-compaction"),
-            ("what_is_memory", json!({}), "what_is_memory"),
-            (
-                "memory",
-                json!({"memory_md":"Example frozen private notes.","user_md":"Example frozen user preference."}),
-                "memory",
-            ),
-            (
-                "memory_review_system",
-                json!({"agent_id":"agent-a"}),
-                "memory-review-system",
-            ),
-            ("memory_review", json!({}), "memory-review"),
+
         ] {
             fs::write(
                 snapshots.join(format!("{filename}.txt")),
@@ -843,12 +756,6 @@ fn main() -> Result<()> {
             fs::create_dir_all(home.join(directory))?;
             fs::write(home.join(directory).join(format!("{id}.yaml")), value)?;
         }
-        fs::create_dir_all(home.join("memories"))?;
-        fs::write(
-            home.join("memories/MEMORY.md"),
-            "Example private experience.\n",
-        )?;
-        fs::write(home.join("memories/USER.md"), "Example user preference.\n")?;
         fs::create_dir_all(home.join("maintainer_uploads"))?;
         fs::copy(
             out.join("uploads.yaml"),

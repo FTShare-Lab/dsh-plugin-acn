@@ -109,7 +109,7 @@ export function bindSession(ctx: Context, config: ResolvedConfig, header: Sessio
   catch (error) { bindings.set(header, null); throw error; }
 }
 
-export const sessionChanged = 'ACN 会话身份与当前配置不一致，或缺少可验证的历史身份记录，请新建会话。旧会话不能访问当前身份的知识和私有记忆。';
+export const sessionChanged = 'ACN 会话身份与当前配置不一致，或缺少可验证的历史身份记录，请新建会话。旧会话不能访问当前身份的知识。';
 export const configurationBusy = 'ACN 配置正在应用，请稍后重试。';
 export const unboundSession = '本会话未启用 ACN，聊天仍可继续。只有安装插件后新建且尚未发送消息的会话可选择工作配置；如需使用 ACN，请新建会话。';
 export function sessionAllowed(ctx: Context, config: ResolvedConfig, header: SessionHeader): boolean {

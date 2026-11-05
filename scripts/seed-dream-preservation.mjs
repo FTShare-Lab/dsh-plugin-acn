@@ -19,10 +19,6 @@ const claims = [
 await fs.mkdir(join(agent, 'claims'), { recursive: true });
 for (const claim of claims) await fs.writeFile(join(agent, 'claims', `${claim.id}.yaml`), stringify(claim), { mode: 0o600 });
 await fs.writeFile(join(root, 'before.json'), JSON.stringify({ scenario, claims }, null, 2), { mode: 0o600 });
-if (scenario === 'fresh') {
-  await fs.mkdir(join(agent, 'jobs'), { recursive: true }); const now = Date.now();
-  await fs.writeFile(join(agent, 'jobs', 'disabled-memory-review.yaml'), stringify({ schemaVersion: 1, id: 'disabled-memory-review', kind: 'memory_review', sessionId: 'prior-session', payload: { request_id: 'queued-before-disable' }, state: 'queued', attempts: 0, createdAt: now, updatedAt: now, ordinal: 0 }), { mode: 0o600 });
-}
 if (scenario === 'legacy') {
   const [carrier, source] = claims; assert.ok(carrier && source);
   const candidate = { group_id: 'preserve-version', kind: 'consolidation', claim_ids: claims.map((claim) => claim.id), reason: 'Combine overlapping retry rules without losing their distinct evidence and version limitations.' };

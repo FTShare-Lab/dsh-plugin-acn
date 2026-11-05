@@ -199,7 +199,7 @@ export class TranscriptStore {
       if (!formationOnly) { ids.push(entry.name); continue; }
       try {
         const files = await fs.readdir(this.context.paths.session(entry.name));
-        // 同一目录也保存冻结 Memory；不能把仅有私有状态的子会话误当作形成输入。
+        // 同一目录也保存其他会话状态；不能把没有业务记录的子会话误当作形成输入。
         if (files.includes('transcript.jsonl') || files.includes('transcript-pending')) { ids.push(entry.name); continue; }
         const state = await this.states.read(entry.name);
         if (state !== null && Object.hasOwn(state, 'lastSeenSeq')) ids.push(entry.name);

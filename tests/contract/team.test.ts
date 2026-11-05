@@ -27,7 +27,6 @@ import { candidate, reviewSummary } from '../dream/helpers.js';
 import { calibrationDraft, calibrationReviews, evidenceFixture, material } from '../dream/evidence-helpers.js';
 import type { Receipts } from '../../src/dream/evidence.js';
 import type { Validation } from '../../src/dream/schema.js';
-import { memoryFixture, reviewTurn } from '../memory/helpers.js';
 
 const routerEndpoint = process.env['ACN_CONTRACT_ROUTER']; const maintainerEndpoint = process.env['ACN_CONTRACT_MAINTAINER'];
 if (!routerEndpoint || !maintainerEndpoint || !process.env['ACN_TEST_TEAM_CREDENTIAL']) throw new Error('Run through scripts/contract-up.sh.');
@@ -95,19 +94,6 @@ describe('ACN 0.3.3 live contract', () => {
         expect(result?.candidate_claims.find((c) => c.id === input[1]?.id)?.statement).toBe('Use the current bounded contract.');
       }, { timeout: 5000 });
     } finally { await Promise.all(fixtures.map((f) => f.close())); }
-  });
-  it('keeps Memory tool/review private with live team services available and creates no upload work', async () => {
-    const f = await memoryFixture({ ...config, llm: { provider: 'mock', model: 'mock' }, memory: { review: { intervalTurns: 1 } } }, () => Promise.resolve({ text: '{"ops":[{"op":"add","target":"user","entry":"PRIVATE_REVIEW_CONTRACT_MARKER"}]}' }));
-    const team = f.knowledge.team; if (!team) throw new Error('Missing real team.');
-    try {
-      await team.health(); expect(team.status()).toMatchObject({ router: { state: 'ok' }, maintainer: { state: 'ok' } });
-      const upload = vi.spyOn(team.maintainer, 'upload'); const query = vi.spyOn(team.router, 'query'); const pull = vi.spyOn(team.maintainer, 'pull');
-      await f.memory.apply({ ops: [{ op: 'add', target: 'memory', entry: 'PRIVATE_MEMORY_CONTRACT_MARKER' }] }); await reviewTurn(f.review);
-      const job = (await f.worker.queue.list())[0]; if (!job) throw new Error('Missing private review.'); await f.worker.start(); await waitJob(f.worker.queue, job.id);
-      expect(upload).not.toHaveBeenCalled(); expect(query).not.toHaveBeenCalled(); expect(pull).not.toHaveBeenCalled(); expect(await new UploadStore(f.knowledge.context()).read()).toMatchObject({ claims: [], disputes: [] });
-      const remote = await team.router.query({ scope: 'private/example', semantic_query: null }); expect(JSON.stringify(remote)).not.toContain('PRIVATE_'); expect((await f.memory.snapshot()).user_entries).toEqual(['PRIVATE_REVIEW_CONTRACT_MARKER']);
-      upload.mockRestore(); query.mockRestore(); pull.mockRestore();
-    } finally { vi.restoreAllMocks(); await f.close(); }
   });
   it('uploads a calibrated Claim through the real Maintainer and retrieves the exact revised confidence from Router', async () => {
     const input = [sampleClaim({ id: ClaimIdSchema.parse('claim_00000030'), confidence: 'low', scope: 'evidence/example', created_at: new Date().toISOString() })];

@@ -1,7 +1,7 @@
 // 任务协议只存本地调度事实；错误摘要不包含模型正文或传输凭据。
 import { z } from 'zod';
 
-export const JobKindSchema = z.enum(['finalize', 'recap', 'inbox', 'memory_review', 'dream']);
+export const JobKindSchema = z.enum(['finalize', 'recap', 'inbox', 'dream']);
 export type JobKind = z.infer<typeof JobKindSchema>;
 export const JobSchema = z.strictObject({
   schemaVersion: z.literal(1), id: z.string().regex(/^[a-zA-Z0-9_-]+$/), kind: JobKindSchema,
@@ -12,7 +12,7 @@ export const JobSchema = z.strictObject({
   nextRunAt: z.number().int().nonnegative().optional(), lastError: z.string().optional(), lastErrorKind: z.string().optional(), result: z.json().optional(),
 });
 export type Job = z.infer<typeof JobSchema>;
-export const jobPriority: Record<JobKind, number> = { finalize: 0, recap: 1, inbox: 2, memory_review: 3, dream: 4 };
+export const jobPriority: Record<JobKind, number> = { finalize: 0, recap: 1, inbox: 2, dream: 3 };
 export class JobError extends Error {
   constructor(readonly kind: string, message: string, readonly retryable = false, readonly retryAfterMs?: number) { super(message); }
 }

@@ -144,7 +144,7 @@ it('browses knowledge, filters activity and retries explicitly without a sync re
   expect(interact.mock.calls.some(([r]) => r.action === 'activity')).toBe(true); expect(interact.mock.calls.every(([request]) => request.action !== 'sync')).toBe(true); expect(screen.getByText('模型暂不可用。')).toBeDefined();
 });
 
-it.each(['inbox', 'dream', 'recap', 'finalize', 'memory_review'] as const)('shows the persisted model failure and an explicit retry action for %s', async (kind) => {
+it.each(['inbox', 'dream', 'recap', 'finalize'] as const)('shows the persisted model failure and an explicit retry action for %s', async (kind) => {
   const error = '后台模型返回的响应格式无效（MALFORMED_RESPONSE）；可稍后重试或更换知识处理模型。';
   const interact = vi.fn<InteractionApi['interact']>().mockResolvedValue({ ok: true, message: '', knowledge: { key: 'personal', name: '示例配置', items: [], omitted: 0, activities: [{ id: 'failed-model-job', kind, state: 'failed', attempts: 1, updatedAt: 1, unseen: true, summary: '', error }], pendingClaims: 0, pendingDisputes: 0 } });
   const api: InteractionApi = { read: vi.fn().mockResolvedValue(snapshot), save: vi.fn(), interact };

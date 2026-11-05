@@ -12,11 +12,11 @@
 
 Windows 导入命令保留原生路径的反斜杠，支持盘符、UNC、含空格的引号路径与 `~\` 主目录前缀。Agent ID、配置标识等本地目录名会拒绝 `con`、`nul`、`com1` 等 Windows 设备保留名称；其他平台已有合法名称继续兼容。
 
-安装由宿主读取 tarball 的 `dsh.bundle.patch`，九行组合（插件配置入口和八个领域组件）按隔离服务依赖装配。只有 `plugins/` 与 `dsh-adapter/` 导入宿主运行时；协议与核心模块可独立使用。按 id 覆盖整体替换 config，插件再补字段默认值。
+安装由宿主读取 tarball 的 `dsh.bundle.patch`，八行组合（插件配置入口和七个领域组件）按隔离服务依赖装配。只有 `plugins/` 与 `dsh-adapter/` 导入宿主运行时；协议与核心模块可独立使用。按 id 覆盖整体替换 config，插件再补字段默认值。
 
 | 公开接口 | 用途与约束 |
 | --- | --- |
-| `agent/created` serial、SessionHeader | 冻结目录 / Memory，身份和子代理权限来自宿主 |
+| `agent/created` serial、SessionHeader | 冻结知识目录，身份和子代理权限来自宿主 |
 | systemPrompt sections | 同步读已准备缓存；数据不做模板插值 |
 | `agent/pre-step`、`agent/request`、`session/event` | 请求准入后的知识变化、路由与公开投影 |
 | tools DSL、renderer、最终 guard | 原生 / 程序桥工具结果、权限与路径门禁 |
@@ -35,7 +35,7 @@ Windows 导入命令保留原生路径的反斜杠，支持盘符、UNC、含空
 
 知识、任务及恢复状态保存在插件自身目录；身份绑定通过宿主公开插件记录接口写入会话日志，不自行改写宿主日志格式。Recap 监听宿主实际成功压缩的结果，不改变 DSH 的压缩策略。兼容基线的[标准模式](https://github.com/deepseek-ai/deepseek-harness/blob/687f282e8625c6b8d11ff58211a90524be2e4317/packages/bundle/web-app/presets/standard.patch.yml)已提供 `compaction-basic` 和 `command-compact`；顶层同名行因能力由会话模式管理而停用，不能据此判断客户端关闭了压缩。两项功能的关系见[会话压缩与知识复盘](config.md#会话压缩与知识复盘)。DSH 当前工作区可能与启动目录不同，需在客户端选择实际项目；验收脚本显式配置临时默认工作区。
 
-原生工具、程序桥、Loader 单行禁用、安装、恢复会话、证据子会话和 Memory 路径保护都有自动化测试。宿主升级后应重新检查工具门禁、事件、压缩、模型取消和卸载边界，再按[开发指南](development.md)验证。
+原生工具、程序桥、Loader 单行禁用、安装、恢复会话、证据子会话和 知识目录保护都有自动化测试。宿主升级后应重新检查工具门禁、事件、压缩、模型取消和卸载边界，再按[开发指南](development.md)验证。
 
 模型适配器可能只转发工具 Schema 的顶层 `properties` 和 `required`。Claim、Router 查询和 Dream 只读 Claim 因此同时提供顶层参数字段与完整的动作联合约束，避免模型收到空参数说明。执行时仍按具体动作严格校验；展示全部动作的字段不代表可以混用字段，也不放宽 revision、所有权或只读限制。
 
@@ -46,12 +46,12 @@ Windows 导入命令保留原生路径的反斜杠，支持盘符、UNC、含空
 | 平台 | 当前覆盖与验证边界 |
 | --- | --- |
 | macOS | 本机全量测试、真实安装与插件界面回归；继续保留 POSIX 文件打开标志和权限检查 |
-| Windows | 默认知识目录、盘符与 UNC 路径解析、原生导入路径、保留目录名及不依赖 POSIX 标志的 Memory 检查已有回归；CI 配置 Windows Node 22 / 24 的全量测试和实际 CLI 安装检查 |
+| Windows | 默认知识目录、盘符与 UNC 路径解析、原生导入路径、保留目录名已有回归；CI 配置 Windows Node 22 / 24 的全量测试和实际 CLI 安装检查 |
 | Linux（开发与 CI） | Node 22 / 24 的自动化检查与 Ubuntu 团队服务契约；不包含 Linux 桌面支持 |
 
 Windows CI 需在 GitHub Actions 实际触发工作流后才会运行；配置工作流不等于已得到 Windows 通过结果。当前没有 Windows 桌面实机验收结论。路径单测中的 UNC 支持仅验证解析，不代表已验证 SMB 共享存储的锁、原子发布或断电恢复。
 
-知识目录建议位于当前用户独占的本地磁盘。Memory 拒绝符号链接、目录 junction、多链接及读取中发生变化的文件；macOS / Linux 继续使用原有打开标志，Windows 额外依赖打开前后的显式文件类型和身份检查。`0600` 只表达 POSIX 权限，不能替代 Windows ACL；保护范围见[已知限制](outstanding-issues.md#memory-的保护范围)。
+知识目录建议位于当前用户独占的本地磁盘；普通文件工具不能绕过领域接口访问 ACN 数据。Windows 目录应具有正确的 ACL；保护范围见[已知限制](outstanding-issues.md#领域文件访问)。
 
 ## 安装包与界面资源
 

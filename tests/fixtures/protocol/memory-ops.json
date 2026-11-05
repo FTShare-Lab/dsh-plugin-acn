@@ -1,1 +1,0 @@
-[{"op":"add","target":"memory","entry":"Example stable environment."},{"op":"replace","target":"user","old_text":"old preference","new_text":"Concise 中文 😀 explanations."},{"op":"remove","target":"memory","old_text":"obsolete"}]

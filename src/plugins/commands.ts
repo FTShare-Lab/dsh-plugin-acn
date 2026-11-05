@@ -50,7 +50,7 @@ export function apply(ctx: Context): void {
     catch (error) { if (error instanceof JobError) return { kind: 'error', text: commandMessage(error.message, error.kind) }; throw error; }
   } });
   if (!knowledge.configured && knowledge.config.upstreams === undefined) return;
-  ctx.commands.register({ name: 'acn-import', description: 'Import owned knowledge from a separate read-only agent directory.', input: { hint: '[--dry-run] [--without-memory] <acn_agent_home>' }, handler: async ({ agent, rawInput, signal }) => {
+  ctx.commands.register({ name: 'acn-import', description: 'Import owned knowledge from a separate read-only agent directory.', input: { hint: '[--dry-run] <acn_agent_home>' }, handler: async ({ agent, rawInput, signal }) => {
     const reason = denied(agent); if (reason !== undefined) return { kind: 'error', text: commandMessage(reason) };
     const knowledge = await pool.knowledge(agent.session.header);
     try { return { kind: 'success', text: renderImportReport(await importCommand(knowledge, rawInput, isSubagent(agent.session.header), signal)) }; }

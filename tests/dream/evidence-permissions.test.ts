@@ -47,7 +47,7 @@ describe('restricted workspace evidence', () => {
       if (mode === 'symlink-file') { path = 'link.txt'; await fs.symlink(outside, join(f.workspace, path)); }
       if (mode === 'symlink-directory') { await fs.symlink(f.root, join(f.workspace, 'link')); path = 'link/outside.txt'; }
       if (mode === 'hardlink') { path = 'hard.txt'; await fs.link(outside, join(f.workspace, path)); }
-      if (mode === 'private-home') path = f.knowledge.context().paths.memory;
+      if (mode === 'private-home') path = join(f.knowledge.context().paths.root, 'memories', 'MEMORY.md');
       if (mode === 'directory') { path = 'directory'; await fs.mkdir(join(f.workspace, path)); }
       if (mode === 'binary') await fs.writeFile(join(f.workspace, path), Buffer.from([0, 1, 2]));
       if (mode === 'invalid-utf8') await fs.writeFile(join(f.workspace, path), Buffer.from([255, 254]));

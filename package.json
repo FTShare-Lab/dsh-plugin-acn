@@ -1,7 +1,7 @@
 {
   "name": "@ftai/dsh-plugin-acn",
   "version": "0.1.0",
-  "description": "从agent工作轨迹中沉淀可复用的知识与记忆，让知识经验在团队中流动",
+  "description": "从agent工作轨迹中沉淀可复用的知识，让知识经验在团队中流动",
   "keywords": [
     "dsh",
     "dsh-plugin",
@@ -94,14 +94,6 @@
       "types": "./lib/types/dream/index.d.ts",
       "default": "./lib/dream.js"
     },
-    "./memory": {
-      "types": "./lib/types/plugins/memory.d.ts",
-      "default": "./lib/plugins/memory.js"
-    },
-    "./memory-core": {
-      "types": "./lib/types/memory/index.d.ts",
-      "default": "./lib/memory.js"
-    },
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg",
     "./knowledge/locale/*.json": "./locale/knowledge/*.json",
@@ -116,8 +108,6 @@
     "./inbox/icon": "./icon.svg",
     "./dream/locale/*.json": "./locale/dream/*.json",
     "./dream/icon": "./icon.svg",
-    "./memory/locale/*.json": "./locale/memory/*.json",
-    "./memory/icon": "./icon.svg",
     "./commands/locale/*.json": "./locale/commands/*.json",
     "./commands/icon": "./icon.svg",
     "./client": {

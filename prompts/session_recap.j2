@@ -14,20 +14,7 @@
 - agent 私有用户画像、偏好与私密信息不得成为 claim/dispute 内容或证据来源
 - 可归因的已有 claim 来自 `local_claims` 或 transcript 中包含完整正文的 claim / `candidate_claims`。目录摘要中的 ID 仅供发现；没有读取正文时，不能据此计入使用、来源或 dispute。
 
-{% if memory_enabled %}
-# persistent memory 边界
-上一阶段 transcript 中可能包含 `memory` 工具调用。该工具会更新 agent 私有的两个长期记忆文件；复盘阶段只能看到 transcript 里保留下来的 memory 工具调用摘要，不等于能看到完整记忆文件内容。
-
-- `USER.md`：用户偏好/喜好/爱好、沟通习惯、协作方式等用户画像；只服务于本 agent 后续协作，**严禁作为 claim/dispute 证据来源，或以任何形式流入各 claim/dispute **。
-- `MEMORY.md`：agent 自用的长期经验、环境事实、工具特性、项目稳定约定；工具调用只表示 agent 试图维护这类私有记忆。
-
-claim / dispute 是团队可共享知识，必须与私有 memory 脱敏和解耦：
-
-- 不要把记忆文件更新、memory 工具结果、用户画像或偏好/喜好/爱好本身写成 claim/dispute。
-- 是否发生 memory 更新都不是生成 claim/dispute 的前置条件。
-- `USER.md` 相关更新内容绝对不能生成 claim/dispute。
-- `MEMORY.md` 相关更新不能单独作为证据；但可以结合 transcript 中的当前任务内容一起评估，若脱敏、泛化后适合作为团队知识，则可以生成 claim/dispute。
-{% endif %}
+- 私有记忆的指令、记忆文件更新、Memory 工具调用及其结果不能成为 Claim/Dispute 内容或证据来源；不要恢复被过滤的材料，也不要把私有记忆转写成共享知识。
 
 claim/dispute 的生成应基于 transcript、`background_process_completions` 或 local_claims 中的当前任务证据；如果 transcript 中包含 router 工具结果，可以参考其中的 `candidate_claims` 与 `disputes`。后台进程终态只能用于修正 transcript 中对应 `code_run` 的实际完成结果，不能脱离原任务单独推断无关结论。
 

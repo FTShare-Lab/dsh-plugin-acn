@@ -29,7 +29,6 @@ import { DurableWorker } from '../worker/worker.js';
 import { InboxEffectStore } from '../inbox/effects.js';
 import { DreamStore } from '../dream/checkpoint.js';
 import { AnalysisReadBoundary, KnowledgeBusy } from './alignment.js';
-import { MemoryFileStore } from '../store/memory.js';
 import { PresentationStore } from '../store/presentation.js';
 
 import { nextClaimUpdateAt } from './timestamps.js';
@@ -62,7 +61,6 @@ export class AcnKnowledge {
     if (!this.configured) return;
     await new PresentationStore(this.context()).initialize();
     await cleanupAtomicTemps(this.context().paths.root, this.logger);
-    await new MemoryFileStore(this.context()).recover();
     await new DreamStore(this.context()).recover();
     await new ClaimEditStore(this.context()).recover();
     await new FormationStore(this.context()).recover();

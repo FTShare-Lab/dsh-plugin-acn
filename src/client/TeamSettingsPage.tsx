@@ -180,7 +180,7 @@ export function TeamSettingsPage({ api, t, openKnowledge, initialTab = 'upstream
     {message && (tab !== 'upstreams' || editor === undefined) && <p role={error ? 'alert' : 'status'} className={`acn-feedback ${error ? 'is-error' : ''}`}>{message}</p>}
     {conflict && <Button disabled={disabled} onClick={() => { void refreshDraft(); }}>{c('刷新并保留草稿', 'Refresh and keep edits')}</Button>}
     {tab === 'upstreams' && <>
-      {editor === undefined && <p className="acn-settings-intro">{c('每份工作配置有自己的 Agent ID、知识与私有记忆，可单人使用或连接团队。', 'Each work configuration owns an Agent ID, knowledge and private memory, for solo or team use.')}</p>}
+      {editor === undefined && <p className="acn-settings-intro">{c('每份工作配置有各自的 Agent ID 和知识库，可单人使用或连接团队。', 'Each work configuration has its own Agent ID and knowledge store, for solo or team use.')}</p>}
       {editor === undefined ? <>
         <div className="acn-profiles">{Object.entries(profiles).map(([key, item]) => <Row key={key} title={item.name || key} badges={<><span className="acn-badge acn-profile-kind" data-mode={item.routerEndpoint ? 'team' : 'solo'}>{item.routerEndpoint ? c('团队', 'Team') : c('单人', 'Solo')}</span>{key === defaultKey && <span className="acn-badge acn-profile-default">{c('默认', 'Default')}</span>}{!item.enabled && <span className="acn-badge">{c('已停用', 'Disabled')}</span>}</>} description={`${item.agentId}${snapshot.upstreamPending?.[key] === null ? c(' · 待投记录读取失败', ' · Pending queue unreadable') : ''}`}>
           <Button disabled={disabled} onClick={() => { openKnowledge(key); }}>{c('知识与活动', 'Knowledge and activity')}</Button>

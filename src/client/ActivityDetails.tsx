@@ -5,7 +5,7 @@ import type { Activity, InteractionRequest } from '../interaction.js';
 import { displayMessage } from '../interaction-messages.js';
 import { Button, muted } from './interaction-ui.js';
 import type { Copy } from './interaction-ui.js';
-export function activityKind(kind: string, c: Copy): string { return ({ recap: c('会话复盘', 'Session recap'), finalize: c('会话收尾', 'Session finalization'), inbox: c('团队收件', 'Team Inbox'), dream: c('Dream 整理', 'Dream'), memory_review: c('记忆复核', 'Memory review'), delivery: c('团队投递', 'Team delivery') })[kind] ?? kind; }
+export function activityKind(kind: string, c: Copy): string { return ({ recap: c('会话复盘', 'Session recap'), finalize: c('会话收尾', 'Session finalization'), inbox: c('团队收件', 'Team Inbox'), dream: c('Dream 整理', 'Dream'), delivery: c('团队投递', 'Team delivery') })[kind] ?? kind; }
 export function activityState(item: Activity, c: Copy): string {
   if (item.state === 'succeeded' && item.incompleteCandidates?.length) return c('部分完成，有未完成项', 'Partially completed; unfinished items');
   if (item.state === 'succeeded' && item.budgetLimited) return c('已按额度收尾', 'Closed at the request budget');

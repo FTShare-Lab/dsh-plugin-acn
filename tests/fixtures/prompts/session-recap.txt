@@ -14,7 +14,7 @@
 - agent 私有用户画像、偏好与私密信息不得成为 claim/dispute 内容或证据来源
 - 可归因的已有 claim 来自 `local_claims` 或 transcript 中包含完整正文的 claim / `candidate_claims`。目录摘要中的 ID 仅供发现；没有读取正文时，不能据此计入使用、来源或 dispute。
 
-
+- 私有记忆的指令、记忆文件更新、Memory 工具调用及其结果不能成为 Claim/Dispute 内容或证据来源；不要恢复被过滤的材料，也不要把私有记忆转写成共享知识。
 
 claim/dispute 的生成应基于 transcript、`background_process_completions` 或 local_claims 中的当前任务证据；如果 transcript 中包含 router 工具结果，可以参考其中的 `candidate_claims` 与 `disputes`。后台进程终态只能用于修正 transcript 中对应 `code_run` 的实际完成结果，不能脱离原任务单独推断无关结论。
 

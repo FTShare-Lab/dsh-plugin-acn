@@ -1,12 +1,12 @@
 // 界面文案使用宿主语言切换；名称与包元数据保持一致。
 export const en = {
-  title: 'Configuration', intro: 'Distill reusable knowledge and memories from agent work traces, and let experience flow across your team.',
+  title: 'Configuration', intro: 'Distill reusable knowledge from agent work traces, and let experience flow across your team.',
   identity: 'Agent and knowledge', agentId: 'Agent ID',
-  agentSoloHint: 'In solo mode, choose any fixed name, such as personal, using lowercase letters, numbers, underscores or hyphens. It identifies local knowledge storage: projects and sessions using this configuration share the same knowledge and private memory. It does not change with the project; keep it stable after setup.',
+  agentSoloHint: 'In solo mode, choose any fixed name, such as personal, using lowercase letters, numbers, underscores or hyphens. It identifies local knowledge storage: projects and sessions using this configuration share the same knowledge. It does not change with the project; keep it stable after setup.',
   agentTeamHint: 'Use a stable, unique ID for each team member, matching the identity authorized by your team services. Only lowercase letters, numbers, underscores or hyphens are allowed. This ID identifies the owner of shared knowledge.',
   home: 'Knowledge directory', homeHint: 'An absolute path or ~/ path on the DSH host. Data is stored under agents/<agentId>/. This is separate from the project workspace.',
   switchHint: 'Changing the ID or directory switches to that storage location. Existing data stays in place; it is not migrated. Finish the current turn before saving. After changing identity or directory, old sessions and historical forks are blocked; start a new session.',
-  model: 'ACN background model', modelHint: 'Used for Recap, Finalize, Inbox, Dream and Memory review. The chat model is selected separately in DSH.',
+  model: 'ACN background model', modelHint: 'Used for Recap, Finalize, Inbox and Dream. The chat model is selected separately in DSH.',
   automatic: 'Follow the session model', unavailableModel: 'Unavailable — choose a registered model', modelHelp: 'Models come from DSH Settings → Models. Add or configure a provider there, then reload this page.',
   connection: 'Team connection', mode: 'Mode', solo: 'Solo', team: 'Team',
   soloHint: 'Solo mode makes no team requests and creates no new team upload tasks.',
@@ -29,13 +29,13 @@ export const en = {
 } as const;
 export type ConfigurationText = keyof typeof en;
 export const zh: Record<ConfigurationText, string> = {
-  title: '配置', intro: '从agent工作轨迹中沉淀可复用的知识与记忆，让知识经验在团队中流动',
+  title: '配置', intro: '从agent工作轨迹中沉淀可复用的知识，让知识经验在团队中流动',
   identity: '身份与知识存储', agentId: 'Agent ID',
-  agentSoloHint: '个人模式下可自取任意固定名称，如 personal，使用小写字母、数字、下划线或连字符即可。它用于区分本地知识存储：同一配置下的不同项目和会话共用这份知识与私有记忆，不会按项目自动更换 ID，设定后建议保持不变。',
+  agentSoloHint: '个人模式下可自取任意固定名称，如 personal，使用小写字母、数字、下划线或连字符即可。它用于区分本地知识存储：同一配置下的不同项目和会话共用这份知识，不会按项目自动更换 ID，设定后建议保持不变。',
   agentTeamHint: '团队模式下，每个成员须使用稳定且唯一的 ID，并与团队服务授权的身份一致。仅使用小写字母、数字、下划线或连字符；此 ID 用于标识共享知识的归属。',
   home: '知识目录', homeHint: '填写 DSH 主机上的绝对路径或 ~/ 路径。数据保存在 agents/<agentId>/ 下，与项目工作区分开。',
   switchHint: '修改身份或目录会切换到对应存储位置，原有数据保留在原处，不会自动迁移。请先结束当前轮次。切换后旧会话及历史派生会话会被阻止，请新建会话。',
-  model: 'ACN 后台模型', modelHint: '用于 Recap、Finalize、Inbox、Dream 和 Memory review。聊天模型仍在 DSH 中单独选择。',
+  model: 'ACN 后台模型', modelHint: '用于 Recap、Finalize、Inbox 和 Dream。聊天模型仍在 DSH 中单独选择。',
   automatic: '沿用会话模型', unavailableModel: '不可用，请选择已注册模型', modelHelp: '模型列表来自 DSH「设置 → 模型」。可先在那里添加或配置提供商，再重新加载本页。',
   connection: '团队连接', mode: '运行模式', solo: '单人模式', team: '团队模式',
   soloHint: '单人模式不发起团队请求，也不创建新的团队上传任务。',

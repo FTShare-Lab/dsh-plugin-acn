@@ -31,13 +31,13 @@ function projectContent(event: SessionEvent): Projection {
     case 'assistant/message': return { entry: { seq: event.seq, type: 'assistant', text: text(event.data.message.content.filter((block) => block.type === 'text')) } };
     case 'tool/call':
       // 程序封装可能携带私有调用和回显；只投影其实际公共子调用，不保存整段程序。
-      if (event.data.name === 'memory' || event.data.name === 'run_code') return { privateCallId: event.data.callId };
+      if (event.data.name.toLowerCase().includes('memory') || event.data.name === 'run_code') return { privateCallId: event.data.callId };
       return { entry: { seq: event.seq, type: 'tool_call', text: JSON.stringify({ name: event.data.name, arguments: event.data.arguments }) } };
     case 'tool/ptc-dispatch-start':
-      if (event.data.name === 'memory' || event.data.name === 'run_code') return {};
+      if (event.data.name.toLowerCase().includes('memory') || event.data.name === 'run_code') return {};
       return { entry: { seq: event.seq, type: 'tool_call', text: JSON.stringify({ name: event.data.name, arguments: event.data.arguments }) } };
     case 'tool/ptc-dispatch': {
-      if (event.data.name === 'memory' || event.data.name === 'run_code') return {};
+      if (event.data.name.toLowerCase().includes('memory') || event.data.name === 'run_code') return {};
       const content = text(event.data.content); let seenSourceIds: string[] = [];
       try { seenSourceIds = bodySources(JSON.parse(content)); } catch { /* 非 JSON 工具正文没有可验证的实体。 */ }
       return { seenSourceIds, entry: projectedResult(event.seq, content) };

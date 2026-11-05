@@ -15,9 +15,6 @@ import type { ChangeAdmission } from '../knowledge/sessions.js';
 import { AcnFormation } from '../formation/service.js';
 import { AcnInbox } from '../inbox/service.js';
 import { AcnDream } from '../dream/service.js';
-import { AcnMemory } from '../memory/service.js';
-import { MemorySessions } from '../memory/sessions.js';
-import { MemoryReview } from '../memory/review.js';
 import { UploadScheduler } from '../upload/scheduler.js';
 import { loadPromptRenderer } from '../prompt/render.js';
 import { isSubagent, isEvidenceAgent } from '../tools/subagent.js';
@@ -39,12 +36,12 @@ import { recentProjectSelection } from './project-upstream.js';
 import { upstreamsOf, resolveUpstream, defaultUpstream } from '../upstreams.js';
 
 export interface Runtime {
-  knowledge: AcnKnowledge; formation: AcnFormation; inbox: AcnInbox; dream: AcnDream; memory: AcnMemory;
-  catalog: KnowledgeSessions; memories: MemorySessions; review: MemoryReview; uploads: UploadScheduler;
+  knowledge: AcnKnowledge; formation: AcnFormation; inbox: AcnInbox; dream: AcnDream;
+  catalog: KnowledgeSessions; uploads: UploadScheduler;
   components: Set<RuntimeComponent>; setComponent(component: RuntimeComponent, enabled: boolean): Promise<void>;
   close(): Promise<void>;
 }
-export type RuntimeComponent = 'prompt' | 'formation' | 'inbox' | 'dream' | 'memory';
+export type RuntimeComponent = 'prompt' | 'formation' | 'inbox' | 'dream';
 declare module '@deepseek-ai/cordis' { interface Context { acnRuntime: RuntimePool } }
 type SyncState = { phase: 'ready' | 'syncing' | 'failed'; message: string; controller?: AbortController };
 export class RuntimePool {
@@ -80,8 +77,8 @@ export class RuntimePool {
   }
   supportsJob(key: string, kind: import('../worker/types.js').JobKind): boolean {
     const config = this.config(key, true); if (config === undefined) return false;
-    const component = kind === 'recap' || kind === 'finalize' ? 'formation' : kind === 'memory_review' ? 'memory' : kind;
-    return this.enabled(component) && (kind !== 'memory_review' || config.memory.enabled && config.memory.review.enabled) && (kind !== 'dream' || config.dream.enabled);
+    const component = kind === 'recap' || kind === 'finalize' ? 'formation' : kind;
+    return this.enabled(component) && (kind !== 'dream' || config.dream.enabled);
   }
   private enabled(name: RuntimeComponent): boolean { return (this.components.get(name)?.size ?? 0) > 0; }
   choices() {
@@ -147,9 +144,9 @@ export class RuntimePool {
     const key = this.key(header);
     if (!this.isBase(key)) {
       const runtime = await this.ensure(key, header.cwd, this.forSession(header));
-      return { knowledge: runtime.knowledge, formation: runtime.components.has('formation') ? runtime.formation : undefined, inbox: runtime.components.has('inbox') ? runtime.inbox : undefined, dream: runtime.components.has('dream') ? runtime.dream : undefined, memory: runtime.components.has('memory') ? runtime.memory : undefined };
+      return { knowledge: runtime.knowledge, formation: runtime.components.has('formation') ? runtime.formation : undefined, inbox: runtime.components.has('inbox') ? runtime.inbox : undefined, dream: runtime.components.has('dream') ? runtime.dream : undefined };
     }
-    return { knowledge: this.base, formation: this.ctx.get('acnFormation'), inbox: this.ctx.get('acnInbox'), dream: this.ctx.get('acnDream'), memory: this.ctx.get('acnMemory') };
+    return { knowledge: this.base, formation: this.ctx.get('acnFormation'), inbox: this.ctx.get('acnInbox'), dream: this.ctx.get('acnDream') };
   }
   async activate(key: string): Promise<AcnKnowledge> {
     await this.pending;
@@ -213,7 +210,7 @@ export class RuntimePool {
     if (this.selectionLocked(header)) throw new JobError('bound', '会话开始后不能切换知识归属，请新建会话。');
     const session = this.ctx.sessions.get(header.id);
     if (session === undefined) throw new JobError('session', '会话已关闭，请重新打开。');
-    if (previous !== undefined) { previous.formation.disposed(header.id); previous.memories.forget(header.id); previous.catalog.clear(header.id); this.attached.delete(header.id); }
+    if (previous !== undefined) { previous.formation.disposed(header.id);  previous.catalog.clear(header.id); this.attached.delete(header.id); }
     // 先持久化归属再访问知识；收件失败只降级本地工作，不改绑其他配置。
     appendPluginRecord(session, 'plugin:acn/team-selection', { schemaVersion: 1, key, identity: identityOf(config), prepared: config.team.routerEndpoint === '' });
     rememberConfiguration(header, config); this.prefer(header); this.instructions.delete(header.id);
@@ -323,20 +320,18 @@ export class RuntimePool {
     const knowledge = new AcnKnowledge(config, this.ctx.logger, teamCredentials(this.ctx)); await knowledge.initialize();
     if (workspace !== undefined) await writeYamlAtomic(knowledge.context().paths.dreamWorkspace, workspace, z.string(), knowledge.logger);
     const render = await loadPromptRenderer(); this.render = render; const backend = structuredBackend(this.ctx);
-    const catalog = new KnowledgeSessions(knowledge); const memory = new AcnMemory(knowledge);
-    const memories = new MemorySessions(memory, render); const review = new MemoryReview(memory, backend, render);
+    const catalog = new KnowledgeSessions(knowledge);
     const replay = formationReplay(this.ctx, config);
     const formation = new AcnFormation(knowledge, backend, render, {}, knowledge.jobs ?? undefined, async (route) => { try { await this.ctx.llm.prepareCall(route, AbortSignal.timeout(15_000)); return true; } catch { return false; } }, replay);
     const inbox = new AcnInbox(knowledge, backend, render);
     const dream = new AcnDream(knowledge, backend, render, () => this.pending, { workspace: () => readYamlOr(knowledge.context().paths.dreamWorkspace, z.string(), () => process.cwd()), run: autonomousDreamRunner(this.ctx) });
     const uploads = new UploadScheduler(knowledge);
-    const runtime: Runtime = { knowledge, formation, inbox, dream, memory, catalog, memories, review, uploads, components: new Set(), setComponent: async (component, enabled) => {
+    const runtime: Runtime = { knowledge, formation, inbox, dream, catalog, uploads, components: new Set(), setComponent: async (component, enabled) => {
       if (runtime.components.has(component) === enabled) return;
       if (enabled) {
         if (component === 'formation') { runtime.formation = new AcnFormation(knowledge, backend, render, {}, knowledge.jobs ?? undefined, undefined, replay); await runtime.formation.start(); }
         if (component === 'inbox') { runtime.inbox = new AcnInbox(knowledge, backend, render); await runtime.inbox.start(); }
         if (component === 'dream') { runtime.dream = new AcnDream(knowledge, backend, render, () => this.pending, { workspace: () => readYamlOr(knowledge.context().paths.dreamWorkspace, z.string(), () => process.cwd()), run: autonomousDreamRunner(this.ctx) }); await runtime.dream.start(); }
-        if (component === 'memory') { runtime.review = new MemoryReview(memory, backend, render); await runtime.review.start(); }
         runtime.components.add(component);
         for (const agent of this.ctx.agents.list()) if (this.allowed(agent.session.header) && this.readyFor(agent.session.header) === runtime) await this.attach(agent.session.header, 'resume', false);
       } else {
@@ -344,10 +339,9 @@ export class RuntimePool {
         if (component === 'formation') await runtime.formation.close();
         if (component === 'inbox') await runtime.inbox.close();
         if (component === 'dream') await runtime.dream.close();
-        if (component === 'memory') await runtime.review.close();
         if (component === 'prompt') await runtime.catalog.flush();
       }
-    }, close: async () => { await runtime.formation.close(); await runtime.inbox.close(); await runtime.dream.close(); await runtime.review.close(); await catalog.flush(); await uploads.close(); await knowledge.jobs?.close(); await knowledge.team?.close(); } };
+    }, close: async () => { await runtime.formation.close(); await runtime.inbox.close(); await runtime.dream.close(); await catalog.flush(); await uploads.close(); await knowledge.jobs?.close(); await knowledge.team?.close(); } };
     try {
       const identity = identityOf(config);
       const previous = this.workers.get(identity);
@@ -357,11 +351,11 @@ export class RuntimePool {
       }
       if (current || previous === undefined) this.workers.set(identity, runtime);
       await this.ctx.inject(['workspaceRegistry'], (child) => connectArchives(child, { beginArchive: (id, upper) => runtime.components.has('formation') ? runtime.formation.beginArchive(id, upper) : Promise.resolve(null), cancelArchive: (id) => runtime.formation.cancelArchive(id), archived: (id, upper) => runtime.formation.archived(id, upper), reconcileArchives: (ids) => runtime.formation.reconcileArchives(ids) }, formationOwnership(child, config)));
-      for (const name of ['prompt', 'formation', 'inbox', 'dream', 'memory'] as const) {
-        if (this.enabled(name) && (name !== 'memory' || config.memory.enabled)) {
+      for (const name of ['prompt', 'formation', 'inbox', 'dream'] as const) {
+        if (this.enabled(name)) {
           runtime.components.add(name);
-          if (name === 'formation') await formation.start(); if (name === 'inbox') await inbox.start(); if (name === 'dream') await dream.start(); if (name === 'memory') await review.start();
-        } else { if (name === 'formation') await formation.close(); if (name === 'inbox') await inbox.close(); if (name === 'dream') await dream.close(); if (name === 'memory') await review.close(); }
+          if (name === 'formation') await formation.start(); if (name === 'inbox') await inbox.start(); if (name === 'dream') await dream.start();
+        } else { if (name === 'formation') await formation.close(); if (name === 'inbox') await inbox.close(); if (name === 'dream') await dream.close(); }
       }
       await knowledge.jobs?.start(); uploads.start();
       return runtime;
@@ -427,7 +421,6 @@ export class RuntimePool {
     await this.freezeInstructions(header, runtime.knowledge);
     if (runtime.components.has('prompt')) await runtime.catalog.freeze(header.id, source, header.parentSession, this.syncs.get(header.id)?.phase !== 'failed', signal);
     if (!isSubagent(header)) {
-      if (runtime.components.has('memory') && runtime.knowledge.config.memory.enabled) { await runtime.memories.freeze(header.id, source, header.parentSession); await runtime.review.attach(header.id, source); }
       if (runtime.components.has('formation')) { runtime.formation.attach(header.id); if (this.ctx.agents.get(header.id)?.status === 'running') runtime.formation.running(header.id); }
       if (header.cwd !== undefined) await writeYamlAtomic(runtime.knowledge.context().paths.dreamWorkspace, header.cwd, z.string(), runtime.knowledge.logger);
       if (runtime.components.has('dream')) runtime.dream.trigger();
@@ -442,7 +435,7 @@ export class RuntimePool {
     if (this.unbound(header)) {
       // 未启用的会话不向模型展示 ACN 工具；最终门禁仍独立拒绝直接调用。
       const agent = this.ctx.agents.get(header.id);
-      const deny = ['claim', 'consult_router', 'memory'].filter((name) => this.ctx.tools.get(name) !== undefined);
+      const deny = ['claim', 'consult_router'].filter((name) => this.ctx.tools.get(name) !== undefined);
       const previous = this.unboundTools.get(header.id);
       if (agent !== undefined && previous?.names !== deny.join(',')) {
         previous?.release(); this.unboundTools.delete(header.id);
@@ -459,7 +452,6 @@ export class RuntimePool {
       if (this.attached.get(header.id) !== this.runtimeId(this.key(header), runtime.knowledge.config)) await this.attach(header, 'resume', false, signal);
       // 领域组件可能在 Agent 存活期间重载；请求准入前从持久快照恢复缺失缓存。
       if (runtime.components.has('prompt') && runtime.catalog.catalog(header.id) === '') await runtime.catalog.freeze(header.id, 'resume', header.parentSession, true, signal);
-      if (runtime.components.has('memory') && !isSubagent(header) && runtime.memories.text(header.id) === '') { await runtime.memories.freeze(header.id, 'resume', header.parentSession); await runtime.review.attach(header.id, 'resume'); }
     }
   }
   private async install(ctx: Context): Promise<void> {
@@ -468,7 +460,6 @@ export class RuntimePool {
       { name: 'acn:upstream-instructions', order: 730, interpolate: false, text: ({ agent }) => agent === undefined || isEvidenceAgent(agent.session.header) || !this.allowed(agent.session.header) ? '' : this.instructions.get(agent.session.id) ?? '' },
       { name: 'acn:connection-knowledge', order: 700, interpolate: false, text: ({ agent }) => { const runtime = forAgent(agent?.session.header, 'prompt'); return runtime === undefined ? '' : this.render?.('knowledge.j2', { agent_id: runtime.knowledge.agentId, team: runtime.knowledge.mode === 'team' }) ?? ''; } },
       { name: 'acn:connection-catalog', order: 710, interpolate: false, text: ({ agent }) => forAgent(agent?.session.header, 'prompt')?.catalog.catalog(agent?.session.id ?? '') ?? '' },
-      { name: 'acn:connection-memory', order: 720, interpolate: false, text: ({ agent }) => agent === undefined || isSubagent(agent.session.header) ? '' : forAgent(agent.session.header, 'memory')?.memories.text(agent.session.id) ?? '' }
     ];
     for (const section of contributions) ctx.systemPrompt.section(section);
     // 宿主在 pre-step 之前已经组装系统段落，准备完成后须刷新本次的插件贡献。
@@ -479,7 +470,7 @@ export class RuntimePool {
         await this.prepareSession(header, context.signal);
         const assembly = await next();
         // 本轮工具 schema 可能已在门禁前收集，过滤它；后续组装由作用域限制处理。
-        return { ...assembly, tools: assembly.tools.filter((tool) => !['claim', 'consult_router', 'memory'].includes(tool.name)) };
+        return { ...assembly, tools: assembly.tools.filter((tool) => !['claim', 'consult_router'].includes(tool.name)) };
       }
       if (!this.allowed(header)) return next();
       await this.prepareSession(header, context.signal); context.signal?.throwIfAborted();
@@ -515,12 +506,10 @@ export class RuntimePool {
       const runtime = this.readyFor(session.header); if (runtime === undefined) return;
       const projection = projectEvent(event); const until = compactionEnd(event);
       if (runtime.components.has('formation') && (Object.keys(projection).length > 0 || until !== undefined)) runtime.formation.capture(session.id, projection, until);
-      const user = event.type === 'user/message' && event.data.source.kind === 'user';
-      if (runtime.components.has('memory') && runtime.knowledge.config.memory.enabled) runtime.review.capture(session.id, { seq: event.seq, projection: event.type === 'user/message' && !user ? {} : projection, user, completed: event.type === 'turn/end' && event.data.reason.kind === 'completed', ended: event.type === 'turn/end' });
       if (projection.route !== undefined) this.schedule(() => withFileLock(`${runtime.knowledge.context().paths.lastRoute}.lock`, () => writeYamlAtomic(runtime.knowledge.context().paths.lastRoute, projection.route, RouteSchema, runtime.knowledge.logger)));
     });
     ctx.on('agent/status', ({ agent, status }) => { if (!this.allowed(agent.session.header) || this.isBase(this.key(agent.session.header)) || isSubagent(agent.session.header)) return; const runtime = this.readyFor(agent.session.header); if (runtime === undefined) return; if (status === 'running') runtime.formation.running(agent.session.id); else runtime.formation.idle(agent.session.id); });
-    ctx.on('agent/disposed', ({ agent }) => { this.unboundTools.get(agent.session.id)?.release(); this.unboundTools.delete(agent.session.id); const key = this.attached.get(agent.session.id); if (key === undefined) return; const runtime = this.ready.get(key); if (runtime === undefined) return; runtime.formation.disposed(agent.session.id); runtime.memories.forget(agent.session.id); this.schedule(() => runtime.catalog.forget(agent.session.id)); this.attached.delete(agent.session.id); this.instructions.delete(agent.session.id); forgetConfiguration(agent.session.header); });
+    ctx.on('agent/disposed', ({ agent }) => { this.unboundTools.get(agent.session.id)?.release(); this.unboundTools.delete(agent.session.id); const key = this.attached.get(agent.session.id); if (key === undefined) return; const runtime = this.ready.get(key); if (runtime === undefined) return; runtime.formation.disposed(agent.session.id); this.schedule(() => runtime.catalog.forget(agent.session.id)); this.attached.delete(agent.session.id); this.instructions.delete(agent.session.id); forgetConfiguration(agent.session.header); });
     // 配置重载时宿主可能保留 Agent；不能只依赖下一次 created 事件恢复冻结上下文。
     const existing = ctx.agents.list();
     for (const agent of existing) { await this.bind(agent.session.header); }

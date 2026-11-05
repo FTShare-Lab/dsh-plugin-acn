@@ -10,7 +10,7 @@ import { resolveConfig, UpstreamSchema } from '../../src/config.js';
 import { configurationValues, mergeConfiguration } from '../../src/configuration.js';
 import Knowledge from '../../src/plugins/knowledge.js';
 
-const config = () => ({ upstream: 'coding', upstreams: { coding: UpstreamSchema.parse({ agentId: 'agent-a' }), review: UpstreamSchema.parse({ agentId: 'agent-b' }) }, dream: { enabled: false }, memory: { review: { enabled: false } }, formation: { idleRecap: false } });
+const config = () => ({ upstream: 'coding', upstreams: { coding: UpstreamSchema.parse({ agentId: 'agent-a' }), review: UpstreamSchema.parse({ agentId: 'agent-b' }) }, dream: { enabled: false }, formation: { idleRecap: false } });
 type Flow = Awaited<ReturnType<typeof flowHarness>>;
 const create = (flow: Flow, id: string, cwd: string) => flow.ctx.agents.create({ sessionId: SessionId(id), meta: { cwd }, agentOptions: { provider: 'mock', model: 'mock' } });
 const choice = (flow: Flow, handle: AgentHandle) => flow.ctx.acnRuntime.view(handle.agent.session.header).key;

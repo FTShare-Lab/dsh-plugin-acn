@@ -38,7 +38,7 @@ describe('durable knowledge formation', () => {
     const network = vi.spyOn(globalThis, 'fetch').mockImplementation(() => Promise.reject(new Error('Solo formation must not contact team services.')));
     try {
       const privateFiles = fixture.knowledge.context().paths;
-      await fs.mkdir(privateFiles.memories, { recursive: true }); await fs.writeFile(privateFiles.user, 'PRIVATE_USER_MARKER'); await fs.writeFile(privateFiles.memory, 'PRIVATE_MEMORY_MARKER');
+      await fs.mkdir(join(privateFiles.root, 'memories'), { recursive: true }); await fs.writeFile(join(privateFiles.root, 'memories', 'USER.md'), 'PRIVATE_USER_MARKER'); await fs.writeFile(join(privateFiles.root, 'memories', 'MEMORY.md'), 'PRIVATE_MEMORY_MARKER');
       await fixture.formation.start();
       fixture.formation.capture('session-a', { route: { provider: 'mock', model: 'mock' }, entry: { seq: 1, type: 'user', text: 'Check the retry invariant using the current service contract.' } });
       const job = await fixture.formation.finalize('session-a'); await waitJob(fixture.formation.worker.queue, job.id);

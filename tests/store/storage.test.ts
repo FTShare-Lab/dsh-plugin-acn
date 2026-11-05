@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ClaimSchema, claimRevision, DisputeSchema, InboxMessageSchema, TraceSchema } from '../../src/protocol/index.js';
-import { AgentPaths, agentHomePath, ClaimEditStore, ClaimStore, cleanupAtomicTemps, decodeYaml, DisputeStore, encodeYaml, JobStore, MemoryFileStore, PendingClaimEditSchema, PendingUploadsSchema, readYaml, ReportedSetStore, reportedClaimSetKey, SessionStateStore, TraceStore, UploadStore, writeTextAtomic, writeYamlAtomic } from '../../src/store/index.js';
+import { AgentPaths, agentHomePath, ClaimEditStore, ClaimStore, cleanupAtomicTemps, decodeYaml, DisputeStore, encodeYaml, JobStore, PendingClaimEditSchema, PendingUploadsSchema, readYaml, ReportedSetStore, reportedClaimSetKey, SessionStateStore, TraceStore, UploadStore, writeTextAtomic, writeYamlAtomic } from '../../src/store/index.js';
 import { context, fixture, logger } from '../helpers.js';
 
 let root: string;
@@ -69,7 +69,6 @@ describe('entity I/O', () => {
     expect((await new ClaimStore(ctx).list()).length).toBe(1);
     expect((await new TraceStore(ctx).list()).length).toBe(1);
     expect((await new DisputeStore(ctx).list()).length).toBe(1);
-    expect((await new MemoryFileStore(ctx).read()).user).toContain('Example user preference');
     expect((await readYaml(ctx.paths.pendingInbox('inbox_00000001'), InboxMessageSchema)).id).toBe('inbox_00000001');
     expect((await new UploadStore(ctx).read()).claims).toHaveLength(2);
     expect(Object.keys((await new ReportedSetStore(ctx).read()).reported_claim_sets)).toHaveLength(1);
@@ -203,13 +202,6 @@ describe('private files and atomic primitives', () => {
     expect(() => ctx.paths.session('../../outside')).toThrow();
     expect(agentHomePath(root, 'agent-a')).toBe(join(root, 'agents', 'agent-a'));
     expect(ctx.paths.workerLock).toBe(join(root, 'jobs', 'worker.lock'));
-  });
-  it('round trips private text and missing files are empty', async () => {
-    const memory = new MemoryFileStore(context(root));
-    expect(await memory.read()).toEqual({ memory: '', user: '' });
-    const texts = { memory: 'Example experience.\n\n§\n\nSecond entry.', user: 'Example preference.' };
-    await memory.write(texts);
-    expect(await memory.read()).toEqual(texts);
   });
   it('rejects a null versioned document instead of silently recreating state', async () => {
     const ctx = context(root); const states = new SessionStateStore(ctx);

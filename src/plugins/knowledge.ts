@@ -5,7 +5,7 @@ import { resolveConfig } from '../config.js';
 import { AcnKnowledge } from '../knowledge/service.js';
 import { UploadScheduler } from '../upload/scheduler.js';
 import { bindSession, sessionChanged, unboundSession, observeSelection, runningConfiguration, rememberConfiguration, sessionAllowed } from '../dsh-adapter/session-binding.js';
-import { protectMemoryPaths } from '../dsh-adapter/memory-paths.js';
+import { protectKnowledgePaths } from '../dsh-adapter/knowledge-paths.js';
 import { RuntimePool } from '../dsh-adapter/runtime-pool.js';
 import { teamCredentials } from '../dsh-adapter/team-credentials.js';
 
@@ -36,7 +36,6 @@ export const Config: Schema = Schema.object({
   formation: Schema.object({ recapOnCompaction: boolean(true), idleRecap: boolean(true), recapMinTurns: number(10), recapMinTokens: number(100_000), recapBatchIdleMinutes: number(5), recapTailIdleMinutes: number(60), recapScanSeconds: number(30), finalizeIdleMinutes: number(0), finalizeOnDispose: boolean(false) }),
   inbox: Schema.object({ pullOnSessionStart: boolean(true), processingStaleAfterSecs: number(600) }),
   dream: Schema.object({ enabled: boolean(true), minIntervalHours: number(24), minChangedClaims: number(5), checkIntervalHours: number(4), evidenceCalibration: boolean(false), maxModelSteps: number(24), maxWrapUpSteps: number(3), evidenceMaxCalls: number(32), evidenceMaxSteps: number(24), evidenceMaxBytes: number(1_048_576), evidenceMaxChars: number(16_000), evidenceMaxFiles: number(256) }),
-  memory: Schema.object({ enabled: boolean(true), memoryCharLimit: number(1600), userCharLimit: number(1000), safetyScan: boolean(true), review: Schema.object({ enabled: boolean(true), intervalTurns: number(10), maxTranscriptChars: number(32_000) }) }),
 });
 
 export async function apply(ctx: Context, input: unknown = {}): Promise<void> {
@@ -47,7 +46,7 @@ export async function apply(ctx: Context, input: unknown = {}): Promise<void> {
   const pool = new RuntimePool(ctx, knowledge);
   ctx.provide('acnRuntime', pool);
   ctx.effect(() => () => pool.close());
-  if (knowledge.configured || config.upstreams !== undefined || config.connections.length > 0) void ctx.inject(['fs', 'tools', 'workingDirectory'], (child) => { protectMemoryPaths(child, knowledge); });
+  if (knowledge.configured || config.upstreams !== undefined || config.connections.length > 0) void ctx.inject(['fs', 'tools', 'workingDirectory'], (child) => { protectKnowledgePaths(child, knowledge); });
   const uploads = knowledge.configured && knowledge.active ? new UploadScheduler(knowledge) : null;
   ctx.effect(() => {
     const abort = new AbortController();
@@ -61,7 +60,7 @@ export async function apply(ctx: Context, input: unknown = {}): Promise<void> {
       if (!pool.chatAllowed(agent.session.header)) throw new Error(sessionChanged);
       return next();
     });
-    child.tools.guard((execution) => ['claim', 'consult_router', 'memory'].includes(execution.name) && execution.agent !== undefined && !pool.allowed(execution.agent.session.header) ? pool.unbound(execution.agent.session.header) ? unboundSession : sessionChanged : undefined);
+    child.tools.guard((execution) => ['claim', 'consult_router'].includes(execution.name) && execution.agent !== undefined && !pool.allowed(execution.agent.session.header) ? pool.unbound(execution.agent.session.header) ? unboundSession : sessionChanged : undefined);
     child.on('agent/created', ({ agent }) => {
       if (config.upstreams === undefined) {
         bindSession(child, knowledge.config, agent.session.header);

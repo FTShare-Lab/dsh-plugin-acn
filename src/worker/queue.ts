@@ -1,4 +1,5 @@
 // 队列的短事务使用独立文件锁；持锁期间不执行任务或调用模型。
+import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import type { StoreContext } from '../store/context.js';
@@ -23,7 +24,8 @@ export class JobQueue {
     return values.filter((value) => value !== null);
   }
   async read(id: string): Promise<Job | null> {
-    const value = await readYamlOr(this.context.paths.job(id), JobSchema, () => null);
+    // 已移除的旧任务保留原文件，不加载、不执行，也不阻塞现有知识任务。
+    const value = await readYamlOr(this.context.paths.job(id), z.preprocess((value) => typeof value === 'object' && value !== null && 'kind' in value && value.kind === 'memory_review' ? null : value, JobSchema.nullable()), () => null);
     if (value !== null && value.id !== id) throw new StoreError('decode', 'Job ID differs from its filename.');
     return value;
   }
@@ -33,7 +35,6 @@ export class JobQueue {
     return this.locked(async () => {
       const jobs = await this.list();
       if (kind === 'dream') { const pending = jobs.find((job) => job.kind === kind && (job.state === 'queued' || job.state === 'running')); if (pending !== undefined) return pending; }
-      if (kind === 'memory_review') { const prior = jobs.find((job) => job.kind === kind && job.sessionId === sessionId && JSON.stringify(job.payload) === JSON.stringify(payload)); if (prior !== undefined) return prior; }
       const same = jobs.find((job) => job.kind === kind && job.sessionId === sessionId && job.state === 'queued' && JSON.stringify(job.payload) === JSON.stringify(payload));
       if (same !== undefined) return same;
       if (kind === 'finalize') for (const job of jobs) {

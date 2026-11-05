@@ -66,11 +66,6 @@ export const ConfigSchema = z.strictObject({
     evidenceMaxBytes: positive().max(16_777_216).default(1_048_576),
     evidenceMaxChars: positive().max(64_000).default(16_000), evidenceMaxFiles: positive().max(4096).default(256),
   }).prefault({}),
-  memory: z.strictObject({
-    enabled: z.boolean().default(true), memoryCharLimit: positive().default(1600), userCharLimit: positive().default(1000),
-    safetyScan: z.boolean().default(true),
-    review: z.strictObject({ enabled: z.boolean().default(true), intervalTurns: positive().default(10), maxTranscriptChars: positive().max(128_000).default(32_000) }).prefault({}),
-  }).prefault({}),
 }).superRefine((config, ctx) => {
   if (config.upstreams !== undefined) {
     if (config.upstream !== '' && config.upstreams[config.upstream]?.enabled !== true) ctx.addIssue({ code: 'custom', path: ['upstream'], message: 'Select an enabled upstream.' });
@@ -88,11 +83,11 @@ export class ConfigError extends Error {
   constructor(readonly fields: readonly string[]) { super(`Invalid ACN configuration: ${fields.join(', ')}`); this.name = 'ConfigError'; }
 }
 export function resolveConfig(input: unknown): ResolvedConfig {
-  // 兼容读取已废弃的项目覆盖；它不再参与选择，也不会出现在插件设置中。
+  // 忽略已移除的旧配置项；不再参与运行或出现在插件设置中。
   let value = input;
   if (typeof input === 'object' && input !== null && !Array.isArray(input)) {
     const compatible = { ...input } as Record<string, unknown>;
-    delete compatible['projectUpstreams']; value = compatible;
+    delete compatible['projectUpstreams']; delete compatible['memory']; value = compatible;
   }
   const parsed = ConfigSchema.safeParse(value);
   if (!parsed.success) throw new ConfigError([...new Set(parsed.error.issues.map((issue) => issue.path.join('.') || 'config'))]);

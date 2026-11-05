@@ -4,8 +4,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import nunjucks from 'nunjucks';
 
-const templateNames = ['memory.j2', 'what_is_memory.j2', 'memory_review.j2', 'memory_review_system.j2', 'claim_dream.j2', 'claim_dream_legacy.j2', 'dream_compaction.j2', 'dream_evidence.j2', 'knowledge.j2', 'session_recap.j2', 'inbox_policy_update_internalize.j2', 'inbox_claim_attribute_update_internalize.j2', 'what_is_claim.j2', 'what_is_dispute.j2', 'what_is_policy.j2'] as const;
-class MemoryLoader extends nunjucks.Loader {
+const templateNames = ['claim_dream.j2', 'claim_dream_legacy.j2', 'dream_compaction.j2', 'dream_evidence.j2', 'knowledge.j2', 'session_recap.j2', 'inbox_policy_update_internalize.j2', 'inbox_claim_attribute_update_internalize.j2', 'what_is_claim.j2', 'what_is_dispute.j2', 'what_is_policy.j2'] as const;
+class TemplateLoader extends nunjucks.Loader {
   constructor(private readonly sources: Readonly<Record<string, string>>) { super(); }
   getSource(name: string) {
     const src = this.sources[name];
@@ -15,7 +15,7 @@ class MemoryLoader extends nunjucks.Loader {
   }
 }
 export function promptRenderer(sources: Readonly<Record<string, string>>) {
-  const environment = new nunjucks.Environment(new MemoryLoader(sources), { autoescape: false, throwOnUndefined: true });
+  const environment = new nunjucks.Environment(new TemplateLoader(sources), { autoescape: false, throwOnUndefined: true });
   return (name: string, context: object): string => environment.render(name, context);
 }
 export async function loadPromptRenderer() {

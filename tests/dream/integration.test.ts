@@ -38,9 +38,9 @@ describe('Dream through durable worker', () => {
   });
   it.each(['unregistered', 'future', 'paused'])('continues Dream while a higher-priority task is not runnable: %s', async (mode) => {
     const f = await dreamFixture(phaseBackend(claims())); let higherCalls = 0;
-    const unregister = f.worker.register('memory_review', () => { higherCalls += 1; return Promise.resolve({ done: true }); });
+    const unregister = f.worker.register('inbox', () => { higherCalls += 1; return Promise.resolve({ done: true }); });
     try {
-      const higher = await f.worker.queue.enqueue('memory_review', { request_id: 'retained-task' }, 'session-a');
+      const higher = await f.worker.queue.enqueue('inbox', { request_id: 'retained-task' }, 'session-a');
       if (mode === 'unregistered') unregister();
       if (mode === 'future') await f.worker.queue.settle(higher, 'queued', { nextRunAt: Date.now() + 60_000 });
       if (mode === 'paused') await writeYamlAtomic(f.knowledge.context().paths.job(higher.id), { ...higher, payload: { ...higher.payload, paused: true } }, JobSchema, f.knowledge.logger);
@@ -48,7 +48,7 @@ describe('Dream through durable worker', () => {
       expect(await f.worker.queue.read(higher.id)).toMatchObject({ state: 'queued', attempts: 0 }); expect(higherCalls).toBe(0);
       await f.worker.queue.settle(higher, 'queued');
       if (mode === 'paused') await writeYamlAtomic(f.knowledge.context().paths.job(higher.id), { ...higher, payload: { ...higher.payload, paused: false } }, JobSchema, f.knowledge.logger);
-      if (mode === 'unregistered') f.worker.register('memory_review', () => { higherCalls += 1; return Promise.resolve({ done: true }); });
+      if (mode === 'unregistered') f.worker.register('inbox', () => { higherCalls += 1; return Promise.resolve({ done: true }); });
       f.worker.wake(); await waitJob(f.worker.queue, higher.id); expect(higherCalls).toBe(1);
     } finally { unregister(); await f.close(); }
   });
@@ -161,7 +161,7 @@ describe('Dream through durable worker', () => {
   it('never reads private Memory, USER, session transcript or Dispute material into Dream', async () => {
     const input = claims(); const backend = phaseBackend(input); let calls = 0;
     const f = await dreamFixture((...args) => { calls += 1; expect(args[1] + args[2]).not.toContain('PRIVATE_CONTENT_MARKER'); return backend(...args); });
-    try { const paths = f.knowledge.context().paths; for (const directory of [paths.memories, paths.sessions, paths.disputes]) await fs.mkdir(directory, { recursive: true }); for (const path of [paths.memory, paths.user, join(paths.sessions, 'private-transcript.txt'), join(paths.disputes, 'private-fixture.txt')]) await fs.writeFile(path, 'PRIVATE_CONTENT_MARKER'); await f.start(); const job = await f.dream.request(); await waitJob(f.worker.queue, job.id); expect(calls).toBe(3); }
+    try { const paths = f.knowledge.context().paths; for (const directory of [join(paths.root, 'memories'), paths.sessions, paths.disputes]) await fs.mkdir(directory, { recursive: true }); for (const path of [join(paths.root, 'memories', 'MEMORY.md'), join(paths.root, 'memories', 'USER.md'), join(paths.sessions, 'private-transcript.txt'), join(paths.disputes, 'private-fixture.txt')]) await fs.writeFile(path, 'PRIVATE_CONTENT_MARKER'); await f.start(); const job = await f.dream.request(); await waitJob(f.worker.queue, job.id); expect(calls).toBe(3); }
     finally { await f.close(); }
   });
   it.each(['quality', 'consolidation'] as const)('commits %s, reports full scope and leaves solo mode without a team queue', async (kind) => {

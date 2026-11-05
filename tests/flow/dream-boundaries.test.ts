@@ -171,7 +171,7 @@ describe('autonomous Dream host boundaries', () => {
   });
   it.each(['native', 'ptc'] as const)('isolates tools and required private context in %s mode', async (toolMode) => {
     const adapter = new ScriptAdapter([finishDream(), finishDream()]);
-    const f = await flowHarness(adapter, { dream: true, memory: true, toolMode, config: { llm: { provider: 'mock', model: 'mock' } } });
+    const f = await flowHarness(adapter, { dream: true, toolMode, config: { llm: { provider: 'mock', model: 'mock' } } });
     let unsafeCalls = 0; const checks: Promise<unknown>[] = [];
     try {
       f.ctx.systemPrompt.section({ name: 'private-system', order: 0, text: 'PRIVATE_CONTEXT_MARKER' });

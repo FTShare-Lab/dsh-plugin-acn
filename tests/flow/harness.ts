@@ -20,14 +20,13 @@ import AcnCommands from '../../src/plugins/commands.js';
 import Formation from '../../src/plugins/formation.js';
 import Inbox from '../../src/plugins/inbox.js';
 import Dream from '../../src/plugins/dream.js';
-import Memory from '../../src/plugins/memory.js';
 import type { ConfigInput } from '../../src/config.js';
 import { resolveConfig } from '../../src/config.js';
 import { ClaimStore } from '../../src/store/claims.js';
 import { sampleClaim } from '../knowledge-fixtures.js';
 import { ScriptAdapter } from './adapter.js';
 
-export async function flowHarness(adapter: ScriptAdapter, options: { configured?: boolean; persistence?: boolean; workspace?: boolean; formation?: boolean; inbox?: boolean; dream?: boolean; memory?: boolean; filesystem?: boolean; toolMode?: 'native' | 'ptc'; config?: ConfigInput } = {}) {
+export async function flowHarness(adapter: ScriptAdapter, options: { configured?: boolean; persistence?: boolean; workspace?: boolean; formation?: boolean; inbox?: boolean; dream?: boolean; filesystem?: boolean; toolMode?: 'native' | 'ptc'; config?: ConfigInput } = {}) {
   const root = await fs.mkdtemp(join(tmpdir(), 'acn-flow-'));
   const ctx = new Context();
   try {
@@ -49,12 +48,11 @@ export async function flowHarness(adapter: ScriptAdapter, options: { configured?
     const formationFiber = options.formation ? await ctx.plugin(Formation) : undefined;
     const inboxFiber = options.inbox ? await ctx.plugin(Inbox) : undefined;
     const dreamFiber = options.dream ? await ctx.plugin(Dream) : undefined;
-    const memoryFiber = options.memory ? await ctx.plugin(Memory) : undefined;
     const claim = sampleClaim();
     if (ctx.acnKnowledge.configured) await new ClaimStore(ctx.acnKnowledge.context()).write(claim);
     return {
       root, ctx, harness, claim, knowledge: ctx.acnKnowledge,
-      fibers: { knowledge: knowledgeFiber, prompt: promptFiber, tools: toolsFiber, commands: commandsFiber, formation: formationFiber, inbox: inboxFiber, dream: dreamFiber, memory: memoryFiber },
+      fibers: { knowledge: knowledgeFiber, prompt: promptFiber, tools: toolsFiber, commands: commandsFiber, formation: formationFiber, inbox: inboxFiber, dream: dreamFiber },
       create: (id = 'session-a') => harness.create(SessionId(id), { provider: 'mock', model: 'mock' }),
       close: async () => { try { await ctx.fiber.dispose(); } finally { await fs.rm(root, { recursive: true, force: true }); } },
     };

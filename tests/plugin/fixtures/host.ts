@@ -1,6 +1,6 @@
 // 在独立进程中挂载真实组合，检查激活状态、隔离与卸载清理。
 import assert from 'node:assert/strict';
-import { access, mkdir, realpath, writeFile } from 'node:fs/promises';
+import { access, realpath, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
@@ -14,7 +14,6 @@ import { ToolCallId, LlmAdapter, createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions, LlmResolvedModelInfo, StreamChunk } from '@deepseek-ai/dsh-llm';
 import type { Claim } from '../../../src/protocol/claim.js';
 import type { Validation } from '../../../src/dream/schema.js';
-import type {} from '../../../src/plugins/memory.js';
 
 function lastJson(options: GenerateOptions): unknown {
   for (const message of [...options.messages].reverse()) for (const block of [...message.content].reverse()) if (block.type === 'text') {
@@ -57,8 +56,7 @@ class LocalModel extends LlmAdapter {
     if (raw.startsWith('{') && raw.includes('"phase"')) {
       const request = JSON.parse(raw) as { phase: string; claims?: Claim[]; before?: Claim[]; validation?: Validation; evidence?: Record<string, { output: { content: string } }> };
       const first = (request.claims ?? request.before)?.[0]; let response: object;
-      if (request.phase === 'memory_review') response = { ops: [{ op: 'add', target: 'user', entry: 'Prefers concise explanations.' }] };
-      else if (request.phase === 'candidates' && first) response = { review: { quality: 'Review an explicit test record.', evidence: 'Calibration unavailable.', consolidation: 'No other candidate needed.' }, candidates: [{ group_id: 'install-group', claim_ids: [first.id], kind: 'quality', reason: 'Explicit synthetic one-time test record.' }], sync_candidates: [] };
+      if (request.phase === 'candidates' && first) response = { review: { quality: 'Review an explicit test record.', evidence: 'Calibration unavailable.', consolidation: 'No other candidate needed.' }, candidates: [{ group_id: 'install-group', claim_ids: [first.id], kind: 'quality', reason: 'Explicit synthetic one-time test record.' }], sync_candidates: [] };
       else if (request.phase === 'draft' && first) response = { action: 'stage', group: { kind: 'quality', reason: 'Remove the one-time test record.', operations: [{ id: first.id, action: 'deprecate', reason: 'Only this synthetic record is episodic.' }] } };
       else if (request.phase === 'review' && request.validation) {
         const v = request.validation; const fields = ['name', 'statement', 'scope', 'evidence_summary'] as const;
@@ -86,9 +84,9 @@ const configPath = join(process.cwd(), 'cordis.yml');
 await writeFile(configPath, '[]\n');
 const patches = loadOverlayPatches('acn-smoke', patchPath);
 if (scenario === 'disabled') patches.push({ id: 'acn-knowledge', disabled: true });
-const configured = scenario === 'configured' || scenario === 'calibrated' || scenario === 'memory' || scenario === 'memory_off' || scenario.startsWith('disabled_');
+const configured = scenario === 'configured' || scenario === 'calibrated' || scenario.startsWith('disabled_');
 const home = join(process.cwd(), 'knowledge');
-if (configured) patches.push({ id: 'acn-knowledge', config: { agentId: 'agent-a', home, dream: { evidenceCalibration: scenario === 'calibrated' }, memory: { enabled: scenario !== 'memory_off', review: { intervalTurns: scenario === 'memory' ? 1 : 10 } } } });
+if (configured) patches.push({ id: 'acn-knowledge', config: { agentId: 'agent-a', home, dream: { evidenceCalibration: scenario === 'calibrated' } } });
 if (scenario === 'calibrated') await writeFile(join(process.cwd(), 'source.txt'), 'Retry only read requests within the explicit service budget. Writes remain unverified.');
 if (scenario.startsWith('disabled_')) patches.push({ id: `acn-${scenario.slice('disabled_'.length)}`, disabled: true });
 
@@ -123,7 +121,7 @@ try {
   assert.ok(entry, 'Knowledge entry must be present in the mounted bundle.');
   assert.equal(ctx.get('acnFormation'), undefined, 'Formation must not leak into the root realm.');
   assert.equal(ctx.get('acnDream'), undefined, 'Dream must not leak into the root realm.');
-  assert.equal(ctx.get('acnMemory'), undefined, 'Memory must not leak into the root realm.');
+  assert.equal(ctx.get('acnMemory'), undefined, 'The bundle must not provide private memory.');
   assert.equal(ctx.get('acnKnowledge'), undefined, 'Knowledge must not leak into the root realm.');
 
   if (scenario === 'disabled') {
@@ -142,8 +140,8 @@ try {
     const sections = (await ctx.systemPrompt.assemble({ agent })).sections.map((section) => section.name);
     const commands = ctx.commands.list(agent).map((command) => command.name);
     assert.equal(toolNames.includes('claim'), configured && scenario !== 'disabled_tools');
-    assert.equal(toolNames.includes('memory'), configured && scenario !== 'disabled_memory' && scenario !== 'memory_off');
-    assert.equal(sections.includes('acn:memory'), configured && scenario !== 'disabled_memory' && scenario !== 'memory_off');
+    assert.equal(toolNames.includes('memory'), false);
+    assert.equal(sections.includes('acn:memory'), false);
     assert.equal(sections.includes('acn:knowledge'), configured && scenario !== 'disabled_prompt');
     assert.equal(commands.includes('claim'), configured && scenario !== 'disabled_commands');
     assert.equal(commands.includes('acn-status'), scenario !== 'disabled_commands');
@@ -151,14 +149,6 @@ try {
     assert.equal(commands.includes('inbox'), configured && scenario !== 'disabled_commands' && scenario !== 'disabled_inbox');
     assert.equal(commands.includes('dream'), configured && scenario !== 'disabled_commands' && scenario !== 'disabled_dream');
     assert.equal(toolNames.includes('consult_router'), false, 'The installed solo profile has no team tool.');
-    if (scenario === 'memory') {
-      const before = (await ctx.systemPrompt.assemble({ agent })).sections.find((section) => section.name === 'acn:memory')?.text;
-      const result = await ctx.tools.execute({ name: 'memory', arguments: { ops: [{ op: 'add', target: 'memory', entry: 'INSTALLED_PRIVATE_MARKER' }] }, agent, callId: ToolCallId('installed-memory'), signal: new AbortController().signal });
-      assert.equal(result.isError, false); assert.match(JSON.stringify(result.value), /"success":true/);
-      assert.equal((await ctx.systemPrompt.assemble({ agent })).sections.find((section) => section.name === 'acn:memory')?.text, before);
-      const next = await harness.create(SessionId('installed-memory-next'), { provider: 'local-model', model: 'example-model' });
-      assert.match((await ctx.systemPrompt.assemble({ agent: next })).sections.find((section) => section.name === 'acn:memory')?.text ?? '', /INSTALLED_PRIVATE_MARKER/);
-    }
     if (toolNames.includes('claim')) {
       const result = await ctx.tools.execute({ name: 'claim', arguments: { action: 'list' }, agent, callId: ToolCallId('loader-call'), signal: new AbortController().signal });
       assert.equal(result.isError, false);
@@ -178,37 +168,11 @@ try {
       for (;;) {
         const jobs = await formation.worker.queue.list();
         assert.ok(!jobs.some((job) => job.state === 'failed'), 'Installed formation job must succeed.');
-        if (jobs.length > 0 && jobs.every((job) => job.state === 'succeeded') && (scenario !== 'memory' || jobs.some((job) => job.kind === 'memory_review'))) break;
+        if (jobs.length > 0 && jobs.every((job) => job.state === 'succeeded')) break;
         assert.ok(Date.now() < deadline, 'Installed formation must reach applied.'); await delay(20);
       }
       const knowledge = scopedContext.get('acnKnowledge'); assert.ok(knowledge);
       assert.equal((await knowledge.listClaims()).items.length, 1); assert.equal((await knowledge.listTraces()).items.length, 1);
-      if (scenario === 'memory') {
-        const memory = scopedContext.get('acnMemory'); assert.ok(memory); assert.deepEqual((await memory.snapshot()).user_entries, ['Prefers concise explanations.']);
-        const jobs = await formation.worker.queue.list(); assert.ok(jobs.some((job) => job.kind === 'memory_review' && job.state === 'succeeded'));
-        assert.ok(!JSON.stringify(await knowledge.listTraces()).includes('INSTALLED_PRIVATE_MARKER'));
-      }
-      if (commands.includes('inbox')) {
-        const context = knowledge.context(); await mkdir(context.paths.inbox, { recursive: true });
-        await writeFile(context.paths.pendingInbox('inbox_00000001'), JSON.stringify({ id: 'inbox_00000001', message_type: 'policy_update', policy: { id: 'policy_00000001', message_type: 'policy_update', name: 'retry_bound', statement: 'Use bounded retries.', scope: 'service', status: 'active', created_at: '2026-01-01T00:00:00Z' } }));
-        const response = await ctx.commands.execute(agent, '/inbox', [], new AbortController().signal); assert.equal(response?.result.kind, 'success');
-        const deadline = Date.now() + 8000;
-        for (;;) {
-          const jobs = await formation.worker.queue.list(); assert.ok(!jobs.some((job) => job.state === 'failed'), 'Installed Inbox job must succeed.');
-          if (jobs.some((job) => job.kind === 'inbox' && job.state === 'succeeded') && jobs.every((job) => job.state === 'succeeded')) break;
-          assert.ok(Date.now() < deadline, 'Installed Inbox must reach applied.'); await delay(20);
-        }
-        assert.equal((await knowledge.listClaims()).items.length, 2); assert.equal((await knowledge.listTraces()).items.length, 2);
-        await access(context.paths.doneInbox('inbox_00000001'));
-        if (commands.includes('dream')) {
-          assert.equal((await ctx.commands.execute(agent, '/dream', [], new AbortController().signal))?.result.kind, 'success');
-          const deadline = Date.now() + 8000;
-          for (;;) { const jobs = await formation.worker.queue.list(); assert.ok(!jobs.some((job) => job.state === 'failed'), `Installed Dream must succeed: ${jobs.filter((job) => job.state === 'failed').map((job) => job.lastError).join('; ')}`); if (jobs.some((job) => job.kind === 'dream' && job.state === 'succeeded')) { const dream = jobs.find((job) => job.kind === 'dream'); assert.ok(dream); await access(join(context.paths.dreamJob(dream.id), 'report.md')); break; } assert.ok(Date.now() < deadline, 'Installed Dream must reach applied.'); await delay(20); }
-          assert.equal((await knowledge.listTraces()).items.length, 4);
-          const snapshot = await knowledge.snapshot(); assert.equal(snapshot.claims.filter((claim) => claim.status === 'deprecated').length, scenario === 'calibrated' ? 0 : 1);
-          if (scenario === 'calibrated') assert.ok(snapshot.claims.some((claim) => claim.confidence === 'high' && claim.evidence_summary.includes('versioned file')));
-        }
-      }
     }
     if (!configured) await assert.rejects(access(home), { code: 'ENOENT' });
     if (scenario === 'dispose') {

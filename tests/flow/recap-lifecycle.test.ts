@@ -14,7 +14,7 @@ describe('host Recap lifecycle', () => {
     const adapter = new ScriptAdapter([textResponse('Selected work is complete.'), formed()]);
     const f = await flowHarness(adapter, { formation: true, workspace: true, config: {
       upstream: 'alpha', upstreams: { alpha: { agentId: 'agent-a' }, beta: { agentId } },
-      llm: { provider: 'mock', model: 'mock' }, dream: { enabled: false }, memory: { review: { enabled: false } },
+      llm: { provider: 'mock', model: 'mock' }, dream: { enabled: false },
       formation: { idleRecap: false, finalizeIdleMinutes: 0, finalizeOnDispose: false },
     } });
     try {

@@ -12,7 +12,7 @@ import { emptyOutput, newDraft, waitJob } from '../formation/helpers.js';
 
 it.each([false, true])('initializes the reused blank session and forms a Claim after setup (upstreams=%s)', async (upstreams) => {
   const adapter = new ScriptAdapter([textResponse('Verified the retry boundary in the example project.'), textResponse(JSON.stringify({ ...emptyOutput(), new_claims: [newDraft()] }))]);
-  const flow = await flowHarness(adapter, { configured: false, persistence: true, formation: true, config: { dream: { enabled: false }, formation: { idleRecap: false }, memory: { review: { enabled: false } } } });
+  const flow = await flowHarness(adapter, { configured: false, persistence: true, formation: true, config: { dream: { enabled: false }, formation: { idleRecap: false } } });
   try {
     const original = await flow.ctx.agents.create({ sessionId: SessionId('reused-blank'), agentOptions: { provider: 'mock', model: 'mock' } });
     await original.dispose();
@@ -37,7 +37,7 @@ it.each([false, true])('initializes the reused blank session and forms a Claim a
 });
 
 it('retains the same ownership and Claim across disable and restore', async () => {
-  const flow = await flowHarness(new ScriptAdapter([textResponse('First task.'), textResponse('Continued in the same identity.')]), { config: { upstream: 'coding', upstreams: { coding: { agentId: 'agent-a' } }, dream: { enabled: false }, memory: { review: { enabled: false } } } });
+  const flow = await flowHarness(new ScriptAdapter([textResponse('First task.'), textResponse('Continued in the same identity.')]), { config: { upstream: 'coding', upstreams: { coding: { agentId: 'agent-a' } }, dream: { enabled: false } } });
   try {
     const agent = await flow.create(); await turn(agent);
     const original = await flow.ctx.acnRuntime.knowledge(agent.session.header);

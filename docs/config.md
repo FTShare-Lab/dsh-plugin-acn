@@ -18,7 +18,7 @@
 
 Windows 不允许 Agent ID、upstream 标识或旧目录映射使用 `CON`、`PRN`、`AUX`、`NUL`、`COM1`–`COM9`、`LPT1`–`LPT9` 等保留名称，大小写均适用。保存时会提示并保留输入；直接修改 YAML 也不能绕过运行时检查。这只限制本机目录，不修改团队协议中的 Agent ID 规则，macOS / Linux 的既有名称仍有效。跨设备复用配置时请选 `coding`、`agent-a` 等中性名称；旧的不可用配置可先停用，再新建合法配置，不会自动改 ID 或迁移数据。
 
-「检查连接」先按保存规则校验填写内容，再分别验证两个服务和认证。格式错误会在操作按钮附近指出对应字段，输入保留；地址格式有效但服务离线时仍可保存。地址支持部署路径前缀，不允许用户名、密码、查询参数或片段。在「团队鉴权密钥」直接输入 key，由 DSH 托管；配置只保存自动生成的引用。模型密钥沿用宿主配置。替换密钥使用新引用，只有配置保存成功后才采用；保存失败保留输入和原密钥。已绑定密钥的团队配置修改 Agent ID 时，需要同时输入新身份密钥，或明确移除绑定。若同时保存为单人模式，自动解除旧身份的密钥绑定，旧凭据保留。「移除密钥绑定」可明确解绑，保存前可以撤销。保存配置不会让正在运行的会话切换客户端或密钥；新启动的会话使用保存后的配置。未发送的会话若已启动旧实例，菜单会显示实际模式，并可点击「按已保存配置启动」。新运行实例恢复旧会话时仍选择原 upstream 和 Agent ID，并保留原知识目录与 Memory 快照。
+「检查连接」先按保存规则校验填写内容，再分别验证两个服务和认证。格式错误会在操作按钮附近指出对应字段，输入保留；地址格式有效但服务离线时仍可保存。地址支持部署路径前缀，不允许用户名、密码、查询参数或片段。在「团队鉴权密钥」直接输入 key，由 DSH 托管；配置只保存自动生成的引用。模型密钥沿用宿主配置。替换密钥使用新引用，只有配置保存成功后才采用；保存失败保留输入和原密钥。已绑定密钥的团队配置修改 Agent ID 时，需要同时输入新身份密钥，或明确移除绑定。若同时保存为单人模式，自动解除旧身份的密钥绑定，旧凭据保留。「移除密钥绑定」可明确解绑，保存前可以撤销。保存配置不会让正在运行的会话切换客户端或密钥；新启动的会话使用保存后的配置。未发送的会话若已启动旧实例，菜单会显示实际模式，并可点击「按已保存配置启动」。新运行实例恢复旧会话时仍选择原 upstream 和 Agent ID，并保留原知识目录。
 
 新会话优先沿用同项目最近新建的普通会话所选 upstream。读取按创建时间排序，不按最近聊天或查看时间；内部子代理不参与，目录的符号链接别名视为同一项目。最近配置失效或归属无法确认时回退到全局默认；全局默认也为空时，可在首发前从 ACN 菜单明确选择，或不启用 ACN 直接聊天。首发前可以改选，首发后归属固定；派生会话继续继承父归属。已有会话和草稿不因新会话的选择而改绑。
 
@@ -126,15 +126,6 @@ Windows 不允许 Agent ID、upstream 标识或旧目录映射使用 `CON`、`PR
       evidenceMaxBytes: 1048576
       evidenceMaxChars: 16000
       evidenceMaxFiles: 256
-    memory:
-      enabled: true
-      memoryCharLimit: 1600
-      userCharLimit: 1000
-      safetyScan: true
-      review:
-        enabled: true
-        intervalTurns: 10
-        maxTranscriptChars: 32000
 ```
 
 按 id 覆盖会整体替换该行的 config，所以每次覆盖都需包含希望保留的自定义项。未填写的字段由插件补默认值。
@@ -187,12 +178,6 @@ Windows 不允许 Agent ID、upstream 标识或旧目录映射使用 `CON`、`PR
 | `dream.evidenceMaxBytes` | 1048576 | 每组累计文件读取字节预算，最多 16777216；先保留额度再读取 |
 | `dream.evidenceMaxChars` | 16000 | 每次读取或搜索返回文本上限，最多 64000；读取仅返回完整行 |
 | `dream.evidenceMaxFiles` | 256 | 每组搜索累计检查的目录项预算，最多 4096 |
-| `memory.enabled` | true | 注册私有 Memory 工具、冻结段落和 review；关闭保留文件 |
-| `memory.memoryCharLimit` / `memory.userCharLimit` | 1600 / 1000 | 与当前 ACN 默认容量一致；规范化后 Unicode 字符数，包含条目分隔符 |
-| `memory.safetyScan` | true | 扫描 add / replace 新内容的不可见字符和危险模式；不阻止删除旧内容 |
-| `memory.review.enabled` | true | 是否注册持久 Memory 复核处理器 |
-| `memory.review.intervalTurns` | 10 | 每 N 个完成的人工用户 turn 复核最近 N 个 turn |
-| `memory.review.maxTranscriptChars` | 32000 | 私有复核投影的总字符上限，最多 128000；截断显式标记 |
 
 选择单人配置的会话使用其单人空间，不发团队请求或创建上传项。完全未选择工作配置的会话只进行普通聊天，不访问 ACN 存储。旧版全局 `team` 配置继续服务已有绑定的会话；新配置使用 `upstreams`，通过会话输入框旁的 ACN 菜单选择。以下仅为旧格式兼容示例：
 
@@ -210,7 +195,6 @@ Windows 不允许 Agent ID、upstream 标识或旧目录映射使用 `CON`、`PR
 
 可在工作配置中直接输入团队鉴权密钥并保存，也可在启动宿主的环境中提供对应凭据。每次请求重新解析宿主托管值或兼容的环境变量，在插件设置中替换密钥会使用新引用，配置保存成功后才采用；驻留的旧会话实例保留原连接和密钥；重启或释放后重新加载实例时，仍固定原 upstream、Agent ID 和私有快照，但使用该 upstream 当前保存的服务地址与凭据。旧凭据不自动删除，避免影响仍驻留的其他实例。回环地址直连；其他地址遵循 HTTP(S)_PROXY 与 NO_PROXY。两个服务在启用时各做一次异步 health；失败会显示在 `/acn-status`，不会撤销本地知识服务。鉴权错误每次服务生命周期只警告一次。
 
-Memory review 使用自身会话路由，或显式 `llm.provider` / `llm.model`，不会借用其他会话的路由。关闭 review 保留已排队任务，重新启用后继续。关闭 Memory 或单独禁用其行都会撤销工具、快照和 review；知识行仍保护普通文件工具访问私有 Agent 数据。已持久化的双文件事务会在知识服务启动时恢复。
 
 配置校验要求团队 endpoint 同时为空或同时为 HTTP(S) URL，不接受内嵌用户名、密码、query 或 fragment；`llm.provider`/`model` 必须成对；数值必须处于规定范围。配置错误只报告字段名。
 
@@ -240,7 +224,7 @@ upstreams:
   disabled: true
 ```
 
-可分别禁用 `acn-tools`、`acn-prompt`、`acn-formation`、`acn-inbox`、`acn-dream`、`acn-memory` 和 `acn-commands`。禁用 formation 会撤销 `/recap` 和 `/acn-finalize`，Inbox 仍可运行；禁用 inbox 会撤销 `/inbox`，已有消息和任务保留；禁用 dream 会撤销 `/dream`，中止调用并保留进度，prepared 组先到达安全点。Memory 独立于 Claim 工具、知识提示词及 formation，禁用这些行仍可使用 Memory。上传投递属于知识服务，禁用 Inbox、Dream 或 Memory 不会停止已形成知识的投递。`/acn-status retry` 共用知识服务的 worker。禁用知识行时，其依赖贡献全部撤销。客户端仍在时不阻止普通聊天，并提供插件管理入口；恢复后会自动重读状态，已固定的身份仍不能中途更换。
+可分别禁用 `acn-tools`、`acn-prompt`、`acn-formation`、`acn-inbox`、`acn-dream` 和 `acn-commands`。禁用 formation 会撤销 `/recap` 和 `/acn-finalize`，Inbox 仍可运行；禁用 inbox 会撤销 `/inbox`，已有消息和任务保留；禁用 dream 会撤销 `/dream`，中止调用并保留进度，prepared 组先到达安全点。上传投递属于知识服务，禁用 Inbox 或 Dream 不会停止已形成知识的投递。`/acn-status retry` 共用知识服务的 worker。禁用知识行时，其依赖贡献全部撤销。客户端仍在时不阻止普通聊天，并提供插件管理入口；恢复后会自动重读状态，已固定的身份仍不能中途更换。
 
 ## 会话压缩与知识复盘
 

@@ -183,7 +183,7 @@ describe('Inbox sync and worker', () => {
     let called = false;
     const fixture = await inboxFixture((route, _system, input) => { called = true; expect(route).toEqual({ provider: 'remembered', model: 'example' }); expect(input).not.toContain('PRIVATE_MARKER'); return Promise.resolve({ text: JSON.stringify(emptyInternalize()) }); }, { llm: { provider: '', model: '' } });
     try {
-      const context = fixture.knowledge.context(); await fs.mkdir(context.paths.memories, { recursive: true }); await fs.writeFile(context.paths.memory, 'PRIVATE_MARKER'); await fs.writeFile(context.paths.user, 'PRIVATE_MARKER');
+      const context = fixture.knowledge.context(); await fs.mkdir(join(context.paths.root, 'memories'), { recursive: true }); await fs.writeFile(join(context.paths.root, 'memories', 'MEMORY.md'), 'PRIVATE_MARKER'); await fs.writeFile(join(context.paths.root, 'memories', 'USER.md'), 'PRIVATE_MARKER');
       await writeYamlAtomic(context.paths.lastRoute, { provider: 'remembered', model: 'example' }, RouteSchema, context.logger);
       await new InboxStore(context).acceptPulled(inboxMessage()); const jobs = fixture.knowledge.jobs; if (jobs === null) throw new Error('No worker.'); await jobs.start(); const job = await fixture.inbox.enqueue(); await waitJob(jobs.queue, job.id); expect(called).toBe(true);
     } finally { await fixture.close(); }

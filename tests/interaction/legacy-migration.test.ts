@@ -7,7 +7,6 @@ import { configurationValues, mergeConfiguration } from '../../src/configuration
 import { resolveUpstream, upstreamsOf } from '../../src/upstreams.js';
 import { identityOf } from '../../src/dsh-adapter/session-binding.js';
 import { ClaimStore } from '../../src/store/claims.js';
-import { AcnMemory } from '../../src/memory/service.js';
 import { flowHarness, turn } from '../flow/harness.js';
 import { ScriptAdapter, textResponse } from '../flow/adapter.js';
 import { teamServer } from '../team/helpers.js';
@@ -18,9 +17,8 @@ it.each([
 ])('preserves the same legacy identity after a settings migration (team=$team, cold=$cold)', async ({ team, cold }) => {
   const server = await teamServer((request) => ({ body: request.path.endsWith('/overview') ? { scopes: [] } : { status: 'ok', team_auth_enabled: false } }));
   const adapter = new ScriptAdapter([textResponse('Original work.'), textResponse('Continued in the same identity.')]);
-  const f = await flowHarness(adapter, { persistence: true, memory: true, config: { ...(team ? { team: { routerEndpoint: server.endpoint, maintainerEndpoint: server.endpoint } } : {}), dream: { enabled: false }, memory: { review: { enabled: false } } } });
+  const f = await flowHarness(adapter, { persistence: true, config: { ...(team ? { team: { routerEndpoint: server.endpoint, maintainerEndpoint: server.endpoint } } : {}), dream: { enabled: false } } });
   try {
-    await f.ctx.acnMemory.apply({ ops: [{ op: 'add', target: 'memory', entry: 'LEGACY_PRIVATE_CONTEXT' }] });
     const original = await f.ctx.agents.create({ sessionId: SessionId('legacy-work'), agentOptions: { provider: 'mock', model: 'mock' } });
     await turn(original.agent);
     expect(f.ctx.acnRuntime.view(original.agent.session.header).available).toBe(true);
@@ -42,9 +40,8 @@ it.each([
       const knowledge = await pool.knowledge(handle.agent.session.header);
       expect(knowledge.context().paths.root).toBe(f.knowledge.context().paths.root);
       expect(await new ClaimStore(knowledge.context()).list()).toContainEqual(expect.objectContaining({ id: f.claim.id }));
-      expect((await new AcnMemory(knowledge).snapshot()).memory_entries).toContain('LEGACY_PRIVATE_CONTEXT');
       await turn(handle.agent);
-      expect(adapter.requests).toHaveLength(2); expect(JSON.stringify(adapter.requests[1])).toContain('LEGACY_PRIVATE_CONTEXT');
+      expect(adapter.requests).toHaveLength(2); expect(JSON.stringify(adapter.requests[1])).toContain(f.claim.name);
       await expect(pool.select(handle.agent.session.header, 'review')).rejects.toMatchObject({ kind: 'bound' });
       const selections = handle.agent.session.snapshotEvents().map(pluginRecordOf).filter((record) => record?.type === 'plugin:acn/team-selection');
       expect(selections).toHaveLength(1); expect(selections[0]?.data).toMatchObject({ key, identity: identityOf(previous) });

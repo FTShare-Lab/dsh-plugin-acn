@@ -15,4 +15,3 @@ export * from './reported-sets.js';
 export * from './claim-edits.js';
 export * from './session-state.js';
 export * from './jobs.js';
-export * from './memory.js';

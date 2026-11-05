@@ -10,9 +10,9 @@ import { inboxMessage, emptyInternalize } from '../team/helpers.js';
 import { ScriptAdapter, textResponse, toolResponse } from './adapter.js';
 import { flowHarness, turn } from './harness.js';
 
-type Kind = 'recap' | 'finalize' | 'inbox' | 'memory_review' | 'dream';
+type Kind = 'recap' | 'finalize' | 'inbox' | 'dream';
 const failedResponse = (failure: LlmFailure): StreamChunk[] => [{ type: 'finish', reason: { kind: 'error', failure } }];
-const foreground = (kind: Kind) => ['recap', 'finalize', 'memory_review'].includes(kind);
+const foreground = (kind: Kind) => ['recap', 'finalize'].includes(kind);
 
 async function request(f: Awaited<ReturnType<typeof flowHarness>>, kind: Kind): Promise<Job> {
   if (kind === 'dream') return f.ctx.acnDream.request();
@@ -20,19 +20,18 @@ async function request(f: Awaited<ReturnType<typeof flowHarness>>, kind: Kind): 
   const agent = await f.create(); await turn(agent);
   if (kind === 'recap') { const job = await f.ctx.acnFormation.recap(agent.session.id); if (!job) throw new Error('Missing Recap job.'); return job; }
   if (kind === 'finalize') return f.ctx.acnFormation.finalize(agent.session.id);
-  let job: Job | undefined;
-  await vi.waitFor(async () => { job = (await f.knowledge.jobs?.queue.list())?.find((item) => item.kind === 'memory_review'); expect(job).toBeDefined(); });
-  if (job === undefined) throw new Error('Missing Memory review job.'); return job;
+  return f.ctx.acnFormation.finalize(agent.session.id);
+
 }
 
 async function fixture(kind: Kind, script: StreamChunk[][]) {
   const adapter = new ScriptAdapter([...(foreground(kind) ? [textResponse('Verified the example contract.')] : []), ...script]);
-  const flow = await flowHarness(adapter, { formation: kind === 'recap' || kind === 'finalize', inbox: kind === 'inbox', memory: kind === 'memory_review', dream: kind === 'dream', config: { llm: { provider: 'mock', model: 'mock', structuredRetries: 2 }, formation: { idleRecap: false, finalizeOnDispose: false }, memory: { review: { intervalTurns: 1 } } } });
+  const flow = await flowHarness(adapter, { formation: kind === 'recap' || kind === 'finalize', inbox: kind === 'inbox', dream: kind === 'dream', config: { llm: { provider: 'mock', model: 'mock', structuredRetries: 2 }, formation: { idleRecap: false, finalizeOnDispose: false } } });
   return { flow, adapter };
 }
 
 describe('background model failure visibility and recovery', () => {
-  it.each((['recap', 'finalize', 'inbox', 'memory_review', 'dream'] as const).flatMap((kind) => ['AUTH', 'MALFORMED_RESPONSE'].map((code) => ({ kind, code }))))('preserves $code for $kind in the task and activity API without applying model output', async ({ kind, code }) => {
+  it.each((['recap', 'finalize', 'inbox', 'dream'] as const).flatMap((kind) => ['AUTH', 'MALFORMED_RESPONSE'].map((code) => ({ kind, code }))))('preserves $code for $kind in the task and activity API without applying model output', async ({ kind, code }) => {
     const { flow: f, adapter } = await fixture(kind, [failedResponse({ code, message: 'PRIVATE_PROVIDER_FAILURE_MARKER', ...(code === 'AUTH' ? { status: 401 } : {}) })]);
     try {
       const worker = f.knowledge.jobs; if (!worker) throw new Error('Missing worker.');
@@ -43,12 +42,11 @@ describe('background model failure visibility and recovery', () => {
       expect(view.ok).toBe(true); expect(view.knowledge?.activities.find((activity) => activity.id === job.id)?.error).toBe(failed.lastError);
       expect(await new ClaimStore(f.knowledge.context()).list()).toEqual([f.claim]);
       if (kind === 'inbox') expect(await new InboxStore(f.knowledge.context()).listPending()).toHaveLength(1);
-      if (kind === 'memory_review') expect(await f.ctx.acnMemory.snapshot()).toMatchObject({ memory_entries: [], user_entries: [] });
       if (kind === 'dream') expect((await f.knowledge.dreamStore().progress(job.id))?.autonomy?.steps).toBe(1);
     } finally { await f.close(); }
   });
-  it.each((['inbox', 'memory_review'] as const).flatMap((kind) => [false, true].map((recover) => ({ kind, recover }))))('handles malformed JSON for $kind with bounded structural correction (recover=$recover)', async ({ kind, recover }) => {
-    const valid = kind === 'inbox' ? emptyInternalize() : { ops: [{ op: 'add', target: 'user', entry: 'Prefers concise explanations.' }] };
+  it.each((['inbox'] as const).flatMap((kind) => [false, true].map((recover) => ({ kind, recover }))))('handles malformed JSON for $kind with bounded structural correction (recover=$recover)', async ({ kind, recover }) => {
+    const valid = emptyInternalize();
     const { flow: f, adapter } = await fixture(kind, [textResponse('{'), textResponse(recover ? JSON.stringify(valid) : '{')]);
     try {
       const worker = f.knowledge.jobs; if (!worker) throw new Error('Missing worker.');
@@ -57,7 +55,6 @@ describe('background model failure visibility and recovery', () => {
       expect(adapter.requests.at(-1)?.system).toContain('JSON 解析失败');
       if (!recover) expect(result.lastError).toContain('JSON 语法');
       if (kind === 'inbox') expect(await new InboxStore(f.knowledge.context()).listPending()).toHaveLength(recover ? 0 : 1);
-      else expect((await f.ctx.acnMemory.snapshot()).user_entries).toEqual(recover ? ['Prefers concise explanations.'] : []);
       expect(await new ClaimStore(f.knowledge.context()).list()).toEqual([f.claim]);
     } finally { await f.close(); }
   });

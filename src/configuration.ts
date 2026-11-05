@@ -71,7 +71,7 @@ export function mergeConfiguration(raw: Record<string, unknown>, values: Configu
       keyEnv: values.mode === 'team' ? values.keyEnv : '',
     },
   };
-  delete next['projectUpstreams'];
+  delete next['projectUpstreams']; delete next['memory'];
   const advanced = values.advanced;
   if (advanced !== undefined) {
     next['inbox'] = { ...record(raw.inbox), processingStaleAfterSecs: advanced.inboxProcessingStaleAfterSecs };

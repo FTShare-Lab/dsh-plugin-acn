@@ -8,7 +8,7 @@ const patch = fileURLToPath(new URL('../../cordis.patch.yml', import.meta.url));
 const tsconfig = fileURLToPath(new URL('../../tsconfig.json', import.meta.url));
 
 describe('bundle composition', () => {
-  it.each(['active', 'disabled', 'dispose', 'configured', 'calibrated', 'memory', 'memory_off', 'disabled_tools', 'disabled_prompt', 'disabled_commands', 'disabled_formation', 'disabled_inbox', 'disabled_dream', 'disabled_memory'])('%s: real loader preserves the knowledge realm', async (scenario) => {
+  it.each(['active', 'disabled', 'dispose', 'configured', 'calibrated', 'disabled_tools', 'disabled_prompt', 'disabled_commands', 'disabled_formation', 'disabled_inbox', 'disabled_dream'])('%s: real loader preserves the knowledge realm', async (scenario) => {
     const result = await runLoaderSmoke({
       label: `acn-${scenario}`,
       tempDirPrefix: 'acn-loader-',

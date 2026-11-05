@@ -1,21 +1,22 @@
-# ACN Memory Framework
+# ACN Knowledge Framework
 
 [中文](README.md) · [User guide (Chinese)](docs/user_guide.md) · [Developer documentation](docs/index.md)
 
 **Keep useful experience from your work and reuse it across conversations and teams.**
 
-ACN is a knowledge and memory plugin for DeepSeek Harness (DSH). Start with a personal configuration to turn work conversations into reusable conclusions with evidence and a clear scope. Connect to a team to discover other agents' knowledge, share findings, and receive feedback.
+ACN is a knowledge plugin for DeepSeek Harness (DSH). Start with a personal configuration to turn work conversations into reusable conclusions with evidence and a clear scope. Connect to a team to discover other agents' knowledge, share findings, and receive feedback.
 
 | Capability | What it provides |
 | --- | --- |
 | Session recap | Extract reusable conclusions and retain their sources |
 | Knowledge reuse | Look up experience and assess its evidence and applicability |
 | Team collaboration | Search shared knowledge, contribute findings, report disputes, and process feedback |
-| Private memory | Keep lasting preferences and experience separate from shared knowledge |
 | Dream | Review existing knowledge, retire temporary records, and consolidate related findings |
 | Knowledge and activity | Read records, return to source conversations, and follow progress or failures |
 
 ![ACN work configurations in DSH](docs/assets/upstream-settings.png)
+
+This plugin manages reusable experience centered on Claims and supports sharing across a connected team. It does not maintain or manage private Memory. Knowledge extraction excludes calls and results of tools whose names contain `memory`, case-insensitively.
 
 ## Get started
 
@@ -26,7 +27,7 @@ The package name is **`@ftai/dsh-plugin-acn`**. It has not been published to npm
 3. Select a knowledge-processing model under **Knowledge and models**. Start a new conversation and confirm its ACN configuration beside the composer.
 4. After completing useful work, choose **Recap session** from the ACN menu and review the result in **Knowledge and activity**.
 
-Each configuration has its own knowledge and private memory. Projects using the same configuration share that knowledge; separate configurations remain isolated. A conversation's configuration is fixed after it starts. See the [illustrated user guide](docs/user_guide.md) for details.
+Each configuration has its own knowledge. Projects using the same configuration share that knowledge; separate configurations remain isolated. A conversation's configuration is fixed after it starts. See the [illustrated user guide](docs/user_guide.md) for details.
 
 ## Connect a team
 
@@ -34,7 +35,7 @@ This plugin implements the **Agent (A) side**. **Your team must deploy Maintaine
 
 After deployment, the administrator supplies an Agent ID, both service URLs, and a team key when authentication is enabled. Enable **Connect team services** in a work configuration, enter these details, and check the connection. Personal use needs neither service and sends no team requests.
 
-In team mode, formed Claims and Disputes are shared with Maintainer. Router results are candidates for the assistant to assess; the Agent processes team suggestions against its local knowledge. Traces and private Memory are not uploaded directly to the team. Knowledge processing uses the selected model provider.
+In team mode, formed Claims and Disputes are shared with Maintainer. Router results are candidates for the assistant to assess; the Agent processes team suggestions against its local knowledge. Traces are not uploaded directly to the team. Knowledge processing uses the selected model provider.
 
 ## Maintenance and development
 

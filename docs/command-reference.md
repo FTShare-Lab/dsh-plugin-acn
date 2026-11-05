@@ -73,7 +73,7 @@ Recap 和 Finalize 共用处理游标，已成功形成的区间不会再次调�
 
 `/recap` 和 `/acn-finalize` 返回持久任务 ID（`/recap` 无新增内容时直接提示），不向普通对话追加用户命令。用 `/acn-status` 查看 queued / running / succeeded / failed、尝试次数及可操作的失败提示。结构或引用校验默认最多五次（`llm.structuredRetries`）；每个结构化尝试的传输最多三次，临时失败可进入持久退避，任务最多五次尝试。达到自动重试上限时会明确提示手动重试。修正原因后可按任务 ID 重试。没有本会话的请求路由时，需要先完成普通模型请求，或配置 `llm.provider` / `llm.model`；不会借用别的会话路由。
 
-Inbox 内化、Recap/Finalize 和 Memory review 共用结构化响应校验：坏 JSON、字段或引用不合法时向模型提供纠正反馈；输出达到 token 上限与返回工具调用、附件会单独分类。失败不会发布未通过校验的知识或私有记忆，未完成的 Inbox 消息与形成区间保留。
+Inbox 内化、Recap/Finalize 共用结构化响应校验：坏 JSON、字段或引用不合法时向模型提供纠正反馈；输出达到 token 上限与返回工具调用、附件会单独分类。失败不会发布未通过校验的知识，未完成的 Inbox 消息与形成区间保留。
 
 处理活动展开后显示已保存的原因与重试按钮。常见模型错误如下；诊断不包含提供商返回的原始正文、密钥或私有内容。
 
@@ -167,40 +167,16 @@ Dream 通过 DSH 子会话自主发现候选、按需探索、暂存、校验、
 
 本地 `dream/<job>/evidence/<group>.yaml` 保存工作区、候选版本、已用预算和读取回执。重试复用已有读取回执和额度，模型可在剩余额度内继续读取；证据变化使基于旧回执的提交跳过。提交和恢复重检文件版本，过期证据停止尚未完成的写入，已生效结果保留。恢复不再运行模型或查证工具；真实 I/O 故障会暂缓其他知识写入，修复存储后继续。
 
-## 私有 Memory
-
-启用后，`memories/MEMORY.md` 保存稳定环境和可复用经验，`memories/USER.md` 保存稳定用户事实与偏好。它们只供主会话和私有 review 使用。任务进度、一次性结果、日志和凭据不应写入。
-
-模型通过 `memory` 提交一批操作：
-
-```json
-{"ops":[{"op":"add","target":"user","entry":"偏好简洁中文说明。"},{"op":"add","target":"memory","entry":"示例工程使用临时目录进行存储测试。"}]}
-```
-
-替换用 `{"op":"replace","target":"memory","old_text":"唯一定位文本","new_text":"完整新条目"}`；删除用 `{"op":"remove","target":"user","old_text":"唯一定位文本"}`。old_text 必须匹配唯一条目，replace 会替换整条内容。重复 add 成功但不重复保存；`{"ops":[]}` 是合法零操作。工具返回用量、上限、条目数和最后一个 target 的最新条目。匹配错误不回显定位文本；容量错误明确返回 `applied: false`，`current` / `current_entries` 是本批操作前的用量和内容，`proposed` 是尝试应用后的预计用量，`need_free` 是预计超出上限的字符数。被拒绝的新条目不会混入当前内容，整批的其他修改也不会生效。
-
-整批操作在双文件锁内基于最新磁盘校验，任一步失败都不写入。默认扫描 add / replace 新内容的不可见字符、指令覆盖和凭据外传模式；允许删除危险旧条目。扫描是模式检查，不能证明文本可信。条目不能包含保留分隔符 `§`；写回与原版一致，统一为 `\n§\n`，容量包含分隔符并按 Unicode 字符计算。
-
-会话创建时将双文件冻结到 `sessions/<sid>/state.yaml` 的 `memory` 字段，系统段落名为 `acn:memory`。工具写入立即落盘，当前冻结段落保持不变；新会话和 clear 读取新内容，resume / compact / fork 沿用已保存的快照。工具结果仍会成为当前普通对话的一部分。子代理没有私有段落，也不能使用 Memory 工具。
-
-默认每十个完成且有助手回答的人工用户 turn 排队一次 review，使用最近十个 turn 和执行时的最新 Memory；内部消息、未完成 turn、Memory 工具参数与结果均排除。投影默认总计 32000 字符，裁剪有遗漏标记，独立于形成 transcript 的回收。review 只返回批量操作，不使用工具；模型调用在锁外。调用期间若文件改变，会跳过旧操作并保留新版本。失败不打断主会话，通过 `/acn-status` 查看及重试任务。
-
-双文件写入先保存 `memories/pending.yaml`，再原子发布文件，完成后保存 `memories/receipts/` 回执。崩溃后按原固定目标继续；发现外部第三版本时保留已生效写入和外部内容，停止剩余覆盖。同一次工具调用重放由 session / call ID 去重。review 的窗口、请求及 checkpoint 位于 `memories/windows/`、`requests/`、`reviews/`，队列本身只保存请求 ID。关闭 Memory 保留文件及任务，已持久事务仍会恢复。
-
-普通 `read/read_image/write/edit/str_replace_editor/grep/glob` 不能访问整个 `<home>/agents/`，包括其他 Agent、快照与回执。canonical 路径、符号链接别名、多链接文件和搜索祖先根均受校验；搜索默认使用会话的实时 cwd。本机递归搜索先检查硬链接，超过 100000 个目录项时拒绝并要求缩小目录。`memory.enabled=false` 或禁用 Memory 行时，这层保护仍随知识服务保持。
-
-这层保护覆盖已知工具及宿主写入/编辑意图事件；宿主没有读取前事件。它不约束任意 shell、可直接访问 Node 文件系统的通用代码或其他自定义工具，不提供 OS 沙箱，也不保证抵御宿主外进程同时更换路径。自动 Recap / Finalize、Inbox、Dream 和团队请求不读取双文件；程序桥只投影公共子调用，私有调用及外层程序/回显被排除。普通回答若主动复述私有事实，其文字仍属于对话，结构过滤不能证明后续语义上绝不泄漏。
-
 ## 从已有 ACN 目录导入
 
 如果你已经使用过 [ACN 官方仓库](https://github.com/FTShare-Lab/agent-claim-network) 提供的 Agent 侧功能，你可以使用该命令将历史知识导入本插件。
 
-`/acn-import` 是一次性只读迁移。先让原 ACN 停止写入，找到实际 Agent 目录，例如 `<acn_home>/<upstream>/data/agents/agent-a/`；某些部署还有 `dev/` 一层。传入的目录应直接包含 `claims/`、`traces/` 或 `memories/`，不是整个数据根目录。
+`/acn-import` 是一次性只读迁移。先让原 ACN 停止写入，找到实际 Agent 目录，例如 `<acn_home>/<upstream>/data/agents/agent-a/`；某些部署还有 `dev/` 一层。传入的目录应直接包含 `claims/` 或 `traces/`，不是整个数据根目录。
 
 ```text
 /acn-import --dry-run "~/Documents/data/example/data/agents/agent-a"
 /acn-import "~/Documents/data/example/data/agents/agent-a"
-/acn-import --without-memory "/path/to/agent-a"
+/acn-import "/path/to/agent-a"
 ```
 
 `~` 会在插件内展开，含空格的路径加引号；命令不会执行 Shell。Windows 可以直接粘贴原生路径，反斜杠会保留，也接受既有 JSON 转义路径。例如：
@@ -212,13 +188,13 @@ Dream 通过 DSH 子会话自主发现候选、按需探索、暂存、校验、
 
 Windows 上的 `~\` 和 UNC 路径也可解析；网络共享的存储可靠性尚未验证。macOS / Linux 继续使用原有命令转义规则。
 
-预览只给出可复制数量与冲突列表，不创建目标。实际导入先完整校验源文件，再复制原始 UTF-8 字节；Claim holder 与 Trace agent 必须等于当前 `agentId`，不改归属。私有文件没有独立 holder；仅含私有文件的源目录必须以当前 `agentId` 命名。单文件上限 16 MiB，不接受符号链接、硬链接、目录伪装、非法 YAML、ID 与文件名不一致或重叠源/目标。
+预览只给出可复制数量与冲突列表，不创建目标。实际导入先完整校验源文件，再复制原始 UTF-8 字节；Claim holder 与 Trace agent 必须等于当前 `agentId`，不改归属。单文件上限 16 MiB，不接受符号链接、硬链接、目录伪装、非法 YAML、ID 与文件名不一致或重叠源/目标。
 
-现有目标一律保留，包含同 ID 的不同正文和空的私有文件；输出逐项列出跳过内容。私有文件遵守当前安全扫描和字符容量，超限时先调整配置或用 `--without-memory`；不会截断。`memory.enabled=false` 时跳过双文件。导入后的 Memory 对新会话生效，旧会话仍用冻结快照。
+现有目标一律保留，包含同 ID 的不同正文；输出逐项列出跳过内容。
 
-只导入 Claim、Trace、`MEMORY.md`、`USER.md`；锁、会话、待处理任务、Dream 状态、团队队列和凭据不复制。不会请求团队服务或加入上传队列，团队模式也一样；以后主动修订 Claim 会按普通规则入队。
+只导入 Claim 和 Trace；锁、会话、待处理任务、Dream 状态、团队队列和凭据不复制。不会请求团队服务或加入上传队列，团队模式也一样；以后主动修订 Claim 会按普通规则入队。
 
-Claim / Trace 使用独占的原子文件发布，私有双文件复用已有事务和恢复日志。整批不是一次原子切换：进程中断后可能已有部分文件可读，重新执行命令会跳过已有文件并补齐缺失文件。源内容应保持稳定；并发源写入会尽力检测并拒绝，但不提供跨运行时的活动数据库快照。子代理不能导入，命令结果不进入模型历史，也不回显私有正文。
+Claim / Trace 使用独占的原子文件发布。整批不是一次原子切换：进程中断后可能已有部分文件可读，重新执行命令会跳过已有文件并补齐缺失文件。源内容应保持稳定；并发源写入会尽力检测并拒绝，但不提供跨运行时的活动数据库快照。子代理不能导入，命令结果不进入模型历史，也不回显私有正文。
 
 ### 查找历史失败任务
 

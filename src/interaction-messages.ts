@@ -108,7 +108,6 @@ const recovery: Record<string, string> = {
   timeout: 'The model request timed out. Check connectivity or timeout settings, then retry.',
   transport: 'The model connection failed. Restore connectivity to the provider, then retry.',
   route: 'No usable knowledge model route is available. Choose a knowledge model in ACN settings, then retry.',
-  memory_review_route: 'Memory review has no session model route. Choose a knowledge model in ACN settings, then retry.',
   dream_tool_json: 'The model returned invalid tool-argument JSON after two retries. Progress and used budget are retained. Retry later or change the knowledge model.',
   dream_timeout: 'A Dream model request timed out. Progress and used budget are retained. Restore model connectivity and retry.',
   dream_output_limit: 'Dream reached the model output limit. Progress and used budget are retained. Adjust the output limit or choose another knowledge model, then retry.',

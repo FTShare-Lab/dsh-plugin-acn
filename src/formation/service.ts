@@ -239,7 +239,7 @@ export class AcnFormation {
     // 会话任务只能使用自身已记录路由；全局 last_route 留给后续无会话任务。
     if (route === undefined) throw new JobError('route', '没有本会话的 request/header 路由。请先完成一次会话请求，或配置 llm.provider 和 llm.model，然后用 /acn-status retry 重试。');
     const input = JSON.stringify({ instruction: '根据本段真实任务证据形成可复用知识；没有有价值的新增或更新时返回空数组。', transcript_projection: { complete_history: false, from_seq_exclusive: fromSeq, until_seq_inclusive: untilSeq, excluded: ['system_instructions', 'catalog_injection', 'compaction_replacement', 'reasoning', 'private_memory', 'run_code_wrapper'], tool_results: 'complete_public_results', legacy_tool_result_completeness: 'unknown' }, transcript: entries.map((entry) => ({ role: entry.type, content: entry.text, ...(entry.projection === undefined ? {} : { projection: entry.projection }) })), local_claims: analysisClaims.filter((claim) => claim.status !== 'deprecated') });
-    const prepared = await structuredCall({ backend: this.backend, context: this.knowledge.context(), config: configured, route, jobId: job.id, system: this.render('session_recap.j2', { memory_enabled: false }), input, schema: RecapOutputSchema,
+    const prepared = await structuredCall({ backend: this.backend, context: this.knowledge.context(), config: configured, route, jobId: job.id, system: this.render('session_recap.j2', {}), input, schema: RecapOutputSchema,
       parse: (value) => prepareFormation(value, this.knowledge.context().agentId, analysisClaims, recapClaimIds(entries.map((entry) => entry.text))), signal: control.signal });
     control.signal.throwIfAborted();
     if (job.kind === 'recap' && (await this.worker.queue.list()).some((candidate) => candidate.kind === 'finalize' && candidate.sessionId === id && candidate.state === 'queued')) throw new Preempted();

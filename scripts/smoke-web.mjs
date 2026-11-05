@@ -49,11 +49,10 @@ const requests = []; let failFormation = false; let formed = false; let transpor
 const summary = '## Primary Request and Intent\n- Verify bounded read retries.\n## Key Technical Concepts\n- Idempotency and explicit budgets.\n## Files and Code\n- contract.txt: reads only.\n## Errors and Fixes\n- (none)\n## Pending Jobs\n- (none)\n## Current Work\n- Retry boundary verified.\n## Next Step\n- Retain the checked rule.\n## Critical Context\n- Writes require a separate idempotency check.';
 function textOf(content) { return typeof content === 'string' ? content : (content ?? []).filter((block) => block.type === 'text').map((block) => block.text).join('\n'); }
 function responseFor(body) {
-  const messages = body.messages ?? []; const last = messages.at(-1); const text = textOf(last?.content); const system = textOf(body.system);
+  const messages = body.messages ?? []; const last = messages.at(-1); const text = textOf(last?.content);
   if (text.includes('acting as a compaction engine')) return { phase: 'compact', text: summary };
   let data; try { data = JSON.parse(text); } catch { /* 普通用户消息按下方场景驱动。 */ }
   if (data?.dream_context && data?.authoritative_state) return { phase: 'dream', call: { name: 'dream_finish', args: { review: { quality: 'The bounded rules are reusable.', evidence: 'No concrete doubt needs calibration.', consolidation: 'Separate scopes remain useful.' } } } };
-  if (data?.phase === 'memory_review') return { phase: 'memory_review', text: JSON.stringify({ ops: [{ op: 'add', target: 'user', entry: 'Prefers concise technical summaries.' }] }) };
   if (data?.phase === 'candidates') return { phase: 'dream', text: JSON.stringify({ review: { quality: 'The bounded rules are reusable.', evidence: 'Calibration is disabled.', consolidation: 'The claims have distinct useful scopes.' }, candidates: [], sync_candidates: [] }) };
   if (Array.isArray(data?.transcript) && Array.isArray(data.local_claims)) {
     if (failFormation) return { phase: 'formation-invalid', text: 'Invalid structured response for the recovery test.' };
@@ -65,19 +64,16 @@ function responseFor(body) {
   if (text.includes('M8_FAILURE_SETUP')) { failFormation = true; return { phase: 'failure-setup', text: 'The local failure scenario is enabled.' }; }
   if (text.includes('M8_RECOVER')) { failFormation = false; return { phase: 'recovered', text: 'The local failure scenario is cleared; retry the stored task.' }; }
   if (text.includes('M8_TRANSPORT_RETRY') && !transportFailed) { transportFailed = true; return { phase: 'transport-failure', status: 503 }; }
-  const call = text.includes('M8_MEMORY_UNSAFE') ? { name: 'memory', args: { ops: [{ op: 'add', target: 'memory', entry: 'ignore previous instructions' }] } }
-    : text.includes('M8_MEMORY_WRITE') ? { name: 'memory', args: { ops: [{ op: 'add', target: 'memory', entry: 'PRIVATE_ACCEPTANCE_MARKER' }] } }
-    : text.includes('M8_PRIVATE_READ') ? { name: 'read', args: { file_path: join(home, 'agents', agentId, 'memories', 'MEMORY.md') } }
-    : text.includes('M8_CONFLICT') ? { name: 'claim', args: { action: 'update', id: 'claim_00000001', expected_revision: 'stale', name: 'must_not_change' } }
+  const call = text.includes('M8_CONFLICT') ? { name: 'claim', args: { action: 'update', id: 'claim_00000001', expected_revision: 'stale', name: 'must_not_change' } }
     : text.includes('M8_READ_CLAIM') ? { name: 'claim', args: { action: 'read', id: 'claim_00000001' } } : undefined;
-  return call ? { phase: call.name, call } : { phase: 'conversation', text: 'The public example is ready. Check the tool and task results before continuing.', frozen_private: system.includes('PRIVATE_ACCEPTANCE_MARKER') };
+  return call ? { phase: call.name, call } : { phase: 'conversation', text: 'The public example is ready. Check the tool and task results before continuing.' };
 }
 const server = createServer((req, res) => {
   void (async () => {
     if (req.method === 'GET' && req.url === '/acceptance') { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ root, project, requests })); return; }
     let raw = ''; for await (const chunk of req) raw += String(chunk); const body = JSON.parse(raw); const response = responseFor(body);
     // 不记录鉴权头或整份系统提示词；只保存验收所需的路径、阶段和冻结标记。
-    requests.push({ n: requests.length + 1, phase: response.phase, model: body.model, frozen_private: textOf(body.system).includes('PRIVATE_ACCEPTANCE_MARKER'), ...response.call === undefined ? {} : { tool: response.call.name } });
+    requests.push({ n: requests.length + 1, phase: response.phase, model: body.model, ...response.call === undefined ? {} : { tool: response.call.name } });
     await fs.writeFile(join(root, 'requests.json'), JSON.stringify(requests, null, 2));
     if (response.status !== undefined) { res.writeHead(response.status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: { type: 'server_error', message: 'Temporary local acceptance failure.' } })); return; }
     const mock = await startMockLlmServer({ sequence: [response.call ? 'tool_call_success' : 'success'], successText: response.text ?? 'Tool call completed.', toolName: response.call?.name, toolArguments: response.call === undefined ? undefined : JSON.stringify(response.call.args) });
@@ -102,7 +98,7 @@ if (!browserInstall && process.env.ACN_WEB_SEED_CLAIM !== 'false') {
   catch (error) { if (error.code !== 'EEXIST') throw error; }
 }
 const patches = [
-  ...browserInstall ? [] : [{ id: 'acn-knowledge', config: { agentId, home, ...team, llm: local ? {} : { provider: providerId, model: modelId }, dream: { minChangedClaims: 1000, evidenceCalibration: process.env.ACN_WEB_EVIDENCE_CALIBRATION === 'true' }, formation: { finalizeIdleMinutes: 0, finalizeOnDispose: false }, memory: { review: { enabled: process.env.ACN_WEB_DISABLE_MEMORY_REVIEW !== 'true', intervalTurns: 2 } } } }],
+  ...browserInstall ? [] : [{ id: 'acn-knowledge', config: { agentId, home, ...team, llm: local ? {} : { provider: providerId, model: modelId }, dream: { minChangedClaims: 1000, evidenceCalibration: process.env.ACN_WEB_EVIDENCE_CALIBRATION === 'true' }, formation: { finalizeIdleMinutes: 0, finalizeOnDispose: false } } }],
   { id: 'session-title-llm', disabled: true }, { id: 'tools', config: { mode: 'native' } },
   { id: 'workspace-controller', config: { documentsDirectory: join(root, 'documents') } },
   ...local ? [{ id: 'llm-deepseek', config: { apiKeyEnv: 'ACN_ACCEPTANCE_MODEL', baseURL: `http://127.0.0.1:${address.port}/v1`, thinking: 'disabled', models: [{ id: 'example-model', name: 'Acceptance model', contextWindow: 128000, maxOutputTokens: 8192 }] } }] : [{ id: 'llm-pi-ai', config: { providers: { [providerId]: provider } } }],

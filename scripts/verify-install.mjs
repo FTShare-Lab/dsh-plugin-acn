@@ -14,15 +14,14 @@ const entries = parse(await readFile(configPath, 'utf8'), {
 });
 const group = entries.find((entry) => entry.id === 'acn');
 assert.equal(group?.isolate?.acnKnowledge, true);
-assert.equal(group?.isolate?.acnMemory, true);
-assert.deepEqual(group.config.map((entry) => entry.id), ['acn-configuration', 'acn-knowledge', 'acn-prompt', 'acn-tools', 'acn-formation', 'acn-inbox', 'acn-dream', 'acn-memory', 'acn-commands']);
+assert.equal(group?.isolate?.acnMemory, undefined);
+assert.deepEqual(group.config.map((entry) => entry.id), ['acn-configuration', 'acn-knowledge', 'acn-prompt', 'acn-tools', 'acn-formation', 'acn-inbox', 'acn-dream', 'acn-commands']);
 assert.equal(group.config[0].name, '@ftai/dsh-plugin-acn');
 assert.equal(group.config[1].name, '@ftai/dsh-plugin-acn/knowledge');
 const { stdout } = await runCommand('tar', ['-tf', tarballPath]);
 const files = stdout.trim().split('\n');
 for (const required of ['README.md', 'README_EN.md', 'CHANGELOG.md', 'docs/index.md', 'docs/config.md', 'docs/user_guide.md', 'docs/command-reference.md', 'docs/development.md', 'docs/architecture.md', 'docs/acn-compat.md', 'docs/dsh-compat.md', 'docs/outstanding-issues.md', 'docs/assets/install-package.png', 'docs/assets/upstream-settings.png', 'docs/assets/upstream-team.png', 'docs/assets/session-upstream.png', 'docs/assets/personal-configuration.png', 'docs/assets/knowledge-model.png', 'docs/assets/knowledge-view.png', 'docs/assets/activity-view.png']) assert.ok(files.includes(`package/${required}`), `Missing document or image: ${required}`);
 assert.ok(!files.some((file) => /^package\/docs\/(?:plan\/|validation\/|acceptance\.md$|release\.md$)/.test(file)));
-for (const required of ['lib/memory.js', 'lib/plugins/memory.js', 'lib/types/memory/index.d.ts', 'lib/types/plugins/memory.d.ts', 'prompts/what_is_memory.j2', 'prompts/memory.j2', 'prompts/memory_review_system.j2', 'prompts/memory_review.j2']) assert.ok(files.includes(`package/${required}`), `Missing Memory package file: ${required}`);
 for (const required of ['lib/dream.js', 'lib/plugins/dream.js', 'lib/types/dream/index.d.ts', 'lib/types/plugins/dream.d.ts', 'lib/types/dream/evidence-store.d.ts', 'lib/types/dsh-adapter/dream-evidence.d.ts', 'prompts/claim_dream.j2', 'prompts/dream_compaction.j2', 'prompts/dream_evidence.j2']) assert.ok(files.includes(`package/${required}`), `Missing Dream package file: ${required}`);
 for (const required of ['lib/index.js', 'lib/client.js', 'lib/types/plugins/client.d.ts', 'lib/plugins/inbox.js', 'lib/inbox.js', 'lib/team.js', 'lib/upload.js', 'lib/types/plugins/inbox.d.ts', 'lib/types/inbox/index.d.ts', 'lib/types/team/index.d.ts', 'lib/types/upload/index.d.ts', 'prompts/inbox_policy_update_internalize.j2', 'prompts/inbox_claim_attribute_update_internalize.j2', 'lib/plugins/knowledge.js', 'lib/plugins/prompt.js', 'lib/plugins/tools.js', 'lib/plugins/commands.js', 'lib/plugins/formation.js', 'lib/formation.js', 'lib/types/plugins/formation.d.ts', 'lib/types/formation/index.d.ts', 'lib/protocol.js', 'lib/store.js', 'lib/types/index.d.ts', 'lib/types/plugins/knowledge.d.ts', 'lib/types/plugins/tools.d.ts', 'lib/types/plugins/prompt.d.ts', 'lib/types/plugins/commands.d.ts', 'lib/types/protocol/index.d.ts', 'lib/types/store/index.d.ts', 'prompts/knowledge.j2', 'prompts/session_recap.j2', 'prompts/what_is_claim.j2', 'prompts/what_is_dispute.j2', 'prompts/what_is_policy.j2', 'cordis.patch.yml', 'LICENSE-MIT', 'LICENSE-APACHE']) {
   assert.ok(files.includes(`package/${required}`), `Missing package file: ${required}`);
@@ -37,7 +36,7 @@ for (const part of ['', ...group.config.filter((entry) => entry.name.startsWith(
     assert.ok(locale.meta.title.trim()); assert.ok(locale.meta.description.trim());
     if (part === '') {
       assert.equal(locale.meta.title, language === 'zh' ? 'ACN记忆框架' : 'agent-claim-network');
-      if (language === 'zh') assert.equal(locale.meta.description, '从agent工作轨迹中沉淀可复用的知识与记忆，让知识经验在团队中流动');
+      if (language === 'zh') assert.equal(locale.meta.description, '从agent工作轨迹中沉淀可复用的知识，让知识经验在团队中流动');
       // 详细介绍按包根解析，必须在安装后的包中仍可找到正文与相对图片。
       assert.equal(locale.meta.detail, language === 'zh' ? 'README.md' : 'README_EN.md');
       const packageRoot = dirname(installed.resolve('@ftai/dsh-plugin-acn/package.json'));
@@ -72,8 +71,8 @@ const dream = await import(pathToFileURL(installed.resolve('@ftai/dsh-plugin-acn
 assert.equal(typeof dream.DreamStore, 'function');
 assert.equal(typeof dream.AcnDream, 'function');
 assert.equal(typeof dream.EvidenceStore, 'function');
-const memory = await import(pathToFileURL(installed.resolve('@ftai/dsh-plugin-acn/memory-core')).href);
-assert.equal(typeof memory.AcnMemory, 'function'); assert.equal(typeof memory.MemoryReview, 'function');
+assert.ok(!files.some((file) => /(?:^|\/)(?:memory(?:-core)?(?:\/|\.)|memory_review|what_is_memory)/.test(file)));
+assert.throws(() => installed.resolve('@ftai/dsh-plugin-acn/memory'));
 // 宿主 peer 由真实 Loader 共享；普通 Node 导入不能代表插件的运行环境。
 const root = process.cwd();
 const host = join(root, 'tests', 'plugin', 'fixtures', 'host.ts');
@@ -93,13 +92,6 @@ const calibrated = await runLoaderSmoke({
   tsconfigPath: join(root, 'tsconfig.json'), mode: 'lib', env: { DSH_TELEMETRY_DISABLED: 'true' },
 });
 assert.ok(calibrated.stdout.includes('ACN_SMOKE_OK:calibrated'));
-const privateMemory = await runLoaderSmoke({
-  label: 'installed-acn-memory', tempDirPrefix: 'acn-installed-memory-',
-  binScript: host, libBinScript: host, configPath: patch,
-  binArgs: [patch, 'memory', pathToFileURL(join(process.env.DSH_HOME, 'profiles', 'acn-smoke', 'package.json')).href],
-  tsconfigPath: join(root, 'tsconfig.json'), mode: 'lib', env: { DSH_TELEMETRY_DISABLED: 'true' },
-});
-assert.ok(privateMemory.stdout.includes('ACN_SMOKE_OK:memory'));
 // 只修改临时解包副本，验证实际 CLI 的宿主引擎安装门禁。
 const taskTemp = join(process.env.DSH_HOME, '..', 'incompatible');
 await mkdir(taskTemp, { recursive: true });

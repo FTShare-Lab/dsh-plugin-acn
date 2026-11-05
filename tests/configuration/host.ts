@@ -19,6 +19,8 @@ import type { LlmModelInfo, StreamChunk } from '@deepseek-ai/dsh-llm';
 import type { PatchOptions } from '@deepseek-ai/cordis-plugin-include';
 import type {} from '../../src/dsh-adapter/configuration-service.js';
 import type { ConfigurationValues } from '../../src/configuration.js';
+import { ClaimStore } from '@ftai/dsh-plugin-acn/store';
+import { ClaimSchema } from '@ftai/dsh-plugin-acn/protocol';
 import type { AgentId } from '../../src/protocol/ids.js';
 // fixture 只构造静态合法 ID；类型导入不让宿主执行器在运行时依赖源码 JS 或预生成声明。
 const fixtureAgentId = (value: string) => value as AgentId;
@@ -35,7 +37,7 @@ const base = join(root, 'cordis.yml'); const patch = join(root, 'cordis.patch.ym
 await writeFile(base, '[]\n');
 await writeFile(packagePath, JSON.stringify({ private: true, dsh: { profile: { bundles: [] } } }));
 const patches = loadOverlayPatches('configuration-test', fileURLToPath(new URL('../../cordis.patch.yml', import.meta.url)));
-patches.push({ id: 'acn-knowledge', config: { agentId: '', catalog: { maxClaims: 37 }, dream: { evidenceCalibration: true, enabled: false }, formation: { finalizeOnDispose: false, finalizeIdleMinutes: 0 }, memory: { review: { enabled: false } } } });
+patches.push({ id: 'acn-knowledge', config: { agentId: '', catalog: { maxClaims: 37 }, dream: { evidenceCalibration: true, enabled: false }, formation: { finalizeOnDispose: false, finalizeIdleMinutes: 0 } } });
 await writeFile(patch, '# Keep the profile comment.\n' + stringify(patches));
 const ctx = await boot('configuration-test', base, patches, async (context) => {
   context.provide('profileContext', { name: 'configuration-test', dir: root, patchPath: patch, installAnchor: fileURLToPath(new URL('../../package.json', import.meta.url)), cwd: root, home: join(root, 'home'), startedBundles: [], overlays: [], telemetryDisabledEnv: 'true' });
@@ -100,20 +102,28 @@ try {
   }
 
   const create = (id: string) => ctx.agents.create({ sessionId: SessionId(id), agentOptions: { provider: 'example', model: 'example-model' } });
-  const memory = (agent: Agent, entry: string) => ctx.tools.execute({ name: 'memory', arguments: { ops: [{ op: 'add', target: 'memory', entry }] }, agent, callId: ToolCallId(crypto.randomUUID()), signal: new AbortController().signal });
-  const sections = async (agent: Agent) => (await ctx.systemPrompt.assemble(assembleContextFor(agent))).sections.filter((section) => section.name === 'acn:memory' || section.name === 'acn:claim-catalog');
+  const claim = async (agent: Agent, name: string) => {
+    const result = await ctx.tools.execute({ name: 'claim', arguments: { action: 'list' }, agent, callId: ToolCallId(crypto.randomUUID()), signal: new AbortController().signal });
+    if (!result.isError) {
+      const pool = [...ctx.loader.entries()].find((item) => item.options.id === 'acn-knowledge')?.fiber?.ctx.acnRuntime; assert.ok(pool);
+      const knowledge = await pool.knowledge(agent.session.header);
+      await new ClaimStore(knowledge.context()).write(ClaimSchema.parse({ id: 'claim_00000001', holder: knowledge.context().agentId, name, statement: 'Read requests use a bounded retry budget.', scope: 'example/retry', confidence: 'medium', status: 'active', created_at: '2026-01-01T00:00:00Z', source_claim_ids: [], evidence_summary: 'Checked the example contract.' }));
+    }
+    return result;
+  };
+  const sections = async (agent: Agent) => (await ctx.systemPrompt.assemble(assembleContextFor(agent))).sections.filter((section) => section.name === 'acn:claim-catalog');
   const turn = async (agent: Agent) => { agent.followup(createUserMessage({ content: [{ type: 'text', text: 'Check the current context.' }], source: { kind: 'user' } })); await agent.whenIdle(); };
   const first = await create('original-session');
-  assert.equal((await memory(first.agent, 'FROZEN_PRIVATE_MARKER')).isError, false);
+  assert.equal((await claim(first.agent, 'FROZEN_CLAIM_MARKER')).isError, false);
   await first.dispose();
   const live = await create('live-session');
   const frozen = await sections(live.agent);
-  assert.match(JSON.stringify(frozen), /FROZEN_PRIVATE_MARKER/);
-  assert.equal((await memory(live.agent, 'LATER_PRIVATE_MARKER')).isError, false);
+  assert.match(JSON.stringify(frozen), /FROZEN_CLAIM_MARKER/);
+  assert.equal((await claim(live.agent, 'LATER_CLAIM_MARKER')).isError, false);
   saved = await service.save({ revision: saved.snapshot.revision, values: { ...saved.snapshot.values, timeoutMs: 12345 } });
   assert.ok(saved.ok, JSON.stringify(saved));
-  assert.deepEqual(await sections(live.agent), frozen, 'Same-store reload preserves frozen Memory and catalog.');
-  assert.doesNotMatch(JSON.stringify(await sections(live.agent)), /LATER_PRIVATE_MARKER/);
+  assert.deepEqual(await sections(live.agent), frozen, 'Same-store reload preserves frozen catalog.');
+  assert.doesNotMatch(JSON.stringify(await sections(live.agent)), /LATER_CLAIM_MARKER/);
   await turn(live.agent);
   const beforeBusy = await readFile(patch, 'utf8');
   let release: (() => void) | undefined;
@@ -130,20 +140,20 @@ try {
   assert.ok(results.some((result) => !result.ok && result.code === 'conflict'));
   assert.equal(await readFile(retained, 'utf8'), 'old knowledge is retained');
 
-  assert.equal((await memory(live.agent, 'WRONG_IDENTITY_MARKER')).isError, true);
+  assert.equal((await claim(live.agent, 'WRONG_IDENTITY_MARKER')).isError, true);
   assert.equal((await ctx.commands.execute(live.agent, '/acn-finalize', [], new AbortController().signal))?.result.kind, 'error');
-  assert.doesNotMatch(JSON.stringify(await sections(live.agent)), /FROZEN_PRIVATE_MARKER|LATER_PRIVATE_MARKER/);
+  assert.doesNotMatch(JSON.stringify(await sections(live.agent)), /FROZEN_CLAIM_MARKER|LATER_CLAIM_MARKER/);
   const previousCalls = model.calls; await turn(live.agent); assert.equal(model.calls, previousCalls, 'Stale session cannot reach the model.');
   await live.dispose();
   const resumed = await ctx.agents.resume({ resumeSessionId: SessionId('live-session'), agentOptions: { provider: 'example', model: 'example-model' } });
-  assert.equal((await memory(resumed.agent, 'RESUMED_WRONG_MARKER')).isError, true);
+  assert.equal((await claim(resumed.agent, 'RESUMED_WRONG_MARKER')).isError, true);
   await turn(resumed.agent); assert.equal(model.calls, previousCalls);
   const current = await create('current-session');
-  assert.equal((await memory(current.agent, 'CURRENT_IDENTITY_MARKER')).isError, false);
+  assert.equal((await claim(current.agent, 'CURRENT_IDENTITY_MARKER')).isError, false);
   await turn(current.agent); assert.equal(model.calls, previousCalls + 1);
-  assert.doesNotMatch(JSON.stringify(await sections(current.agent)), /FROZEN_PRIVATE_MARKER/);
+  assert.doesNotMatch(JSON.stringify(await sections(current.agent)), /FROZEN_CLAIM_MARKER/);
   const fork = await ctx.agents.create({ sessionId: SessionId('historical-fork'), seed: [], inheritedEventCount: SessionLogOffset(0), meta: { parentSession: resumed.agent.session.id, isSeeded: true }, agentOptions: { provider: 'example', model: 'example-model' } });
-  assert.equal((await memory(fork.agent, 'FORK_WRONG_MARKER')).isError, true);
+  assert.equal((await claim(fork.agent, 'FORK_WRONG_MARKER')).isError, true);
   await fork.dispose(); await resumed.dispose(); await current.dispose();
 
   const beforeExternal = await service.read();
@@ -162,13 +172,13 @@ try {
   assert.deepEqual(await service.save({ revision: beforeIdentityConflict.revision, values: { ...beforeIdentityConflict.values, timeoutMs: 23456 } }), { ok: false, code: 'conflict', fields: [] });
   assert.equal((await service.read()).values.agentId, 'external-agent');
   assert.equal((await service.read()).values.timeoutMs, beforeIdentityConflict.values.timeoutMs, 'Conflicting draft is not applied.');
-  assert.equal((await memory(externalLive.agent, 'EXTERNAL_WRONG_MARKER')).isError, true);
+  assert.equal((await claim(externalLive.agent, 'EXTERNAL_WRONG_MARKER')).isError, true);
   const callsBeforeExternal = model.calls; await turn(externalLive.agent); assert.equal(model.calls, callsBeforeExternal);
   const externalState = entry.options.config as Record<string, unknown>;
   assert.ok(typeof externalState.sessionEpoch === 'number' && externalState.sessionEpoch >= externalLive.agent.session.header.createdAt);
   await externalLive.dispose();
   const externalResume = await ctx.agents.resume({ resumeSessionId: SessionId('external-identity-session'), agentOptions: { provider: 'example', model: 'example-model' } });
-  assert.equal((await memory(externalResume.agent, 'EXTERNAL_RESUME_WRONG_MARKER')).isError, true);
+  assert.equal((await claim(externalResume.agent, 'EXTERNAL_RESUME_WRONG_MARKER')).isError, true);
   await externalResume.dispose();
   const busyConflictSnapshot = await service.read();
   const racing = await create('external-busy-session');
@@ -191,7 +201,7 @@ try {
   assert.equal((await service.read()).values.timeoutMs, busyConflictSnapshot.values.timeoutMs);
   await racing.dispose();
   const racingResume = await ctx.agents.resume({ resumeSessionId: SessionId('external-busy-session'), agentOptions: { provider: 'example', model: 'example-model' } });
-  assert.equal((await memory(racingResume.agent, 'RACING_RESUME_WRONG_MARKER')).isError, true);
+  assert.equal((await claim(racingResume.agent, 'RACING_RESUME_WRONG_MARKER')).isError, true);
   await racingResume.dispose();
   // 原配置升级后，真实 Loader、Remote、会话日志与项目预选必须一起工作。
   let native = await service.read();
@@ -210,7 +220,7 @@ try {
   assert.equal((await service.save({ revision: edited.snapshot.revision, values: beforeLegacy.values })).ok, true);
   const coding = await ctx.agents.create({ sessionId: SessionId('upstream-coding'), meta: { cwd: root }, agentOptions: { provider: 'example', model: 'example-model' } });
   assert.equal((await service.interact({ action: 'session', sessionId: coding.agent.session.id })).session?.key, 'coding');
-  assert.equal((await memory(coding.agent, 'UPSTREAM_CODING_PRIVATE')).isError, false);
+  assert.equal((await claim(coding.agent, 'UPSTREAM_CODING_CLAIM')).isError, false);
   native = await service.read();
   assert.equal((await service.save({ revision: native.revision, values: { ...native.values, upstream: 'review' } })).ok, true);
   assert.equal((await service.interact({ action: 'session', sessionId: coding.agent.session.id })).session?.key, 'coding');
@@ -220,7 +230,7 @@ try {
   const directory = join(root, 'another-project'); await mkdir(directory);
   const review = await ctx.agents.create({ sessionId: SessionId('upstream-review'), meta: { cwd: directory }, agentOptions: { provider: 'example', model: 'example-model' } });
   assert.equal((await service.interact({ action: 'session', sessionId: review.agent.session.id })).session?.key, 'review');
-  assert.ok(!JSON.stringify(await ctx.systemPrompt.assemble(assembleContextFor(review.agent))).includes('UPSTREAM_CODING_PRIVATE'));
+  assert.ok(!JSON.stringify(await ctx.systemPrompt.assemble(assembleContextFor(review.agent))).includes('UPSTREAM_CODING_CLAIM'));
   const callsBeforePreference = model.calls;
   assert.equal((await service.interact({ action: 'select', sessionId: review.agent.session.id, key: 'coding' })).ok, true);
   const projectNext = await ctx.agents.create({ sessionId: SessionId('project-recent-next'), meta: { cwd: directory }, agentOptions: { provider: 'example', model: 'example-model' } });

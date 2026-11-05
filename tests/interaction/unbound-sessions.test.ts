@@ -9,7 +9,6 @@ import { resolveConfig } from '../../src/config.js';
 import { resolveUpstream } from '../../src/upstreams.js';
 import Knowledge from '../../src/plugins/knowledge.js';
 import { AcnKnowledge } from '../../src/knowledge/service.js';
-import { AcnMemory } from '../../src/memory/service.js';
 import { ClaimStore } from '../../src/store/claims.js';
 import { JobQueue } from '../../src/worker/queue.js';
 import { sampleClaim } from '../knowledge-fixtures.js';
@@ -19,7 +18,7 @@ import { teamServer } from '../team/helpers.js';
 
 it.each([false, true])('keeps pre-install history usable without adopting ACN (cold=%s)', async (cold) => {
   const adapter = new ScriptAdapter([textResponse('Earlier work.'), textResponse('Continued ordinary work.')]);
-  const f = await flowHarness(adapter, { configured: false, persistence: true, filesystem: true, formation: true, inbox: true, dream: true, memory: true, config: { dream: { enabled: false }, formation: { idleRecap: false }, memory: { review: { intervalTurns: 1 } } } });
+  const f = await flowHarness(adapter, { configured: false, persistence: true, filesystem: true, formation: true, inbox: true, dream: true, config: { dream: { enabled: false }, formation: { idleRecap: false } } });
   try {
     await f.fibers.knowledge.dispose();
     const original = await f.ctx.agents.create({ sessionId: SessionId('pre-install-work'), agentOptions: { provider: 'mock', model: 'mock' } });
@@ -34,17 +33,16 @@ it.each([false, true])('keeps pre-install history usable without adopting ACN (c
     const selected = resolveUpstream(config, 'coding'); if (selected === undefined) throw new Error('Missing test configuration.');
     const unused = new AcnKnowledge(selected, f.ctx.logger);
     await new ClaimStore(unused.context()).write(sampleClaim({ name: 'UNBOUND_PRIVATE_CLAIM_MARKER' }));
-    await new AcnMemory(unused).apply({ ops: [{ op: 'add', target: 'memory', entry: 'UNBOUND_PRIVATE_MEMORY_MARKER' }] });
     const call = (name: string, args: unknown) => f.ctx.tools.execute({ name, arguments: args, agent, callId: ToolCallId(crypto.randomUUID()), signal: new AbortController().signal });
     expect(await call('read', { file_path: join(workspace, 'notes.txt') })).toMatchObject({ isError: false });
     expect(await call('write', { file_path: join(workspace, 'new.txt'), content: 'Ordinary work remains available.' })).toMatchObject({ isError: false });
     expect(await fs.readFile(join(workspace, 'new.txt'), 'utf8')).toBe('Ordinary work remains available.');
-    expect(await call('read', { file_path: unused.context().paths.memory })).toMatchObject({ isError: true });
-    for (const [name, args] of [['claim', { action: 'list' }], ['memory', { ops: [] }]] as const) expect(await call(name, args)).toMatchObject({ isError: true });
+    expect(await call('read', { file_path: unused.context().paths.claim(sampleClaim().id) })).toMatchObject({ isError: true });
+    for (const [name, args] of [['claim', { action: 'list' }]] as const) expect(await call(name, args)).toMatchObject({ isError: true });
     await turn(agent, 'CONTINUE_WITHOUT_ACN_MARKER');
     expect(adapter.requests, JSON.stringify(agent.session.snapshotEvents().filter((event) => event.type === 'turn/end'))).toHaveLength(2);
-    expect(adapter.requests.at(-1)?.tools?.some((tool) => ['claim', 'memory', 'consult_router'].includes(tool.name))).toBe(false);
-    expect(JSON.stringify(adapter.requests.at(-1))).not.toMatch(/UNBOUND_PRIVATE_(?:CLAIM|MEMORY)_MARKER/);
+    expect(adapter.requests.at(-1)?.tools?.some((tool) => ['claim', 'consult_router'].includes(tool.name))).toBe(false);
+    expect(JSON.stringify(adapter.requests.at(-1))).not.toMatch(/UNBOUND_PRIVATE_CLAIM_MARKER/);
     expect(await new JobQueue(unused.context()).list()).toEqual([]);
     expect(agent.session.snapshotEvents().map(pluginRecordOf).filter((record) => record?.type === 'plugin:acn/team-selection')).toEqual([]);
     await expect(pool.select(agent.session.header, 'coding')).rejects.toMatchObject({ kind: 'bound' });

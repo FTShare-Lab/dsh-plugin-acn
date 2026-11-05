@@ -39,7 +39,7 @@ describe('Windows import paths', () => {
     ['"D:/ACN data/agent-a"', 'D:/ACN data/agent-a'],
     [JSON.stringify(String.raw`D:\ACN data\agent-a`), String.raw`D:\ACN data\agent-a`],
     [JSON.stringify(String.raw`\\server\share data\agent-a`), String.raw`\\server\share data\agent-a`],
-  ])('preserves the import path %s', (input, expected) => { expect(importWords(`--dry-run ${input} --without-memory`, 'win32')).toEqual(['--dry-run', expected, '--without-memory']); });
+  ])('preserves the import path %s', (input, expected) => { expect(importWords(`--dry-run ${input}`, 'win32')).toEqual(['--dry-run', expected]); });
   it.each(['"D:\\ACN', '"D:\\ACN"suffix'])('rejects invalid quoting in %s', (input) => { expect(() => importWords(input, 'win32')).toThrow(); });
   it('keeps the existing POSIX lexer and Claim text escaping', () => {
     const input = String.raw`--dry-run /tmp/old\ data/agent-a`;

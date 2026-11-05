@@ -33,16 +33,6 @@ export class AgentPaths {
   get knowledgeLock(): string { return join(this.root, 'knowledge_apply.lock'); }
   get claimEditPending(): string { return join(this.root, 'claim_edit_pending.yaml'); }
   get reportedSets(): string { return join(this.disputes, 'reported_claim_sets.yaml'); }
-  get memories(): string { return join(this.root, 'memories'); }
-  get memory(): string { return join(this.memories, 'MEMORY.md'); }
-  get user(): string { return join(this.memories, 'USER.md'); }
-  get memoryPending(): string { return join(this.memories, 'pending.yaml'); }
-  memoryReceipt(id: string): string { return join(this.memories, 'receipts', `${safeKey(id)}.yaml`); }
-  get memoryWindows(): string { return join(this.memories, 'windows'); }
-  memoryWindow(id: string): string { return join(this.memoryWindows, `${safeKey(id)}.yaml`); }
-  get memoryRequests(): string { return join(this.memories, 'requests'); }
-  memoryRequest(id: string): string { return join(this.memoryRequests, `${safeKey(id)}.yaml`); }
-  memoryReview(id: string): string { return join(this.memories, 'reviews', `${safeKey(id)}.yaml`); }
   get jobs(): string { return join(this.root, 'jobs'); }
   get workerLock(): string { return join(this.jobs, 'worker.lock'); }
   get jobQueueLock(): string { return join(this.jobs, 'queue.lock'); }

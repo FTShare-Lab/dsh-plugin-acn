@@ -134,7 +134,7 @@ function SessionControls({ api, c, block, openSettings, openKnowledge, sessionId
   const trouble = Boolean(loadError || view?.phase === 'failed' || view?.phase === 'blocked');
   const syncing = view?.phase === 'syncing';
   const name = view?.phase === 'unbound' ? c('未启用', 'Not enabled') : view?.name || c('选择工作配置', 'Choose configuration');
-  const title = c('ACN 记忆与知识', 'ACN memory and knowledge');
+  const title = c('ACN 知识', 'ACN knowledge');
   const label = title + ' · ' + name;
   const settingsLabel = c('ACN 插件设置', 'ACN settings');
   const finishMenu = (work: () => void) => { anchor.current?.focus(); close(); work(); };

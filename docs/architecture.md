@@ -1,6 +1,6 @@
 # 当前架构
 
-`acn-knowledge` 是唯一配置承载行，发布 `acnKnowledge` 领域服务和 `acnRuntime` 连接池。八个领域组件隔离 `acnRuntime` / `acnKnowledge` / `acnFormation` / `acnInbox` / `acnDream` / `acnMemory`，其他七行注册工具、提示词、后台处理器和命令。未配置身份时只提供状态命令。第九行 `acn-configuration` 使用包根入口，独立承载插件配置 Remote，避免知识重载中断保存请求。
+`acn-knowledge` 是唯一配置承载行，发布 `acnKnowledge` 领域服务和 `acnRuntime` 连接池。七个领域组件隔离 `acnRuntime` / `acnKnowledge` / `acnFormation` / `acnInbox` / `acnDream`，其他六行注册工具、提示词、后台处理器和命令。未配置身份时只提供状态命令。第八行 `acn-configuration` 使用包根入口，独立承载插件配置 Remote，避免知识重载中断保存请求。
 
 | 模块 | 当前职责 |
 | --- | --- |
@@ -22,13 +22,12 @@
 | `team/` | 鉴权信封、代理、超时/重试、严格响应解码、连接状态与警告去重 |
 | `inbox/` | pull/ACK、同类消息批处理、仲裁和引用校验、撤回、批次 effect journal |
 | `dream/` | 调度、候选、草稿硬校验、逐 Claim 语义复核、逐组提交、依赖重绑与报告 |
-| `memory/` | 双文件纯操作、事务入口、冻结快照、私有 review 窗口 / outbox / checkpoint |
 | `upload/` | 精确版本投递、整合依赖递归就绪、Dispute 集合去重、事件与空闲补传 |
 | `llm/structured.ts` | schema 提示、结构 / 传输重试、取消与无正文审计 |
 | `llm/response.ts` | 识别显式推理结束边界后的完整 JSON 对象，之后仍执行全部结构与领域校验 |
 | `plugins/`、`dsh-adapter/` | 宿主生命周期、严格模型 schema、工具策略与注册 |
 
-插件设置界面注册在宿主 `settings.section`，会话工具栏使用 `conversation.input.left`。`plugin:acn/session-eligibility` 记录插件启用后创建的空白会话资格；`plugin:acn/team-selection` 记录连接 ID、身份摘要及首次同步完成标记。已有消息或模型请求即锁定选择，未绑定历史只放行普通聊天，不放行知识、Memory 或后台会话投影；已有绑定失效仍受身份门禁保护。输入框反馈与后端准入分别检查；团队同步失败降级为本地工作。历史只读使用 `sessionController.inspect`，显式操作才恢复 Agent；恢复未绑定历史不会拉取收件。新建无 seed 的派生会话继承已记录的父选择，不能回落到个人空间；子代理继续只读 Claim，不能访问私有 Memory。
+插件设置界面注册在宿主 `settings.section`，会话工具栏使用 `conversation.input.left`。`plugin:acn/session-eligibility` 记录插件启用后创建的空白会话资格；`plugin:acn/team-selection` 记录连接 ID、身份摘要及首次同步完成标记。已有消息或模型请求即锁定选择，未绑定历史只放行普通聊天，不放行知识或后台会话投影；已有绑定失效仍受身份门禁保护。输入框反馈与后端准入分别检查；团队同步失败降级为本地工作。历史只读使用 `sessionController.inspect`，显式操作才恢复 Agent；恢复未绑定历史不会拉取收件。新建无 seed 的派生会话继承已记录的父选择，不能回落到个人空间；子代理继续只读 Claim。
 
 连接池按 upstream 与运行配置按需创建领域对象。会话绑定先于知识读取落盘，运行配置缓存跨插件重载保留，真正恢复新实例时读取同一 upstream 的当前连接。相同存储路径的后台 worker 和上传调度器在新实例实际启动时交接，旧前台实例继续使用原客户端。重载先恢复最近实际激活的后台所有者，持久队列由该消费者处理；仅保存配置不会激活另一个团队。所有组件遵循各自行启用状态；禁用、重载时取消未固定任务并等待本地固定提交结束。个人存储和旧版全局团队目录不搬迁。普通文件工具保护整个配置数据根，包括尚未启动、停用及删除配置后仍保留的连接数据。
 
@@ -48,7 +47,7 @@
 
 模型工具先经 `tools/pre-execute`，子代理写入还受不可撤销的最终 guard 约束。身份来自执行器持有的 SessionHeader，不接受模型参数提供的身份。工具返回规范 JSON，文本展示由 renderer 派生。
 
-身份摘要通过宿主公开的 `appendPluginRecord` 写入 `plugin:acn/session-binding`，随会话持久化和 fork 继承；摘要只绑定本地知识根，不含私有正文。新建无继承日志的子会话须有已验证父身份，历史无绑定记录默认拒绝。Dream 和 Memory 的领域状态仍使用插件自有持久记录。
+身份摘要通过宿主公开的 `appendPluginRecord` 写入 `plugin:acn/session-binding`，随会话持久化和 fork 继承；摘要只绑定本地知识根，不含私有正文。新建无继承日志的子会话须有已验证父身份，历史无绑定记录默认拒绝。Dream 的领域状态仍使用插件自有持久记录。
 
 
 `acn-formation` 增量消费公开 session/event，投影与状态共用 session 锁，先同步正文再推进 lastSeenSeq。未处理行超过主文件 50MiB 时写入 `transcript-pending/`，先持久分片再替换主文件，最后清理副本；恢复核对重复 seq 的完整正文，冲突即拒绝。模型输入为未处理区间、全部 active/stale 本地 Claim 和形成说明。系统内容、私有记忆及 provider replay 不会进入输入。
@@ -83,7 +82,7 @@ Policy 撤回区分本地状态变更与补传集合。所有直接依赖都进�
 
 ## Dream 的自主整理与恢复
 
-`acn-dream` 激活、agent/created 及每四小时检查资格；上次成功满 24 小时、至少五条不同的自有 Claim 版本变化才自动排队。手动运行跳过两个门槛，仍须有自有非废弃 Claim。失败、停止和部分提交不更新成功冷却，未完成候选沿原任务恢复。单 worker 按 Finalize、Recap、Inbox、Memory review、Dream 的优先级处理，Dream 在 prepared 前让位，prepared 后完成当前组再响应停止或卸载。
+`acn-dream` 激活、agent/created 及每四小时检查资格；上次成功满 24 小时、至少五条不同的自有 Claim 版本变化才自动排队。手动运行跳过两个门槛，仍须有自有非废弃 Claim。失败、停止和部分提交不更新成功冷却，未完成候选沿原任务恢复。单 worker 按 Finalize、Recap、Inbox、Dream 的优先级处理，Dream 在 prepared 前让位，prepared 后完成当前组再响应停止或卸载。
 
 队列领取、入队时抢占、跨进程监控和 Dream 阶段边界共用 runnableJob 条件：queued、未暂停、已注册处理器、nextRunAt 已到期。处理器禁用或退避中的高优先级任务仍持久保留，但不会导致 Dream 反复让位重领；重新启用或到期后才参与调度。
 
@@ -109,25 +108,15 @@ Policy 撤回区分本地状态变更与补传集合。所有直接依赖都进�
 
 文件策略同时核对 lexical / canonical 根、逐层拒绝符号链接，打开时使用 no-follow/non-blocking，前后校验普通文件、inode、链接数、长度和修改时间。版本包含完整文件原始 SHA-256 和字节数，实际返回页保留完整行。glob/grep 有累计遍历和读取额度，只是定位结果；唯一独立证据是绑定明确 claim_ids 的 file_read。工具不暴露 shell、通用代码、网络、团队或私有 Memory 能力。
 
-## 私有 Memory
+## 知识提炼与领域数据保护
 
-`acn-memory` 独立发布 `acnMemory`、批量工具、`acn:memory`（order 720）及 review handler。`MemorySessions` 在主 agent 创建时预读双文件并合并保存到版本化 session state；同步提示词只访问缓存，恢复、压缩和 fork 使用原快照，clear 刷新。所有子代理均跳过快照和 review，最终工具 guard 拒绝其 Memory 调用。
+知识提炼过滤名称包含 `memory` 的工具调用及其结果（不区分大小写），覆盖原生调用和程序桥子调用。`run_code` 外层代码和回显不采集，只保留实际公共子调用。Recap / Finalize 明确排除私有记忆指令、记忆文件更新、Memory 工具结果及用户画像、偏好和私密信息作为 Claim / Dispute 的依据。
 
-`MemoryFileStore` 复用双文件锁和原子写。事务顺序为重读 → 纯操作/扫描/容量校验 → pending（before、after、result、identity）→ MEMORY → USER → receipt → 删除 pending。所有读取先恢复 pending，普通文件要求 UTF-8、单链接并 no-follow 打开。恢复只接受每个文件仍等于 before 或 after；第三版本使整批未完成部分跳过。完成回执优先于当前文件比较，避免回执已写但 pending 未删时误覆盖后来的用户编辑。该协议是独立目录内的插件事务，不是跨两个文件的 OS 原子替换。
-
-review 自有私有窗口，不从可能被 Recap/Finalize 回收的 transcript 取数据。成功人工 turn 的计数、裁剪后的最近 N turn 与 outbox 同次原子写入；outbox 再写不可变 request、入队引用并删除确认。`memory_review` 按请求跨所有队列状态去重，崩溃后的重复派发不会重复复核。模型只获得自身请求和最新私有快照；输出经严格 schema 与纯操作校验后先写固定 checkpoint，再在双文件锁内进行原文哈希 CAS。若事务回执已存在，先按 identity 返回结果，再处理 CAS。prepared 恢复不再请求模型。
-
-模型调用期间只持 worker 生命周期租约，不持 Memory、窗口、session 或队列数据锁。卸载取消未 prepared 调用，任务回到 queued；已 prepared 的本地应用收敛后再卸载。持久任务和无正文调用审计不保存 Memory / USER 内容，私有正文仅位于双文件、冻结 state、私有 request/checkpoint/receipt。普通宿主会话日志仍包含用户可见 Memory 工具调用及结果。
-
-形成投影过滤 native Memory 调用及结果；`run_code` 外层代码和回显也被过滤，通过 `tool/ptc-dispatch*` 只保留实际公共子工具调用/正文及来源 ID。Inbox、Dream、Router 和 Upload 的领域输入保持原有公共 DTO。它们不会读取 Memory 文件；模型在普通回复中复述的文字没有语义级脱敏保证。
-
-路径保护属于知识插件，使用可选 fs/workingDirectory 注入，因而不随 Memory 行禁用撤销。由于基线缺少读取前事件，已知文件工具在异步 pre-execute 中检查 canonical containment、普通文件链接数及递归搜索硬链接，再由单调最终 guard 校验本次授权、冻结参数和实时 cwd。ask 决策也先验证路径，审批后复查 cwd；外层策略短路无法绕过最终 guard。`fs/write-intent` / `fs/edit-intent` 额外保护 provider 写入意图。范围及非沙箱限制见使用说明。
-
-计划、change_basis、SemanticReview 与 SelfReview 分别核对证据的存在、逐 Claim 归属、新 evidence_summary、原始置信度和实际原文引用。仅确认连续行号和页范围完全一致时去掉显示前缀；错误引用反馈聚合位置并限制源预览。Validation 哈希含版本回执。知识提交从受限清单重新装载证据、校验原始快照，在 prepared 与每个未完成组恢复时核对文件当前版本；不接受模型自造的回执。过期时保留已有精确目标、跳过剩余写入；I/O 故障阻止领取其他知识任务。已经完成的组不因材料后来变化被撤销。
+普通文件工具不能绕过领域接口读写 ACN 数据。知识插件检查实际路径、目录包含关系和硬链接，最终门禁复核工具参数与工作目录；写入与编辑意图沿用同一目录边界。
 
 ## 只读迁移
 
-`commands/import.ts` 在目标写入之前验证源路径、UTF-8、DTO、归属和私有安全/容量，再持知识锁逐文件发布。`writeTextAtomicIfAbsent` 复用原子写的临时文件与 fsync，以独占硬链接发布完整目标，已有路径不覆盖；源目录从不加锁或写入。Memory 沿知识锁到双文件锁的顺序，复用 `MemoryFileStore` 的 pending / receipt 恢复边界。导入没有独立后台任务或网络调用；进程中断后用户重试补齐缺失文件，不承诺整批原子可见。
+`commands/import.ts` 在目标写入之前验证源路径、UTF-8、DTO、归属，再持知识锁逐文件发布。`writeTextAtomicIfAbsent` 复用原子写的临时文件与 fsync，以独占硬链接发布完整目标，已有路径不覆盖；源目录从不加锁或写入。导入没有独立后台任务或网络调用；进程中断后用户重试补齐缺失文件，不承诺整批原子可见。
 
 草稿协议中，`operation.reason` 只作为无 changes、无独立 change_basis 的质量废弃简写，不是通用备注；所有其他依据使用 change_basis。JSON schema 字段说明与错误反馈给出具体操作 ID / 类别。整合时保留指向将废弃输入的既有来源，仅免除合回存续 ID 自身的自引用。
 

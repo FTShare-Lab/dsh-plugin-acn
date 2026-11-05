@@ -2,30 +2,6 @@
   "acn_version": "0.3.3",
   "fixtures": [
     {
-      "kind": "memory-ops",
-      "name": "memory-ops"
-    },
-    {
-      "kind": "memory-snapshot",
-      "name": "memory-snapshot"
-    },
-    {
-      "kind": "memory-snapshot",
-      "name": "memory-snapshot-empty"
-    },
-    {
-      "kind": "memory-usage",
-      "name": "memory-usage"
-    },
-    {
-      "kind": "memory-report",
-      "name": "memory-report"
-    },
-    {
-      "kind": "memory-report",
-      "name": "memory-report-legacy"
-    },
-    {
       "kind": "claim",
       "name": "claim-seconds",
       "revision": "sha256-v1:086cd40e45af96b808773a45a85dabc8e6a854d8cbd15482042cf781f0b579b3"
