@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import type { StoreLogger } from './context.js';
 import { hasCode, StoreError } from './errors.js';
+import { renameFile } from './rename.js';
 
 async function syncDirectory(path: string, logger: StoreLogger): Promise<void> {
   try {
@@ -38,7 +39,7 @@ async function publishText(path: string, content: string, logger: StoreLogger, e
       try { await fs.link(temporary, path); }
       catch (error) { if (!hasCode(error, 'EEXIST')) throw error; await fs.unlink(temporary); return false; }
       await fs.unlink(temporary);
-    } else await fs.rename(temporary, path);
+    } else await renameFile(temporary, path);
     await syncDirectory(dirname(path), logger);
     return true;
   } catch (error) {

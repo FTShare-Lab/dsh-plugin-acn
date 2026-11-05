@@ -11,6 +11,7 @@ import { KnowledgeReference } from './KnowledgeReference.js';
 import { knowledgeDate, knowledgeStatus } from './knowledge-labels.js';
 import { KnowledgeSources } from './SourceSessionLink.js';
 import { KnowledgeDetail } from './KnowledgeDetail.js';
+import { SettingsToast } from './SettingsToast.js';
 export function KnowledgePanel({ api, initialKey, initialTab = 'knowledge', showHeading = false, c, openSource, openSettings, openComponents }: { api: InteractionApi; initialKey: string; initialTab?: 'knowledge' | 'activity'; showHeading?: boolean; c: Copy; openSource?: (id: string) => void; openSettings?: (() => void) | undefined; openComponents?: (() => void) | undefined }) {
   const [key, setKey] = useState(initialKey); const [choices, setChoices] = useState<{ key: string; name: string }[]>([]);
   const [tab, setTab] = useState<'knowledge' | 'activity'>(initialTab);
@@ -21,6 +22,7 @@ export function KnowledgePanel({ api, initialKey, initialTab = 'knowledge', show
   const [settingsHint, setSettingsHint] = useState(false);
   const backgroundRead = useRef(false);
   const [message, setMessage] = useState(''); const [readError, setReadError] = useState('');
+  const [notice, setNotice] = useState<{ id: number; text: string }>(); const noticeSequence = useRef(0);
   const [acting, setActing] = useState(false); const actionController = useRef<AbortController>();
   useEffect(() => () => { actionController.current?.abort(); }, []);
   const [busy, setBusy] = useState(false); const [refresh, setRefresh] = useState(0);
@@ -46,7 +48,9 @@ export function KnowledgePanel({ api, initialKey, initialTab = 'knowledge', show
     try {
       const result = await api.interact(request, controller.signal);
       if (controller.signal.aborted) return;
-      setMessage(displayMessage(result.message, c, result.messageInfo));
+      const text = displayMessage(result.message, c, result.messageInfo);
+      if (result.ok) setNotice(text ? { id: ++noticeSequence.current, text } : undefined);
+      else setMessage(text);
       setSettingsHint(!result.ok && ['connection', 'identity', 'route', 'retry_disabled', 'select_identity'].includes((result.messageInfo ?? messageInfo(result.message)).code.replace(/^task\./, '')));
       if (result.ok) setRefresh((value) => value + 1);
     } catch { if (!controller.signal.aborted) setMessage(c('无法确认操作结果，请刷新活动。', 'The operation result is unknown. Refresh Activity.')); }
@@ -63,6 +67,7 @@ export function KnowledgePanel({ api, initialKey, initialTab = 'knowledge', show
   const statuses = kind === 'claim' ? ['active', 'stale', 'deprecated'] : kind === 'dispute' ? ['open', 'resolved'] : [];
   const selectKind = (next: typeof kind) => { setKind(next); setStatus(''); setDelivery('all'); setOffset(0); };
   return <div className="acn-page acn-knowledge-page">
+    {notice && <SettingsToast key={notice.id} text={notice.text} />}
     <div className="acn-knowledge-header">
     {showHeading && <div className="acn-page-heading"><h2>{c('知识与活动', 'Knowledge and activity')}</h2></div>}
     <div className="acn-filterbar"><Select aria-label={c('知识身份', 'Knowledge identity')} disabled={acting} value={key} onChange={(event) => { setKey(event.target.value); setOffset(0); setActivityOffset(0); setMessage(''); setData(undefined); setReferences([]); setExpandedKnowledge(undefined); setExpandedActivities(new Set()); clearActivity(); }}>{choices.map((item) => <option key={item.key} value={item.key}>{item.name}</option>)}</Select><Button disabled={busy || acting} onClick={() => { setRefresh((value) => value + 1); }}>{c('刷新', 'Refresh')}</Button></div>

@@ -20,7 +20,7 @@ pnpm pack --pack-destination .artifacts
 pnpm smoke:install
 ```
 
-`ACN_REPO` 指向参考 ACN 源码仓库，版本与提交基线见[ACN 兼容边界](acn-compat.md)。`test:compat` / `test:contract` 需要 Bash 与 Rust 工具链，在 macOS / Linux 执行；脚本会按需读取参考仓库的 `export_env.sh`。普通单元与集成测试使用临时目录和本地测试模型，不依赖真实模型服务。
+`ACN_REPO` 指向参考 ACN 源码仓库，版本与提交基线见[ACN 兼容边界](acn-compat.md)。`test:compat` / `test:contract` 需要 Bash 与 Rust 工具链，在 macOS 执行；脚本会按需读取参考仓库的 `export_env.sh`。普通单元与集成测试使用临时目录和本地测试模型，不依赖真实模型服务。
 
 | 检查入口 | 验证范围 |
 | --- | --- |
@@ -39,6 +39,25 @@ pnpm smoke:install
 
 `docs/user_guide.md` 是面向用户的完整 Markdown 指南，截图保存在 `docs/assets/`。更新界面或操作流程时，同时更新指南与截图，并运行 `pnpm check:docs`。截图应使用隔离的示例身份和数据，不包含账号、真实目录、团队内网地址或凭据；必要时遮挡后逐张检查。
 
+### 发布到 npm
+
+发布包为 `@ftai/dsh-plugin-acn`，使用有该作用域发布权限的账号。先完成上述检查和桌面验收，确认版本号，再生成并检查同一份安装包：
+
+```sh
+pnpm pack --pack-destination .artifacts/release
+npm publish .artifacts/release/ftai-dsh-plugin-acn-0.1.0.tgz --dry-run --access public --registry=https://registry.npmjs.org/
+```
+
+检查包内包含构建后的 `lib/`、提示词和文档，不含凭据、个人信息或测试日志；使用该包完成隔离安装。`--dry-run` 不上传内容，也不验证账号发布权限。准备完成后登录并发布已检查的包：
+
+```sh
+npm login --registry=https://registry.npmjs.org/
+npm whoami --registry=https://registry.npmjs.org/
+npm publish .artifacts/release/ftai-dsh-plugin-acn-0.1.0.tgz --access public --registry=https://registry.npmjs.org/
+```
+
+按 npm 提示完成账号认证。发布成功后，在全新 DSH profile 按 `@ftai/dsh-plugin-acn@0.1.0` 安装复验，将中英文 README 和使用指南的首选安装方式改为 npm，并为实际发布提交建立版本 tag。后续版本替换命令中的版本号；已发布的同名同版本不能覆盖。仓库、主页及问题反馈地址指向本插件仓库，团队服务部署链接继续指向 ACN 官方仓库。
+
 ## 隔离插件界面调试
 
 以下脚本通过 DSH 的 `web` 模板，在本机浏览器中加载插件界面，用于隔离调试与验收。日常使用请在 DSH 桌面应用中安装插件，无需启动这套调试环境。
@@ -50,7 +69,7 @@ export ACN_ACCEPTANCE_PROVIDER=your-provider
 pnpm smoke:web
 ```
 
-脚本默认使用 `deepseek-v4-flash-api`；可通过 `ACN_ACCEPTANCE_MODEL_ID` 选择该提供商下其他已配置模型。凭据只传给子进程，模型请求会访问所选提供商。脚本创建临时工作区、知识目录和 DSH profile，并输出可在浏览器打开的本地调试地址；日常配置不变。停止脚本会结束其创建的服务。macOS / Linux 调试期间向该脚本进程发送 `SIGUSR1` 可只重启它创建的 DSH，保留测试服务与数据；新调试地址会再次输出。Windows 不支持此信号，需停止脚本后使用相同 `ACN_WEB_HOME` 重新启动。
+脚本默认使用 `deepseek-v4-flash-api`；可通过 `ACN_ACCEPTANCE_MODEL_ID` 选择该提供商下其他已配置模型。凭据只传给子进程，模型请求会访问所选提供商。脚本创建临时工作区、知识目录和 DSH profile，并输出可在浏览器打开的本地调试地址；日常配置不变。停止脚本会结束其创建的服务。macOS 调试期间向该脚本进程发送 `SIGUSR1` 可只重启它创建的 DSH，保留测试服务与数据；新调试地址会再次输出。Windows 不支持此信号，需停止脚本后使用相同 `ACN_WEB_HOME` 重新启动。
 
 从空白环境验证插件安装与设置时使用：
 
@@ -147,11 +166,11 @@ pnpm test:contract
 
 ## CI 配置
 
-工作流使用 GitHub Actions，定义在 `.github/workflows/ci.yml`；仅推送到其他 Git 托管平台不会执行这个工作流。主检查矩阵为 Ubuntu / macOS / Windows × Node 22 / 24，覆盖类型、lint、安全、文档、全量测试、构建、打包和真实安装。测试使用四个文件进程，保留跨进程并发和强制终止恢复测试。
+工作流使用 GitHub Actions，定义在 `.github/workflows/ci.yml`；仅推送到其他 Git 托管平台不会执行这个工作流。主检查矩阵为 Apple silicon macOS / Windows × Node 22 / 24，覆盖类型、lint、安全、文档、全量测试、构建、打包和真实安装。测试使用四个文件进程，保留跨进程并发和强制终止恢复测试。
 
 Windows job 只在临时 runner 开启开发者模式，以执行真实符号链接 fixture；不跳过链接保护测试，也不修改用户电脑设置。本机 Windows 运行这些测试需要开发者模式或创建符号链接的权限；普通插件使用不要求创建链接。新增 `tests/platform/` 覆盖反斜杠主目录、盘符 / UNC、原生导入、保留名称和领域目录访问保护。现有 macOS 权限断言继续保留，Windows 改为检查可读写，不把 mode 位当作 ACL 验收。
 
-基线安装检查使用 DSH rc.2，独立的 Windows 安装 job 另检查 rc.5；不重复运行主矩阵已覆盖的测试集。团队契约单独在 Ubuntu 运行；这不代表 Windows 上直接部署 Rust 服务已被验收。Windows 本地可在 PowerShell 串行执行以下检查（先安装所需版本的 Node、pnpm、DSH CLI 和 tar）：
+基线安装检查使用 DSH rc.2，独立的 Windows 安装 job 另检查 rc.5；不重复运行主矩阵已覆盖的测试集。团队契约在 macOS 运行，验证插件与参考服务的通信；团队服务的部署范围由原 ACN 项目说明。Windows 本地可在 PowerShell 串行执行以下检查（先安装所需版本的 Node、pnpm、DSH CLI 和 tar）：
 
 ```powershell
 pnpm install --frozen-lockfile

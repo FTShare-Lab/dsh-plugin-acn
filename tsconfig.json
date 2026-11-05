@@ -10,6 +10,10 @@
     "verbatimModuleSyntax": true,
     "isolatedModules": true,
     "skipLibCheck": true,
+    "paths": {
+      "@ftai/dsh-plugin-acn/store": ["./src/store/index.ts"],
+      "@ftai/dsh-plugin-acn/protocol": ["./src/protocol/index.ts"]
+    },
     "types": [
       "node"
     ],

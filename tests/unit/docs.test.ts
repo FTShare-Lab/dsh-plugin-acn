@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import { parse } from 'yaml';
 import { describe, expect, it } from 'vitest';
 import { resolveConfig } from '../../src/config.js';
-function yamlBlocks(text: string): unknown[] { return [...text.matchAll(/```yaml\n([\s\S]*?)```/g)].map((match) => parse(match[1] ?? '') as unknown); }
+function yamlBlocks(text: string): unknown[] { return [...text.matchAll(/```yaml\r?\n([\s\S]*?)```/g)].map((match) => parse(match[1] ?? '') as unknown); }
 function knowledgeRows(value: unknown): { config: unknown }[] {
   if (!Array.isArray(value)) return [];
   return value.filter((row: unknown): row is { id: string; config: unknown } => typeof row === 'object' && row !== null && 'id' in row && row.id === 'acn-knowledge' && 'config' in row);

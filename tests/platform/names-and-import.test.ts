@@ -1,4 +1,4 @@
-// 本地 Windows 名称与导入解析独立验证，其他平台沿用原命令与协议 ID。
+// 本地 Windows 名称与导入解析独立验证，macOS 沿用原命令与协议 ID。
 import { describe, expect, it } from 'vitest';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -13,7 +13,7 @@ import { resolveUpstream } from '../../src/upstreams.js';
 describe('local directory names', () => {
   it.each(['con', 'PRN', 'aux', 'nul', 'com1', 'COM9', 'lpt1', 'LPT9', 'nul.txt'])('rejects the Windows device name %s without changing other platforms', (name) => {
     expect(invalidStorageName(name, 'win32')).toBe(true);
-    for (const platform of ['darwin', 'linux'] as const) expect(invalidStorageName(name, platform)).toBe(false);
+    expect(invalidStorageName(name, 'darwin')).toBe(false);
   });
   it.each(['coding', 'agent-a', 'concurrent', 'aux-agent', 'com10', 'lpt0'])('accepts %s on Windows', (name) => { expect(invalidStorageName(name, 'win32')).toBe(false); });
   it('keeps protocol IDs independent of local filesystem validation', () => {
@@ -43,7 +43,7 @@ describe('Windows import paths', () => {
   it.each(['"D:\\ACN', '"D:\\ACN"suffix'])('rejects invalid quoting in %s', (input) => { expect(() => importWords(input, 'win32')).toThrow(); });
   it('keeps the existing POSIX lexer and Claim text escaping', () => {
     const input = String.raw`--dry-run /tmp/old\ data/agent-a`;
-    expect(importWords(input, 'darwin')).toEqual(commandWords(input)); expect(importWords(input, 'linux')).toEqual(['--dry-run', '/tmp/old data/agent-a']);
+    expect(importWords(input, 'darwin')).toEqual(['--dry-run', '/tmp/old data/agent-a']);
     expect(commandWords(String.raw`set claim_00000001 statement="a \"quoted\" value"`)).toEqual(['set', 'claim_00000001', 'statement=a "quoted" value']);
   });
 });

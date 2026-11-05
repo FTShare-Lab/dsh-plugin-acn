@@ -3,6 +3,8 @@ import { expect, it } from 'vitest';
 import { ClaimIdSchema } from '../../src/protocol/ids.js';
 import { ClaimStore } from '../../src/store/claims.js';
 import { TraceStore } from '../../src/store/traces.js';
+import { DisputeStore } from '../../src/store/disputes.js';
+import { DisputeSchema } from '../../src/protocol/dispute.js';
 import { TraceSchema } from '../../src/protocol/trace.js';
 import { UploadStore } from '../../src/store/uploads.js';
 import { executeInteraction } from '../../src/dsh-adapter/interaction-service.js';
@@ -40,5 +42,37 @@ it('opens a local Trace by exact ID and excludes traces owned by another agent',
     expect(local).toMatchObject({ ok: true, reference: { id: 'trace_00000001', item: { kind: 'trace', name: 'example_trace' } } });
     const foreign = await executeInteraction(f.ctx, { action: 'reference', key: 'personal', id: 'trace_00000002' });
     expect(foreign.ok).toBe(true); expect(foreign.reference?.item).toBeUndefined();
+  } finally { await f.close(); }
+});
+it('orders knowledge by status and recent change before paging, with matching displayed times', async () => {
+  const f = await flowHarness(new ScriptAdapter([]));
+  try {
+    const context = f.knowledge.context(); const claims = new ClaimStore(context);
+    for (let i = 1; i <= 32; i += 1) await claims.write(sampleClaim({
+      id: ClaimIdSchema.parse(`claim_${i.toString(16).padStart(8, '0')}`),
+      created_at: `2026-01-01T00:${String(Math.min(i, 31)).padStart(2, '0')}:00Z`,
+      updated_at: i <= 3 ? '2026-02-01T00:00:00Z' : undefined,
+      status: i === 2 ? 'stale' : i === 3 ? 'deprecated' : 'active',
+    }));
+    const first = await executeInteraction(f.ctx, { action: 'knowledge', key: 'personal' });
+    expect(first.ok).toBe(true); expect(first.knowledge?.items).toHaveLength(30); expect(first.knowledge?.omitted).toBe(2);
+    expect(first.knowledge?.items.slice(0, 3).map((row) => row.id)).toEqual(['claim_00000001', 'claim_0000001f', 'claim_00000020']);
+    expect(first.knowledge?.items[0]?.updatedAt).toBe('2026-02-01T00:00:00Z');
+    const next = await executeInteraction(f.ctx, { action: 'knowledge', key: 'personal', offset: 30 });
+    expect(next.knowledge?.items.map((row) => row.id)).toEqual(['claim_00000002', 'claim_00000003']);
+    const disputes = new DisputeStore(context);
+    for (const [id, created_at, resolved_at] of [
+      ['dispute_00000001', '2026-01-01T00:00:00Z', undefined],
+      ['dispute_00000002', '2026-01-02T00:00:00Z', undefined],
+      ['dispute_00000003', '2026-01-03T00:00:00Z', '2026-03-01T00:00:00Z'],
+      ['dispute_00000004', '2026-01-04T00:00:00Z', '2026-04-01T00:00:00Z'],
+    ]) await disputes.write(DisputeSchema.parse({ id, name: 'example', summary: 'Public example.', reporter_agent_id: context.agentId, claims: [], status: resolved_at ? 'resolved' : 'open', created_at, resolved_at }));
+    const disputePage = await executeInteraction(f.ctx, { action: 'knowledge', key: 'personal', kind: 'dispute' });
+    expect(disputePage.knowledge?.items.map((row) => row.id)).toEqual(['dispute_00000002', 'dispute_00000001', 'dispute_00000004', 'dispute_00000003']);
+    expect(disputePage.knowledge?.items[2]?.updatedAt).toBe('2026-04-01T00:00:00Z');
+    const traces = new TraceStore(context);
+    for (const [id, created_at] of [['trace_00000001', '2026-01-01T00:00:00Z'], ['trace_00000002', '2026-02-01T00:00:00.000000002Z'], ['trace_00000003', '2026-02-01T00:00:00.000000001Z']]) await traces.write(TraceSchema.parse({ id, name: 'example', task: 'Public example.', agent: context.agentId, created_at }));
+    const tracePage = await executeInteraction(f.ctx, { action: 'knowledge', key: 'personal', kind: 'trace' });
+    expect(tracePage.knowledge?.items.map((row) => row.id)).toEqual(['trace_00000002', 'trace_00000003', 'trace_00000001']);
   } finally { await f.close(); }
 });

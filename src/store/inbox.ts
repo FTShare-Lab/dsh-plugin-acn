@@ -11,6 +11,7 @@ import { hasCode, StoreError } from './errors.js';
 import { withFileLock } from './lock.js';
 import { readYaml, writeYamlAtomic } from './yaml.js';
 import { removeFile } from './atomic.js';
+import { renameFile } from './rename.js';
 
 export interface ClaimedInboxMessage { message: InboxMessage; leaseId: string }
 export class InboxStore {
@@ -70,7 +71,7 @@ export class InboxStore {
       if (!name.startsWith(`${message.id}.processing.`)) { this.context.logger.warn(`Preserved mismatched inbox lease: ${name}`); continue; }
       const pending = this.context.paths.pendingInbox(message.id);
       if (await this.exists(this.context.paths.doneInbox(message.id)) || await this.exists(pending)) await removeFile(path, this.context.logger);
-      else { await fs.rename(path, pending); recovered += 1; }
+      else { await renameFile(path, pending); recovered += 1; }
     }
     return recovered;
   }
@@ -84,7 +85,7 @@ export class InboxStore {
       for (const message of (await this.pending()).slice(0, limit)) {
         const leaseId = `${message.id}.processing.${process.pid}.${randomBytes(8).toString('hex')}.yaml`;
         const destination = join(this.context.paths.inbox, leaseId);
-        await fs.rename(this.context.paths.pendingInbox(message.id), destination);
+        await renameFile(this.context.paths.pendingInbox(message.id), destination);
         // 租约年龄从领取时开始，不能沿用 pending 文件的旧 mtime。
         const now = new Date(); await fs.utimes(destination, now, now);
         result.push({ message, leaseId });
@@ -126,7 +127,7 @@ export class InboxStore {
       if (!await this.exists(path)) return;
       if (await this.exists(this.context.paths.doneInbox(claimed.message.id))) { await removeFile(path, this.context.logger); return; }
       const pending = this.context.paths.pendingInbox(claimed.message.id);
-      if (!await this.exists(pending)) await fs.rename(path, pending);
+      if (!await this.exists(pending)) await renameFile(path, pending);
     });
   }
 }

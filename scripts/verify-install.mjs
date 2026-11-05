@@ -19,7 +19,7 @@ assert.deepEqual(group.config.map((entry) => entry.id), ['acn-configuration', 'a
 assert.equal(group.config[0].name, '@ftai/dsh-plugin-acn');
 assert.equal(group.config[1].name, '@ftai/dsh-plugin-acn/knowledge');
 const { stdout } = await runCommand('tar', ['-tf', tarballPath]);
-const files = stdout.trim().split('\n');
+const files = stdout.trim().split(/\r?\n/);
 for (const required of ['README.md', 'README_EN.md', 'CHANGELOG.md', 'docs/index.md', 'docs/config.md', 'docs/user_guide.md', 'docs/command-reference.md', 'docs/development.md', 'docs/architecture.md', 'docs/acn-compat.md', 'docs/dsh-compat.md', 'docs/outstanding-issues.md', 'docs/assets/install-package.png', 'docs/assets/upstream-settings.png', 'docs/assets/upstream-team.png', 'docs/assets/session-upstream.png', 'docs/assets/personal-configuration.png', 'docs/assets/knowledge-model.png', 'docs/assets/knowledge-view.png', 'docs/assets/activity-view.png']) assert.ok(files.includes(`package/${required}`), `Missing document or image: ${required}`);
 assert.ok(!files.some((file) => /^package\/docs\/(?:plan\/|validation\/|acceptance\.md$|release\.md$)/.test(file)));
 for (const required of ['lib/dream.js', 'lib/plugins/dream.js', 'lib/types/dream/index.d.ts', 'lib/types/plugins/dream.d.ts', 'lib/types/dream/evidence-store.d.ts', 'lib/types/dsh-adapter/dream-evidence.d.ts', 'prompts/claim_dream.j2', 'prompts/dream_compaction.j2', 'prompts/dream_evidence.j2']) assert.ok(files.includes(`package/${required}`), `Missing Dream package file: ${required}`);

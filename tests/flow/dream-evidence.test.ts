@@ -56,7 +56,7 @@ describe('restricted evidence child in the host', () => {
       (request) => {
         expect(request.tools?.map((tool) => tool.name)).toContain('dream_apply_group');
         expect(request.tools?.map((tool) => tool.name)).not.toContain('bash');
-        expect(requestText(request)).toContain(workspace);
+        expect(requestText(request)).toContain(JSON.stringify(workspace).slice(1, -1));
         return toolResponse('read-a', 'file_read', { path: 'source.txt', claim_ids: [input?.id] });
       },
       (request) => { const receipt = readReceipt(request); return toolResponse('stage', 'dream_stage_group', { group_id: 'group-a', group: calibrationDraft(input ? [input] : [], { [receipt.evidence_id]: receipt } as Receipts) }); },

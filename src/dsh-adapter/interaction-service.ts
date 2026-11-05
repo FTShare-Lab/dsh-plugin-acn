@@ -25,6 +25,7 @@ import { DeliveryStatusStore, deliveryTarget } from '../store/delivery-status.js
 import { claimRevision } from '../protocol/revision.js';
 import { disputeVersion } from '../store/rejected-disputes.js';
 import { knowledgeSources } from '../knowledge/sources.js';
+import { compareKnowledge, knowledgeChangedAt } from '../knowledge/ordering.js';
 import { sourceSession } from './source-sessions.js';
 import { stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
@@ -72,13 +73,13 @@ export async function readKnowledge(pool: RuntimePool, key: string, kind: 'claim
     const text = query.toLocaleLowerCase();
     const matching = values.filter((item) => ('holder' in item ? item.holder === context.agentId : 'agent' in item ? item.agent === context.agentId : item.reporter_agent_id === context.agentId)
       && JSON.stringify(item).toLocaleLowerCase().includes(text) && (!filters.status || 'status' in item && item.status === filters.status)
-      && (!filters.delivery || filters.delivery === 'all' || delivery(item) === filters.delivery)).sort((a, b) => a.id.localeCompare(b.id));
+      && (!filters.delivery || filters.delivery === 'all' || delivery(item) === filters.delivery)).sort(compareKnowledge);
     const rows = await allActivities(knowledge, (kind) => pool.supportsJob(key, kind));
     const page = activityPage(rows, activityOptions);
     const sessions = new Map<string, Promise<Awaited<ReturnType<typeof sourceSession>>>>();
     const sessionInfo = (id: string) => { const current = sessions.get(id) ?? sourceSession(pool.ctx, id); sessions.set(id, current); return current; };
     const sources = entities ? await knowledgeSources(context, matching.slice(offset, offset + 30).map((item) => item.id)) : new Map<string, string[]>();
-    const items = await Promise.all(matching.slice(offset, offset + 30).map(async (item) => ({ kind, id: item.id, name: item.name, status: 'status' in item ? String(item.status) : '', detail: JSON.stringify(item, null, 2), summary: ('statement' in item ? item.statement : 'summary' in item ? item.summary : item.task).slice(0, 500), updatedAt: ('updated_at' in item ? item.updated_at : undefined) ?? item.created_at, delivery: delivery(item), sources: await Promise.all((sources.get(item.id) ?? []).map(sessionInfo)) })));
+    const items = await Promise.all(matching.slice(offset, offset + 30).map(async (item) => ({ kind, id: item.id, name: item.name, status: 'status' in item ? String(item.status) : '', detail: JSON.stringify(item, null, 2), summary: ('statement' in item ? item.statement : 'summary' in item ? item.summary : item.task).slice(0, 500), updatedAt: knowledgeChangedAt(item), delivery: delivery(item), sources: await Promise.all((sources.get(item.id) ?? []).map(sessionInfo)) })));
     const activities = await Promise.all(page.activities.map(async (item) => item.sessionId === undefined ? item : { ...item, source: await sessionInfo(item.sessionId) }));
     const issues = rows.filter((item) => item.kind === 'delivery' && item.state === 'rejected' && item.requiresAttention).length;
     const attentionCount = pending.claims.length + pending.disputes.length + issues + rows.filter((item) => item.kind !== 'delivery' && item.requiresAttention).length;

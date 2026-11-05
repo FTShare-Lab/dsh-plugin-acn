@@ -186,7 +186,7 @@ Dream 通过 DSH 子会话自主发现候选、按需探索、暂存、校验、
 /acn-import "D:\ACN data\example\data\agents\agent-a"
 ```
 
-Windows 上的 `~\` 和 UNC 路径也可解析；网络共享的存储可靠性尚未验证。macOS / Linux 继续使用原有命令转义规则。
+Windows 上的 `~\` 和 UNC 路径也可解析；网络共享的存储可靠性尚未验证。macOS 继续使用原有命令转义规则。
 
 预览只给出可复制数量与冲突列表，不创建目标。实际导入先完整校验源文件，再复制原始 UTF-8 字节；Claim holder 与 Trace agent 必须等于当前 `agentId`，不改归属。单文件上限 16 MiB，不接受符号链接、硬链接、目录伪装、非法 YAML、ID 与文件名不一致或重叠源/目标。
 

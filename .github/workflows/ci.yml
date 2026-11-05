@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [macos-latest, windows-latest]
         node: [22, 24]
     steps:
       - uses: actions/checkout@v4
@@ -44,7 +44,7 @@ jobs:
           name: package-${{ matrix.os }}-node-${{ matrix.node }}
           path: .artifacts/*.tgz
   contracts:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     strategy:
       matrix:
         node: [22, 24]
