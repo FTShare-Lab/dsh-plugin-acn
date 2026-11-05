@@ -20,6 +20,7 @@ export async function acquireFileLease(path: string, options: LockOptions = {}):
   await fs.mkdir(dirname(lockPath), { recursive: true });
   const deadline = performance.now() + timeout;
   let compromised: Error | undefined;
+  let pendingDeleteRetries = 0;
   for (;;) {
     options.signal?.throwIfAborted();
     try {
@@ -28,6 +29,11 @@ export async function acquireFileLease(path: string, options: LockOptions = {}):
       return { check: () => { if (compromised !== undefined) throw new StoreError('lock_compromised', 'Lock ownership was lost.', { cause: compromised }); }, release };
     } catch (error) {
       options.signal?.throwIfAborted();
+      // NTFS 删除中的锁目录可能暂时拒绝同名 mkdir；不改用别的锁路径或绕过互斥。
+      if (process.platform === 'win32' && hasCode(error, 'EPERM') && typeof error === 'object' && error !== null && 'syscall' in error && error.syscall === 'mkdir' && pendingDeleteRetries < 5 && performance.now() < deadline) {
+        await delay(Math.min(10 * 2 ** pendingDeleteRetries++, Math.max(1, deadline - performance.now())), undefined, { signal: options.signal });
+        continue;
+      }
       if (!hasCode(error, 'ELOCKED')) throw new StoreError('io', `Cannot acquire lock: ${lockPath}`, { cause: error });
       if (performance.now() >= deadline) throw new LockTimeoutError(lockPath);
       await delay(Math.min(25, Math.max(1, deadline - performance.now())), undefined, { signal: options.signal });

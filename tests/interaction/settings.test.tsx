@@ -44,6 +44,9 @@ describe('upstream settings', () => {
   it('creates a solo upstream using only an Agent ID and makes the first one the real default', async () => {
     const { api } = setup({ ...snapshot, values: configurationValues({ upstreams: {} }) });
     fireEvent.click(await screen.findByRole('button', { name: '新建工作配置' }));
+    expect(screen.getByRole<HTMLInputElement>('switch', { name: '连接团队服务' }).checked).toBe(true);
+    expect(screen.getByLabelText(zh.router)).toBeDefined(); expect(screen.getByLabelText(zh.maintainer)).toBeDefined();
+    fireEvent.click(screen.getByRole('switch', { name: '连接团队服务' }));
     fireEvent.change(screen.getByLabelText('Agent ID'), { target: { value: 'coding' } });
     fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
     await waitFor(() => { expect(api.save).toHaveBeenCalled(); });

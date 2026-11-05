@@ -111,7 +111,7 @@ export function TeamSettingsPage({ api, t, openKnowledge, initialTab = 'upstream
   const defaultKey = values.upstream ?? (profiles['personal'] === undefined ? '' : 'personal');
   const withProfiles = (next: Record<string, Upstream>, upstream = defaultKey): ConfigurationValues => ({ ...values, upstreams: next, upstream });
   const cancelEditor = () => { probe.current?.abort(); setEditor(undefined); setCheckResult(undefined); feedback(''); };
-  const add = () => { setEditor({ key: '', existing: false, team: false, defaultChoice: Object.keys(profiles).length === 0, secret: '', removeSecret: false, credentialIdentity: '', reference: newCredentialReference(), value: { name: '', agentId: '', enabled: true, routerEndpoint: '', maintainerEndpoint: '', keyEnv: '', timeoutMs: snapshot?.values.timeoutMs ?? 15000 } }); setCheckResult(undefined); feedback(''); };
+  const add = () => { setEditor({ key: '', existing: false, team: true, defaultChoice: Object.keys(profiles).length === 0, secret: '', removeSecret: false, credentialIdentity: '', reference: newCredentialReference(), value: { name: '', agentId: '', enabled: true, routerEndpoint: '', maintainerEndpoint: '', keyEnv: '', timeoutMs: snapshot?.values.timeoutMs ?? 15000 } }); setCheckResult(undefined); feedback(''); };
   async function saveProfile(confirmedDefault = false) {
     if (editor === undefined) return;
     if (identityCredentialMismatch) { feedback(c('Agent ID 已改变，请填写新身份的团队鉴权密钥，或明确移除密钥绑定后保存。', 'The Agent ID changed. Enter the new identity’s team key, or explicitly remove the key binding before saving.'), true); return; }
