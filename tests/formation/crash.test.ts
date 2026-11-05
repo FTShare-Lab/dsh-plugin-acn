@@ -72,7 +72,8 @@ describe('process crash recovery', () => {
     const trace = (await new TraceStore(ctx).list())[0]; expect(trace?.id).toBe(saved?.trace?.id); expect(trace?.output_claims).toHaveLength(3);
     expect((await new UploadStore(ctx).read()).claims).toHaveLength(3); expect((await new UploadStore(ctx).read()).disputes).toHaveLength(1);
     expect(processedThrough(await transcript.state('session-a'))).toBe(2); expect(await transcript.read('session-a')).toEqual([]);
-    const resumed = new DurableWorker(ctx, { pollMs: 10 });
+    // 与子进程使用同一短接管间隔，避免一次抢锁失败回退生产用的 60 秒。
+    const resumed = new DurableWorker(ctx, { pollMs: 10, takeoverMs: 20 });
     resumed.register('finalize', async () => { expect(processedThrough(await transcript.state('session-a'))).toBe(2); return { recovered: true }; });
     try { await resumed.start(); expect(await waitJob(queue, job.id)).toMatchObject({ attempts: 2 }); }
     finally { await resumed.close(); }
