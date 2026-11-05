@@ -168,7 +168,7 @@ pnpm test:contract
 
 ## CI 配置
 
-工作流使用 GitHub Actions，定义在 `.github/workflows/ci.yml`；仅推送到其他 Git 托管平台不会执行这个工作流。主检查矩阵为 Apple silicon macOS / Windows × Node 22 / 24，覆盖类型、lint、安全、文档、全量测试、构建、打包和真实安装。测试使用四个文件进程，保留跨进程并发和强制终止恢复测试。
+工作流使用 GitHub Actions，定义在 `.github/workflows/ci.yml`；仅推送到其他 Git 托管平台不会执行这个工作流。主检查矩阵为 Apple silicon macOS / Windows × Node 22 / 24，覆盖类型、lint、安全、文档、全量测试、构建、打包和真实安装。测试使用两个文件进程，减少共享 runner 的磁盘争用；保留跨进程并发和强制终止恢复测试。
 
 Windows job 只在临时 runner 开启开发者模式，以执行真实符号链接 fixture；不跳过链接保护测试，也不修改用户电脑设置。本机 Windows 运行这些测试需要开发者模式或创建符号链接的权限；普通插件使用不要求创建链接。新增 `tests/platform/` 覆盖反斜杠主目录、盘符 / UNC、原生导入、保留名称和领域目录访问保护。现有 macOS 权限断言继续保留，Windows 改为检查可读写，不把 mode 位当作 ACL 验收。
 

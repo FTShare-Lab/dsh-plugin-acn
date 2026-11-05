@@ -34,7 +34,7 @@ jobs:
       - run: pnpm lint
       - run: pnpm check:security
       - run: pnpm check:docs
-      - run: pnpm test --maxWorkers=4
+      - run: pnpm test --maxWorkers=2
       - run: pnpm build
       - run: pnpm pack --pack-destination .artifacts
       - run: npm install --global @deepseek-ai/dsh@0.2.1-rc.2

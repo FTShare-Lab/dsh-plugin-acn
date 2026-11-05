@@ -2,7 +2,7 @@
 import fs from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { defineTool } from '@deepseek-ai/dsh-tools';
 import { ToolCallId, type GenerateOptions } from '@deepseek-ai/dsh-llm';
 import { SessionId } from '@deepseek-ai/dsh-session';
@@ -114,14 +114,18 @@ describe('restricted evidence child in the host', () => {
   });
   it.each(['timeout', 'stop', 'steps'] as const)('stops and drains the child on %s, completing only a budget stop', async (mode) => {
     const f = await evidenceFixture({ config: { dream: { evidenceMaxSteps: 1 } } });
-    const adapter = new ScriptAdapter(mode === 'steps' ? [toolResponse('read-a', 'read', { path: 'source.txt', claim_ids: f.initial.map((claim) => claim.id) })] : [async (request) => { await new Promise<void>((done) => { request.signal?.addEventListener('abort', () => { done(); }, { once: true }); }); return textResponse('Cancelled.'); }]);
-    const host = await flowHarness(adapter); const abort = new AbortController(); let disposed = false;
+    const abort = new AbortController(); const deadline = new AbortController();
+    const nativeTimeout = AbortSignal.timeout.bind(AbortSignal);
+    // 在模型请求开始后触发截止信号，避免把慢磁盘上的子会话初始化误当成待取消请求。
+    const timeout = mode === 'timeout' ? vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms) => ms === 100 ? deadline.signal : nativeTimeout(ms)) : undefined;
+    const adapter = new ScriptAdapter(mode === 'steps' ? [toolResponse('read-a', 'read', { path: 'source.txt', claim_ids: f.initial.map((claim) => claim.id) })] : [async (request) => { await new Promise<void>((done) => { request.signal?.addEventListener('abort', () => { done(); }, { once: true }); if (mode === 'timeout') deadline.abort(new DOMException('Timed out.', 'TimeoutError')); else abort.abort(new Error('Stopped by user.')); }); return textResponse('Cancelled.'); }]);
+    const host = await flowHarness(adapter); let disposed = false;
     host.ctx.on('agent/disposed', ({ agent }) => { if (agent.session.id.startsWith('acn-evidence-')) disposed = true; });
     try {
       const render = await loadPromptRenderer(); const run = restrictedExplorer(host.ctx, render('dream_evidence.j2', {}))({ store: f.store, claims: f.initial, route: { provider: 'mock', model: 'mock' }, config: { ...f.knowledge.config.llm, timeoutMs: mode === 'timeout' ? 100 : 5000 }, signal: abort.signal });
-      if (mode === 'stop') { const timer = setTimeout(() => { abort.abort(new Error('Stopped by user.')); }, 100); timer.unref(); }
       if (mode === 'steps') await run; else await expect(run).rejects.toThrow();
+      if (mode === 'timeout') expect(timeout).toHaveBeenCalledWith(100);
       expect(disposed).toBe(true); expect((await f.store.read())?.completed).toBe(mode === 'steps'); expect(adapter.requests).toHaveLength(1); expect(await new ClaimStore(f.knowledge.context()).list()).toEqual(f.initial);
-    } finally { await host.close(); await f.close(); }
+    } finally { timeout?.mockRestore(); await host.close(); await f.close(); }
   });
 });
