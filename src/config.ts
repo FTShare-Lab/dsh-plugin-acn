@@ -15,7 +15,7 @@ export const UpstreamSchema = z.strictObject({
   name: z.string().trim().max(80).default(''), agentId: AgentIdSchema, enabled: z.boolean().default(true),
   routerEndpoint: endpoint.default(''), maintainerEndpoint: endpoint.default(''),
   keyEnv: z.string().regex(/^(?:[A-Za-z_][A-Za-z0-9_]*)?$/).default(''), timeoutMs: positive().default(15_000),
-  // 旧安装只记录可推导的目录种类，不能把网页输入变成任意存储路径。
+  // 旧安装只记录可推导的目录种类，不能把界面输入变成任意存储路径。
   legacyStorage: z.enum(['base', 'personal', 'connection']).optional(),
   legacyKey: z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/).optional(),
 }).superRefine((value, ctx) => {
@@ -88,7 +88,7 @@ export class ConfigError extends Error {
   constructor(readonly fields: readonly string[]) { super(`Invalid ACN configuration: ${fields.join(', ')}`); this.name = 'ConfigError'; }
 }
 export function resolveConfig(input: unknown): ResolvedConfig {
-  // 兼容读取已废弃的项目覆盖；它不再参与选择，也不会出现在网页配置中。
+  // 兼容读取已废弃的项目覆盖；它不再参与选择，也不会出现在插件设置中。
   let value = input;
   if (typeof input === 'object' && input !== null && !Array.isArray(input)) {
     const compatible = { ...input } as Record<string, unknown>;

@@ -19,7 +19,7 @@ export function promptRenderer(sources: Readonly<Record<string, string>>) {
   return (name: string, context: object): string => environment.render(name, context);
 }
 export async function loadPromptRenderer() {
-  const root = dirname(fileURLToPath(import.meta.resolve('dsh-plugin-acn/package.json')));
+  const root = dirname(fileURLToPath(import.meta.resolve('@ftai/dsh-plugin-acn/package.json')));
   const sources = await Promise.all(templateNames.map(async (name) => [name, await readFile(join(root, 'prompts', name), 'utf8')] as const));
   return promptRenderer(Object.fromEntries(sources));
 }

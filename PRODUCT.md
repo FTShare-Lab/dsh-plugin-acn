@@ -10,7 +10,7 @@ product
 
 ## Product Purpose
 
-在宿主会话中形成、查阅和复用知识，管理个人身份及团队连接。服务管理由团队自行部署的 Router 与 Maintainer 承担。
+作为 DeepSeek Harness 的 Agent 侧插件，在会话中形成、查阅和复用知识，管理工作配置及团队连接。Router 与 Maintainer 由使用团队从 ACN 官方仓库自行部署。
 
 ## Brand Personality
 

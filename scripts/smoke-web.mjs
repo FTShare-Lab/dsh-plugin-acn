@@ -93,7 +93,7 @@ catch (error) {
   if (error.code !== 'ENOENT') throw error;
   await run(['--profile', profile, '--from-default-profile', 'web', '--dump-config']);
 }
-const tarballs = (await fs.readdir(join(root, 'package'))).filter((file) => file.startsWith('dsh-plugin-acn-') && file.endsWith('.tgz')); assert.equal(tarballs.length, 1);
+const tarballs = (await fs.readdir(join(root, 'package'))).filter((file) => file.endsWith('.tgz')); assert.equal(tarballs.length, 1);
 if (!browserInstall) await run(['plugin', '--profile', profile, 'add', join(root, 'package', tarballs[0])]);
 const claimDir = join(home, 'agents', agentId, 'claims');
 if (!browserInstall && process.env.ACN_WEB_SEED_CLAIM !== 'false') {

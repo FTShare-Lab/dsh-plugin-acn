@@ -1,4 +1,4 @@
-// 网页编辑工作配置与高级偏好；未展示的字段保留，由同一领域校验器检查。
+// 插件设置编辑工作配置与高级偏好；未展示的字段保留，由同一领域校验器检查。
 import { z } from 'zod';
 import { resolveConfig, ConnectionSchema, UpstreamSchema, UpstreamNameSchema } from './config.js';
 import { ConfigError } from './config.js';

@@ -1,4 +1,4 @@
-// 网页交互仅传递连接参数、公开知识与任务摘要，不传递私有记忆或凭据正文。
+// 界面交互仅传递连接参数、公开知识与任务摘要，不传递私有记忆或凭据正文。
 import { z } from 'zod';
 import { MessageInfoSchema } from './interaction-messages.js';
 import { ConnectionSchema, UpstreamSchema } from './config.js';

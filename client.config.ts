@@ -7,7 +7,7 @@ export default defineConfig({
   deps: { alwaysBundle: ['zod', /^@deepseek-ai\/dsh-typert-protocol/], neverBundle: ['react', 'react/jsx-runtime', 'react-dom'] },
   outputOptions: {
     entryFileNames: '[name].js',
-    banner: 'window.__ModuleLoader__.load({id:"dsh-plugin-acn",factory:(require)=>{var module={exports:{}};var exports=module.exports;',
+    banner: 'window.__ModuleLoader__.load({id:"@ftai/dsh-plugin-acn",factory:(require)=>{var module={exports:{}};var exports=module.exports;',
     footer: 'return module.exports;}});',
   },
 });

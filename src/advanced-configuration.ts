@@ -1,4 +1,4 @@
-// 网页高级参数使用现有团队与收件配置，秒与毫秒只在边界换算。
+// 界面中的高级参数使用现有团队与收件配置，秒与毫秒只在边界换算。
 import { z } from 'zod';
 import { resolveConfig } from './config.js';
 const seconds = z.number().min(0.001).max(Number.MAX_SAFE_INTEGER / 1000);

@@ -4,7 +4,7 @@ import { UploadStore } from '../store/uploads.js';
 import { JobQueue } from '../worker/queue.js';
 import { allActivities } from '../activities.js';
 export async function statusCommand(knowledge: AcnKnowledge, options: { failed?: boolean; page?: number } = {}): Promise<string> {
-  if (!knowledge.configured) return 'ACN 未配置。打开 DSH「设置 → ACN 插件设置 → 工作配置」，新建配置并填写 Agent ID；网页保存后生效，无需手改 YAML 或重启。\nACN is not configured. Open DSH Settings → ACN settings → Work configurations, then create an Agent ID. Web saves apply without editing YAML or restarting. Advanced/headless setup: see docs/config.md.';
+  if (!knowledge.configured) return 'ACN 未配置。打开 DSH「设置 → ACN 插件设置 → 工作配置」，新建配置并填写 Agent ID；保存后生效，无需手改 YAML 或重启。\nACN is not configured. Open DSH Settings → ACN settings → Work configurations, create a work configuration, enter an Agent ID, and save it. Advanced/headless setup: see docs/config.md.';
   const claims = await knowledge.listClaims({ includeDeprecated: true, limit: 100 });
   const traces = await knowledge.listTraces({ limit: 100 });
   const queue = await new UploadStore(knowledge.context()).read();

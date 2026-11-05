@@ -1,4 +1,4 @@
-// 网页文案使用宿主语言切换；名称与包元数据保持一致。
+// 界面文案使用宿主语言切换；名称与包元数据保持一致。
 export const en = {
   title: 'Configuration', intro: 'Distill reusable knowledge and memories from agent work traces, and let experience flow across your team.',
   identity: 'Agent and knowledge', agentId: 'Agent ID',

@@ -101,11 +101,11 @@ try {
       const installAnchor = fileURLToPath(import.meta.resolve('@deepseek-ai/dsh-agent-loop-testkit/package.json'));
       const profile = loadProfileDirectory('acn-smoke', dirname(fileURLToPath(installedBaseUrl)), installAnchor);
       const resolution = await createRuntimeResolution({ installAnchor, profile });
-      const layer = profile.layers.find((candidate) => candidate.packageName === 'dsh-plugin-acn');
+      const layer = profile.layers.find((candidate) => candidate.packageName === '@ftai/dsh-plugin-acn');
       assert.ok(layer, 'Installed bundle must be a selected profile layer.');
-      assert.ok(resolution.localPackageNames.includes('dsh-plugin-acn'));
-      assert.ok(!resolution.entries.some((candidate) => candidate.name === 'dsh-plugin-acn'), 'The test must not substitute the checkout package.');
-      assert.equal(await realpath(layer.packageDir), await realpath(join(profile.dir, 'node_modules', 'dsh-plugin-acn')));
+      assert.ok(resolution.localPackageNames.includes('@ftai/dsh-plugin-acn'));
+      assert.ok(!resolution.entries.some((candidate) => candidate.name === '@ftai/dsh-plugin-acn'), 'The test must not substitute the checkout package.');
+      assert.equal(await realpath(layer.packageDir), await realpath(join(profile.dir, 'node_modules', '@ftai', 'dsh-plugin-acn')));
       await root.plugin(PluginPackages, { resolution });
     }
     await mountAgentLoopTestDependencies(root, { workingDirectory: true });

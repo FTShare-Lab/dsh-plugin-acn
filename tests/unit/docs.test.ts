@@ -19,10 +19,9 @@ describe('current configuration documentation', () => {
     const text = await fs.readFile(new URL(`../../${file}`, import.meta.url), 'utf8'); const rows = yamlBlocks(text).flatMap(knowledgeRows);
     if (file === 'docs/config.md') expect(rows.length).toBeGreaterThan(0);
     else {
-      // README 采用网页安装流程，完整 YAML 只在配置参考中维护。
+      // README 采用插件界面安装流程，完整 YAML 只在配置参考中维护。
       expect(text).toContain('](docs/config.md)');
-      expect(text).toContain('](docs/user-guide.md)');
-      expect(text).toContain('](docs/user-guide.html)');
+      expect(text).toContain('](docs/user_guide.md)');
     }
     for (const row of rows) {
       const config = resolveConfig(row.config);

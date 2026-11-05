@@ -16,11 +16,11 @@ const group = entries.find((entry) => entry.id === 'acn');
 assert.equal(group?.isolate?.acnKnowledge, true);
 assert.equal(group?.isolate?.acnMemory, true);
 assert.deepEqual(group.config.map((entry) => entry.id), ['acn-configuration', 'acn-knowledge', 'acn-prompt', 'acn-tools', 'acn-formation', 'acn-inbox', 'acn-dream', 'acn-memory', 'acn-commands']);
-assert.equal(group.config[0].name, 'dsh-plugin-acn');
-assert.equal(group.config[1].name, 'dsh-plugin-acn/knowledge');
+assert.equal(group.config[0].name, '@ftai/dsh-plugin-acn');
+assert.equal(group.config[1].name, '@ftai/dsh-plugin-acn/knowledge');
 const { stdout } = await runCommand('tar', ['-tf', tarballPath]);
 const files = stdout.trim().split('\n');
-for (const required of ['README.md', 'README_EN.md', 'CHANGELOG.md', 'docs/index.md', 'docs/config.md', 'docs/user-guide.md', 'docs/user-guide.html', 'docs/command-reference.md', 'docs/development.md', 'docs/architecture.md', 'docs/acn-compat.md', 'docs/dsh-compat.md', 'docs/outstanding-issues.md', 'docs/assets/install-package.jpg', 'docs/assets/upstream-settings.jpg', 'docs/assets/upstream-team.jpg', 'docs/assets/session-upstream.jpg', 'docs/assets/personal-configuration.jpg', 'docs/assets/knowledge-model.jpg', 'docs/assets/knowledge-view.jpg', 'docs/assets/activity-view.jpg']) assert.ok(files.includes(`package/${required}`), `Missing document or image: ${required}`);
+for (const required of ['README.md', 'README_EN.md', 'CHANGELOG.md', 'docs/index.md', 'docs/config.md', 'docs/user_guide.md', 'docs/command-reference.md', 'docs/development.md', 'docs/architecture.md', 'docs/acn-compat.md', 'docs/dsh-compat.md', 'docs/outstanding-issues.md', 'docs/assets/install-package.png', 'docs/assets/upstream-settings.png', 'docs/assets/upstream-team.png', 'docs/assets/session-upstream.png', 'docs/assets/personal-configuration.png', 'docs/assets/knowledge-model.png', 'docs/assets/knowledge-view.png', 'docs/assets/activity-view.png']) assert.ok(files.includes(`package/${required}`), `Missing document or image: ${required}`);
 assert.ok(!files.some((file) => /^package\/docs\/(?:plan\/|validation\/|acceptance\.md$|release\.md$)/.test(file)));
 for (const required of ['lib/memory.js', 'lib/plugins/memory.js', 'lib/types/memory/index.d.ts', 'lib/types/plugins/memory.d.ts', 'prompts/what_is_memory.j2', 'prompts/memory.j2', 'prompts/memory_review_system.j2', 'prompts/memory_review.j2']) assert.ok(files.includes(`package/${required}`), `Missing Memory package file: ${required}`);
 for (const required of ['lib/dream.js', 'lib/plugins/dream.js', 'lib/types/dream/index.d.ts', 'lib/types/plugins/dream.d.ts', 'lib/types/dream/evidence-store.d.ts', 'lib/types/dsh-adapter/dream-evidence.d.ts', 'prompts/claim_dream.j2', 'prompts/dream_compaction.j2', 'prompts/dream_evidence.j2']) assert.ok(files.includes(`package/${required}`), `Missing Dream package file: ${required}`);
@@ -30,8 +30,8 @@ for (const required of ['lib/index.js', 'lib/client.js', 'lib/types/plugins/clie
 assert.ok(!files.some((file) => /^package\/(src|tests|node_modules)\//.test(file)));
 const installed = createRequire(join(process.env.DSH_HOME, 'profiles', 'acn-smoke', 'package.json'));
 // 元数据通过安装包公开子路径解析，覆盖根包及每个组件，避免本地文件掩盖漏包。
-for (const part of ['', ...group.config.filter((entry) => entry.name.startsWith('dsh-plugin-acn/')).map((entry) => entry.name.slice('dsh-plugin-acn/'.length))]) {
-  const prefix = `dsh-plugin-acn/${part ? `${part}/` : ''}`;
+for (const part of ['', ...group.config.filter((entry) => entry.name.startsWith('@ftai/dsh-plugin-acn/')).map((entry) => entry.name.slice('@ftai/dsh-plugin-acn/'.length))]) {
+  const prefix = `@ftai/dsh-plugin-acn/${part ? `${part}/` : ''}`;
   for (const language of ['en', 'zh']) {
     const locale = JSON.parse(await readFile(installed.resolve(`${prefix}locale/${language}.json`), 'utf8'));
     assert.ok(locale.meta.title.trim()); assert.ok(locale.meta.description.trim());
@@ -40,7 +40,7 @@ for (const part of ['', ...group.config.filter((entry) => entry.name.startsWith(
       if (language === 'zh') assert.equal(locale.meta.description, '从agent工作轨迹中沉淀可复用的知识与记忆，让知识经验在团队中流动');
       // 详细介绍按包根解析，必须在安装后的包中仍可找到正文与相对图片。
       assert.equal(locale.meta.detail, language === 'zh' ? 'README.md' : 'README_EN.md');
-      const packageRoot = dirname(installed.resolve('dsh-plugin-acn/package.json'));
+      const packageRoot = dirname(installed.resolve('@ftai/dsh-plugin-acn/package.json'));
       const detailPath = join(packageRoot, locale.meta.detail);
       const detail = await readFile(detailPath, 'utf8');
       assert.equal(detail, await readFile(join(process.cwd(), locale.meta.detail), 'utf8'), 'Installed documentation must match the repository README.');
@@ -56,23 +56,23 @@ for (const part of ['', ...group.config.filter((entry) => entry.name.startsWith(
   assert.ok(icon.length > 0 && icon.length <= 256 * 1024);
   assert.match(icon.toString('utf8'), /<svg\s[^>]*xmlns="http:\/\/www.w3.org\/2000\/svg"/);
 }
-const protocol = await import(pathToFileURL(installed.resolve('dsh-plugin-acn/protocol')).href);
-const store = await import(pathToFileURL(installed.resolve('dsh-plugin-acn/store')).href);
-const formation = await import(pathToFileURL(installed.resolve('dsh-plugin-acn/formation-core')).href);
+const protocol = await import(pathToFileURL(installed.resolve('@ftai/dsh-plugin-acn/protocol')).href);
+const store = await import(pathToFileURL(installed.resolve('@ftai/dsh-plugin-acn/store')).href);
+const formation = await import(pathToFileURL(installed.resolve('@ftai/dsh-plugin-acn/formation-core')).href);
 assert.equal(protocol.ClaimIdSchema.parse('claim_00000001'), 'claim_00000001');
 assert.equal(typeof store.InboxStore, 'function');
 assert.equal(typeof formation.FormationStore, 'function');
-const inbox = await import(pathToFileURL(installed.resolve('dsh-plugin-acn/inbox-core')).href);
-const team = await import(pathToFileURL(installed.resolve('dsh-plugin-acn/team')).href);
-const upload = await import(pathToFileURL(installed.resolve('dsh-plugin-acn/upload-core')).href);
+const inbox = await import(pathToFileURL(installed.resolve('@ftai/dsh-plugin-acn/inbox-core')).href);
+const team = await import(pathToFileURL(installed.resolve('@ftai/dsh-plugin-acn/team')).href);
+const upload = await import(pathToFileURL(installed.resolve('@ftai/dsh-plugin-acn/upload-core')).href);
 assert.equal(typeof inbox.InboxEffectStore, 'function');
 assert.equal(typeof team.TeamFacade, 'function');
 assert.equal(typeof upload.UploadDelivery, 'function');
-const dream = await import(pathToFileURL(installed.resolve('dsh-plugin-acn/dream-core')).href);
+const dream = await import(pathToFileURL(installed.resolve('@ftai/dsh-plugin-acn/dream-core')).href);
 assert.equal(typeof dream.DreamStore, 'function');
 assert.equal(typeof dream.AcnDream, 'function');
 assert.equal(typeof dream.EvidenceStore, 'function');
-const memory = await import(pathToFileURL(installed.resolve('dsh-plugin-acn/memory-core')).href);
+const memory = await import(pathToFileURL(installed.resolve('@ftai/dsh-plugin-acn/memory-core')).href);
 assert.equal(typeof memory.AcnMemory, 'function'); assert.equal(typeof memory.MemoryReview, 'function');
 // 宿主 peer 由真实 Loader 共享；普通 Node 导入不能代表插件的运行环境。
 const root = process.cwd();

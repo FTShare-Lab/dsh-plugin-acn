@@ -139,7 +139,7 @@ export class ConfigurationService extends TypertRemoteService {
   }
 
   private entry(): Entry {
-    const rows = this.ctx.configEditor.entries().filter((entry) => entry.options.id === 'acn-knowledge' && entry.options.name === 'dsh-plugin-acn/knowledge');
+    const rows = this.ctx.configEditor.entries().filter((entry) => entry.options.id === 'acn-knowledge' && entry.options.name === '@ftai/dsh-plugin-acn/knowledge');
     const entry = rows.length === 1 ? rows[0] : undefined;
     if (entry === undefined) throw new ConfigError(['acn-knowledge']);
     return entry;

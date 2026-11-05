@@ -1,10 +1,10 @@
 # 当前架构
 
-`acn-knowledge` 是唯一配置承载行，发布 `acnKnowledge` 领域服务和 `acnRuntime` 连接池。八个领域组件隔离 `acnRuntime` / `acnKnowledge` / `acnFormation` / `acnInbox` / `acnDream` / `acnMemory`，其他七行注册工具、提示词、后台处理器和命令。未配置身份时只提供状态命令。第九行 `acn-configuration` 使用包根入口，独立承载网页配置 Remote，避免知识重载中断保存请求。
+`acn-knowledge` 是唯一配置承载行，发布 `acnKnowledge` 领域服务和 `acnRuntime` 连接池。八个领域组件隔离 `acnRuntime` / `acnKnowledge` / `acnFormation` / `acnInbox` / `acnDream` / `acnMemory`，其他七行注册工具、提示词、后台处理器和命令。未配置身份时只提供状态命令。第九行 `acn-configuration` 使用包根入口，独立承载插件配置 Remote，避免知识重载中断保存请求。
 
 | 模块 | 当前职责 |
 | --- | --- |
-| `configuration.ts`、`interaction.ts`、`client/` | 常用字段与具名连接、ACN 插件设置、会话工具栏、知识及活动、结果展示 |
+| `configuration.ts`、`interaction.ts`、`client/` | 工作配置与常用参数、ACN 插件设置、会话工具栏、知识及活动、结果展示 |
 | `dsh-adapter/configuration-*` | 严格 Remote 协议与宿主 profile 编辑器，保存前及文件锁内检查配置版本 |
 | `dsh-adapter/project-upstream.ts` | 通过公开只读会话接口，按创建时间为新会话预选 upstream，不另存项目偏好 |
 | `dsh-adapter/runtime-pool.ts` | 按会话持久归属分配领域服务，首次同步门禁、组件生命周期、独立存储与冻结快照 |
@@ -28,7 +28,7 @@
 | `llm/response.ts` | 识别显式推理结束边界后的完整 JSON 对象，之后仍执行全部结构与领域校验 |
 | `plugins/`、`dsh-adapter/` | 宿主生命周期、严格模型 schema、工具策略与注册 |
 
-网页设置注册在宿主 `settings.section`，会话工具栏使用 `conversation.input.left`。`plugin:acn/session-eligibility` 记录插件启用后创建的空白会话资格；`plugin:acn/team-selection` 记录连接 ID、身份摘要及首次同步完成标记。已有消息或模型请求即锁定选择，未绑定历史只放行普通聊天，不放行知识、Memory 或后台会话投影；已有绑定失效仍受身份门禁保护。输入框反馈与后端准入分别检查；团队同步失败降级为本地工作。历史只读使用 `sessionController.inspect`，显式操作才恢复 Agent；恢复未绑定历史不会拉取收件。新建无 seed 的派生会话继承已记录的父选择，不能回落到个人空间；子代理继续只读 Claim，不能访问私有 Memory。
+插件设置界面注册在宿主 `settings.section`，会话工具栏使用 `conversation.input.left`。`plugin:acn/session-eligibility` 记录插件启用后创建的空白会话资格；`plugin:acn/team-selection` 记录连接 ID、身份摘要及首次同步完成标记。已有消息或模型请求即锁定选择，未绑定历史只放行普通聊天，不放行知识、Memory 或后台会话投影；已有绑定失效仍受身份门禁保护。输入框反馈与后端准入分别检查；团队同步失败降级为本地工作。历史只读使用 `sessionController.inspect`，显式操作才恢复 Agent；恢复未绑定历史不会拉取收件。新建无 seed 的派生会话继承已记录的父选择，不能回落到个人空间；子代理继续只读 Claim，不能访问私有 Memory。
 
 连接池按 upstream 与运行配置按需创建领域对象。会话绑定先于知识读取落盘，运行配置缓存跨插件重载保留，真正恢复新实例时读取同一 upstream 的当前连接。相同存储路径的后台 worker 和上传调度器在新实例实际启动时交接，旧前台实例继续使用原客户端。重载先恢复最近实际激活的后台所有者，持久队列由该消费者处理；仅保存配置不会激活另一个团队。所有组件遵循各自行启用状态；禁用、重载时取消未固定任务并等待本地固定提交结束。个人存储和旧版全局团队目录不搬迁。普通文件工具保护整个配置数据根，包括尚未启动、停用及删除配置后仍保留的连接数据。
 

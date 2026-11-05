@@ -1,5 +1,5 @@
 {
-  "name": "dsh-plugin-acn",
+  "name": "@ftai/dsh-plugin-acn",
   "version": "0.1.0",
   "description": "从agent工作轨迹中沉淀可复用的知识与记忆，让知识经验在团队中流动",
   "keywords": [
@@ -11,6 +11,18 @@
     "acn"
   ],
   "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FTShare-Lab/dsh-plugin-acn.git"
+  },
+  "homepage": "https://github.com/FTShare-Lab/dsh-plugin-acn#readme",
+  "bugs": {
+    "url": "https://github.com/FTShare-Lab/dsh-plugin-acn/issues"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
+  },
   "type": "module",
   "packageManager": "pnpm@11.25.0",
   "engines": {
@@ -123,9 +135,7 @@
     "README_EN.md",
     "CHANGELOG.md",
     "docs/**/*.md",
-    "docs/**/*.html",
     "docs/assets/*.png",
-    "docs/assets/*.jpg",
     "locale/**/*.json",
     "icon.svg"
   ],
@@ -248,7 +258,6 @@
     "prepack": "pnpm run build",
     "test:contract": "bash scripts/contract-up.sh",
     "check:docs": "node scripts/check-docs.mjs",
-    "docs:images": "node scripts/inline-guide-images.mjs",
     "smoke:web": "node scripts/smoke-web.mjs"
   },
   "peerDependenciesMeta": {

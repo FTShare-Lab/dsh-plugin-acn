@@ -1,4 +1,4 @@
-// 检查文档链接、锚点与说明书内嵌图片，防止入口失效或截图不同步。
+// 检查文档链接与锚点，防止入口失效或截图不同步。
 import fs from 'node:fs/promises';
 import { dirname, extname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,12 +24,6 @@ for (const file of files) {
     targets = [...document.querySelectorAll('[href], [src]')].flatMap((node) => ['href', 'src'].map((name) => node.getAttribute(name)).filter((value) => value !== null));
     const ids = [...document.querySelectorAll('[id]')].map((node) => node.id);
     if (new Set(ids).size !== ids.length) errors.push(`${relative(root, file)}: duplicate HTML id`);
-    for (const image of document.querySelectorAll('img[data-asset]')) {
-      const name = image.getAttribute('data-asset');
-      if (!/^[a-z0-9-]+\.jpg$/.test(name)) { errors.push(`${relative(root, file)}: invalid embedded asset name`); continue; }
-      const expected = 'data:image/jpeg;base64,' + (await fs.readFile(join(dirname(file), 'assets', name))).toString('base64');
-      if (image.getAttribute('src') !== expected) errors.push(`${relative(root, file)}: embedded image is outdated: ${name}; run pnpm docs:images`);
-    }
     dom.window.close();
   } else targets = [...text.matchAll(/\]\(([^\s)]+)\)/g)].map((match) => match[1]);
   for (const target of targets) {
@@ -44,4 +38,4 @@ for (const file of files) {
   }
 }
 if (errors.length > 0) { process.stderr.write(errors.join('\n') + '\n'); process.exitCode = 1; }
-else process.stdout.write(`Documentation links, anchors and embedded images verified: ${files.length} documents.\n`);
+else process.stdout.write(`Documentation links and anchors verified: ${files.length} documents.\n`);

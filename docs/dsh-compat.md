@@ -12,7 +12,7 @@
 
 Windows 导入命令保留原生路径的反斜杠，支持盘符、UNC、含空格的引号路径与 `~\` 主目录前缀。Agent ID、配置标识等本地目录名会拒绝 `con`、`nul`、`com1` 等 Windows 设备保留名称；其他平台已有合法名称继续兼容。
 
-安装由宿主读取 tarball 的 `dsh.bundle.patch`，九行组合（网页配置入口和八个领域组件）按隔离服务依赖装配。只有 `plugins/` 与 `dsh-adapter/` 导入宿主运行时；协议与核心模块可独立使用。按 id 覆盖整体替换 config，插件再补字段默认值。
+安装由宿主读取 tarball 的 `dsh.bundle.patch`，九行组合（插件配置入口和八个领域组件）按隔离服务依赖装配。只有 `plugins/` 与 `dsh-adapter/` 导入宿主运行时；协议与核心模块可独立使用。按 id 覆盖整体替换 config，插件再补字段默认值。
 
 | 公开接口 | 用途与约束 |
 | --- | --- |
@@ -22,7 +22,7 @@ Windows 导入命令保留原生路径的反斜杠，支持盘符、UNC、含空
 | tools DSL、renderer、最终 guard | 原生 / 程序桥工具结果、权限与路径门禁 |
 | `llm.prepareCall`、stream、BlockAssembler | 宿主模型路由、结构化后台调用及取消 |
 | `agents.create` setup / dispose | 隔离只读证据子会话、专属系统上下文与预算 |
-| `dsh.client`、`plugins.bundle.config`、`settings.section`、ModuleLoader | 配置入口与ACN 插件设置，宿主共享 React |
+| `dsh.client`、`plugins.bundle.config`、`settings.section`、ModuleLoader | 配置入口与 ACN 插件设置，宿主共享 React |
 | `conversation.input.left`、conversation blocks、`uiWorkspace.openSession` | 会话团队选择、首次准备反馈、知识活动与返回来源 |
 | `sessionPersistence.list/open`、`sessions.list` | 同项目按创建时间选择最近普通会话的 upstream，只读历史，不恢复 Agent |
 | `sessionController.inspect` / `resolveAgent` | 只读历史与显式恢复分离，不因浏览启动同步 |
@@ -33,7 +33,7 @@ Windows 导入命令保留原生路径的反斜杠，支持盘符、UNC、含空
 | `commands.register` | 命令不进入普通模型历史，贡献随依赖卸载撤销 |
 | fs 路径解析、写 / 编辑意图 | 已知文件工具的私有路径保护；没有通用读取前 hook |
 
-知识、任务及恢复状态保存在插件自身目录；身份绑定通过宿主公开插件记录接口写入会话日志，不自行改写宿主日志格式。Recap 监听真实压缩结果；此版 Web 模板默认关闭 `compaction-basic` 和 `command-compact`，需要按[配置](config.md#宿主压缩与-recap)启用。Web 默认工作区也可能与启动 cwd 不同，需在宿主选择项目；验收脚本显式配置临时默认工作区。
+知识、任务及恢复状态保存在插件自身目录；身份绑定通过宿主公开插件记录接口写入会话日志，不自行改写宿主日志格式。Recap 监听宿主实际成功压缩的结果，不改变 DSH 的压缩策略。兼容基线的[标准模式](https://github.com/deepseek-ai/deepseek-harness/blob/687f282e8625c6b8d11ff58211a90524be2e4317/packages/bundle/web-app/presets/standard.patch.yml)已提供 `compaction-basic` 和 `command-compact`；顶层同名行因能力由会话模式管理而停用，不能据此判断客户端关闭了压缩。两项功能的关系见[会话压缩与知识复盘](config.md#会话压缩与知识复盘)。DSH 当前工作区可能与启动目录不同，需在客户端选择实际项目；验收脚本显式配置临时默认工作区。
 
 原生工具、程序桥、Loader 单行禁用、安装、恢复会话、证据子会话和 Memory 路径保护都有自动化测试。宿主升级后应重新检查工具门禁、事件、压缩、模型取消和卸载边界，再按[开发指南](development.md)验证。
 
@@ -41,20 +41,20 @@ Windows 导入命令保留原生路径的反斜杠，支持盘符、UNC、含空
 
 ## 操作系统
 
-插件不依赖 macOS 专属框架，三个系统使用同一预构建包。下表描述 Node 代码与 CI 覆盖，不扩展前述桌面宿主支持范围。
+发布包不依赖 macOS 专属框架。下表区分受支持的桌面平台与开发、CI 环境的自动化覆盖。
 
 | 平台 | 当前覆盖与验证边界 |
 | --- | --- |
-| macOS | 本机全量测试、真实安装与网页使用回归；继续保留 POSIX 文件打开标志和权限检查 |
+| macOS | 本机全量测试、真实安装与插件界面回归；继续保留 POSIX 文件打开标志和权限检查 |
 | Windows | 默认知识目录、盘符与 UNC 路径解析、原生导入路径、保留目录名及不依赖 POSIX 标志的 Memory 检查已有回归；CI 配置 Windows Node 22 / 24 的全量测试和实际 CLI 安装检查 |
-| Linux | CI 配置 Node 22 / 24 的全量检查；真实 Rust 服务契约另在 Ubuntu 执行 |
+| Linux（开发与 CI） | Node 22 / 24 的自动化检查与 Ubuntu 团队服务契约；不包含 Linux 桌面支持 |
 
-新增 Windows CI 需在 GitHub Actions 实际触发工作流后才会运行；配置工作流不等于已得到 Windows 通过结果。当前没有 Windows 桌面实机验收结论。路径单测中的 UNC 支持仅验证解析，不代表已验证 SMB 共享存储的锁、原子发布或断电恢复。
+Windows CI 需在 GitHub Actions 实际触发工作流后才会运行；配置工作流不等于已得到 Windows 通过结果。当前没有 Windows 桌面实机验收结论。路径单测中的 UNC 支持仅验证解析，不代表已验证 SMB 共享存储的锁、原子发布或断电恢复。
 
 知识目录建议位于当前用户独占的本地磁盘。Memory 拒绝符号链接、目录 junction、多链接及读取中发生变化的文件；macOS / Linux 继续使用原有打开标志，Windows 额外依赖打开前后的显式文件类型和身份检查。`0600` 只表达 POSIX 权限，不能替代 Windows ACL；保护范围见[已知限制](outstanding-issues.md#memory-的保护范围)。
 
 ## 安装包与界面资源
 
-预构建包包含双语 locale、图标、README 和图文指南。`meta.detail` 指向包内的中英文 README；安装检查会确认正文和相对图片完整。长文详情的显示取决于宿主支持，兼容基线尚未验证该界面的渲染；网页配置页与长文详情是不同入口。
+预构建包包含双语 locale、图标、README 和图文指南。`meta.detail` 指向包内的中英文 README；安装检查会确认正文和相对图片完整。长文详情的显示取决于宿主支持，兼容基线尚未验证该界面的渲染；插件设置界面与 README 介绍区是不同入口。
 
-当前采用预构建 `.tgz` 安装，源码仓库不跟踪 `lib/`，也未配置 Git 安装用的 `prepare`。从 Git 获取源码后应先构建打包，不能把仓库地址直接当作已支持的安装入口。
+插件包名为 `@ftai/dsh-plugin-acn`，当前通过预构建 `.tgz` 安装；发布到 npm 后可按包名安装。源码仓库不跟踪 `lib/`，也未配置 Git 安装用的 `prepare`。从 Git 获取源码后应先构建打包，不能把仓库地址直接当作已支持的安装入口。

@@ -1,6 +1,6 @@
 # 开发指南
 
-本文面向插件维护者。安装配置见[使用指南](user-guide.md)，模块职责见[架构](architecture.md)。
+本文面向插件维护者。安装配置见[使用指南](user_guide.md)，模块职责见[架构](architecture.md)。
 
 ## 构建与自动化检查
 
@@ -12,7 +12,7 @@ pnpm typecheck
 pnpm lint
 pnpm check:security
 pnpm check:docs
-pnpm test
+pnpm test --maxWorkers=4
 ACN_REPO=/path/to/reference pnpm test:compat
 ACN_REPO=/path/to/reference pnpm test:contract
 pnpm build
@@ -29,38 +29,40 @@ pnpm smoke:install
 | `pnpm test:contract` | 在临时目录启动真实 Router / Maintainer，验证查询、上传、裁决通知的双成员内化和整合依赖；内化模型使用本地测试适配器 |
 | `pnpm smoke:install` | 新 DSH profile 中的实际包安装、Loader 生命周期、公开资源和不兼容引擎拒绝 |
 | `pnpm check:security` | 版本控制文本中的凭据、邮箱和个人路径，以及提交元数据中的其他敏感内容；允许用户确认的 Git 身份邮箱 |
-| `pnpm check:docs` | Markdown / HTML 相对链接、锚点与说明书内嵌图片一致性 |
+| `pnpm check:docs` | 文档相对链接与标题锚点 |
 
 安装包包含运行 JS、类型声明、提示词、组合 patch、双语说明、本地化资源、图标、使用截图和许可证；不包含源码测试、依赖缓存、临时项目或运行日志。安装检查使用独立的 `DSH_HOME`，不会修改日常 profile。`smoke:install` 由 Node 脚本执行，可从 Windows PowerShell 或 POSIX 终端运行；Windows 的 pnpm / dsh 命令 shim 通过统一启动器调用，不要求安装 Bash。它需要可用的 `tar` 和 DSH CLI；`DSH_BIN` 也可指向桌面附带 CLI 的 `.js` 入口。
 
-安全扫描不识别截图文字。更新图片时应检查可见内容，使用中性示例，避免展示实际数据路径、提供商别名、邮箱或凭据。
+日常安全扫描覆盖当前文件和 Git 提交身份，不扫描全部历史文件正文，也不识别截图文字。公开完整 Git 历史前，应另行检查历史文件和图片。更新图片时应检查可见内容，使用中性示例，避免展示实际数据路径、提供商别名、邮箱或凭据。
 
 ### 维护使用说明书
 
-`docs/user-guide.html` 是可独立转发的用户说明书；`docs/user-guide.md` 保留仓库阅读入口。编辑 HTML 正文即可修改说明。更新 `docs/assets/` 截图后，运行 `pnpm docs:images` 刷新内嵌图片，再运行 `pnpm check:docs`。不要添加外部字体、脚本或图片依赖；交付前用浏览器检查桌面和窄屏布局、目录、图片放大与打印。
+`docs/user_guide.md` 是面向用户的完整 Markdown 指南，截图保存在 `docs/assets/`。更新界面或操作流程时，同时更新指南与截图，并运行 `pnpm check:docs`。截图应使用隔离的示例身份和数据，不包含账号、真实目录、团队内网地址或凭据；必要时遮挡后逐张检查。
 
-## 隔离网页调试
+## 隔离插件界面调试
 
-选择本机 Web profile 已配置的模型提供商，并将 `your-provider` 替换成它的 ID：
+以下脚本通过 DSH 的 `web` 模板，在本机浏览器中加载插件界面，用于隔离调试与验收。日常使用请在 DSH 桌面应用中安装插件，无需启动这套调试环境。
+
+选择本机 `web` profile 已配置的模型提供商，并将 `your-provider` 替换成它的 ID：
 
 ```sh
 export ACN_ACCEPTANCE_PROVIDER=your-provider
 pnpm smoke:web
 ```
 
-脚本默认使用 `deepseek-v4-flash-api`；可通过 `ACN_ACCEPTANCE_MODEL_ID` 选择该提供商下其他已配置模型。凭据只传给子进程，模型请求会访问所选提供商。脚本创建临时工作区、知识目录和 DSH profile，并输出网页地址；日常配置不变。停止脚本会结束其创建的服务。macOS / Linux 调试期间向该脚本进程发送 `SIGUSR1` 可只重启它创建的 DSH，保留测试服务与数据；新网页地址会再次输出。Windows 不支持此信号，需停止脚本后使用相同 `ACN_WEB_HOME` 重新启动。
+脚本默认使用 `deepseek-v4-flash-api`；可通过 `ACN_ACCEPTANCE_MODEL_ID` 选择该提供商下其他已配置模型。凭据只传给子进程，模型请求会访问所选提供商。脚本创建临时工作区、知识目录和 DSH profile，并输出可在浏览器打开的本地调试地址；日常配置不变。停止脚本会结束其创建的服务。macOS / Linux 调试期间向该脚本进程发送 `SIGUSR1` 可只重启它创建的 DSH，保留测试服务与数据；新调试地址会再次输出。Windows 不支持此信号，需停止脚本后使用相同 `ACN_WEB_HOME` 重新启动。
 
-只验证安装与网页配置时使用：
+从空白环境验证插件安装与设置时使用：
 
 ```sh
 ACN_WEB_INSTALL=browser pnpm smoke:web
 ```
 
-此模式不预装 ACN、不预填其配置，也不生成 seed Claim。按[使用指南](user-guide.md)安装输出的 tarball，填写配置并保存。以相同 `ACN_WEB_HOME` 重启，可检查保存与恢复；已有 profile 不会再次初始化。
+此模式不预装 ACN、不预填其配置，也不生成 seed Claim。按[使用指南](user_guide.md)安装输出的 tarball，填写配置并保存。以相同 `ACN_WEB_HOME` 重启，可检查保存与恢复；已有 profile 不会再次初始化。
 
 不调用真实模型的流程调试可使用 `ACN_WEB_MODEL=local pnpm smoke:web`。这是预设响应的本地测试模型，不适合评价知识质量。
 
-建议检查以下稳定行为，而不是只看任务是否显示成功：
+验收应核对以下行为和实际产物：
 
 - 安装、启用、保存、重读草稿与重启后，身份、目录和模型配置符合预期。
 - 多个具名连接可检查、离线保存、停用和恢复；新会话按默认工作配置预选、首发前可改选并等待内化，首发后归属固定。
@@ -96,7 +98,7 @@ ACN_WEB_INSTALL=browser pnpm smoke:web
 
 在「团队鉴权密钥」输入随机测试 key，确认默认掩码、眼睛按钮显隐、空值保留及取消草稿；连接检查不写入托管存储，保存配置才保存密钥。确认自动引用只进入插件 YAML、密钥只进入宿主托管存储，新启动会话采用新引用，驻留实例保留原连接，释放后重新加载实例使用同 upstream 当前连接；同时检查带路径前缀的服务地址。展开本地和缺失的来源 Claim，确认返回时保留原详情与筛选，浏览不触发网络和模型。
 
-同时启动参考服务和一个可从网页安装插件的隔离 DSH：
+同时启动参考服务和用于验证插件安装、团队配置的隔离 DSH 实例：
 
 ```sh
 ACN_REPO=/path/to/reference \
@@ -104,7 +106,7 @@ ACN_CONTRACT_WEB_HOME=/path/to/isolated-web-check \
 pnpm test:contract
 ```
 
-该命令先构建 Router / Maintainer，再为 `agent-a`、`agent-b` 生成临时凭据，启动两项服务和网页宿主。脚本预配置 `ACN_TEST_TEAM_CREDENTIAL` 与 `ACN_TEST_OTHER_CREDENTIAL` 的兼容引用；页面无需填写引用名。正常新建工作配置时直接输入成员 key，地址使用脚本实际输出的回环 endpoint。停止脚本会结束这些服务并清理临时团队数据。
+该命令先构建 Router / Maintainer，再为 `agent-a`、`agent-b` 生成临时凭据，启动两项服务和用于浏览器调试的 DSH 实例。脚本预配置 `ACN_TEST_TEAM_CREDENTIAL` 与 `ACN_TEST_OTHER_CREDENTIAL` 的兼容引用；页面无需填写引用名。正常新建工作配置时直接输入成员 key，地址使用脚本实际输出的回环 endpoint。停止脚本会结束这些服务并清理临时团队数据。
 
 此模式默认不启用 Router 模型检索或 Maintainer 自动仲裁，只验证通信。需要评价模型仲裁时，应另行在服务端配置 Maintainer 模型并启用仲裁；推荐保持 Router 为词法检索，避免[已知重排限制](outstanding-issues.md#团队仲裁与信息边界)。插件中的模型选项不会替团队服务配置模型。
 
@@ -164,7 +166,7 @@ pnpm pack --pack-destination .artifacts
 pnpm smoke:install
 ```
 
-提交前的本机验证不触发远端 CI，Windows runner 的结果应在工作流实际运行后确认。团队契约 job 需要仓库变量 `ACN_REFERENCE_REPOSITORY`，其值为参考源码仓库；私有跨仓库访问另用 `ACN_REFERENCE_TOKEN` secret。缺少参考仓库变量会明确失败，不会跳过契约检查。
+提交前的本机验证不触发远端 CI，Windows runner 的结果应在工作流实际运行后确认。团队契约 job 需要仓库变量 `ACN_REFERENCE_REPOSITORY`，其值为 `FTShare-Lab/agent-claim-network`（不带 URL 协议或 `.git` 后缀）；私有跨仓库访问另用 `ACN_REFERENCE_TOKEN` secret。缺少参考仓库变量会明确失败，不会跳过契约检查。
 
 参考提交与 fixture 应一起维护。升级 ACN 或 DSH 后，先核对协议、事件、工具门禁、模型取消和卸载边界，再运行上述检查。测试是否通过以本次命令退出码及 CI 结果为准，不把旧报告的通过数量当作当前结论。
 

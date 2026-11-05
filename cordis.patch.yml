@@ -11,22 +11,22 @@
         acnMemory: true
       config:
         - id: acn-configuration
-          name: dsh-plugin-acn
+          name: '@ftai/dsh-plugin-acn'
         - id: acn-knowledge
-          name: dsh-plugin-acn/knowledge
+          name: '@ftai/dsh-plugin-acn/knowledge'
           config:
             agentId: ''
         - id: acn-prompt
-          name: dsh-plugin-acn/prompt
+          name: '@ftai/dsh-plugin-acn/prompt'
         - id: acn-tools
-          name: dsh-plugin-acn/tools
+          name: '@ftai/dsh-plugin-acn/tools'
         - id: acn-formation
-          name: dsh-plugin-acn/formation
+          name: '@ftai/dsh-plugin-acn/formation'
         - id: acn-inbox
-          name: dsh-plugin-acn/inbox
+          name: '@ftai/dsh-plugin-acn/inbox'
         - id: acn-dream
-          name: dsh-plugin-acn/dream
+          name: '@ftai/dsh-plugin-acn/dream'
         - id: acn-memory
-          name: dsh-plugin-acn/memory
+          name: '@ftai/dsh-plugin-acn/memory'
         - id: acn-commands
-          name: dsh-plugin-acn/commands
+          name: '@ftai/dsh-plugin-acn/commands'
