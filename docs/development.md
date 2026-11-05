@@ -56,7 +56,9 @@ npm whoami --registry=https://registry.npmjs.org/
 npm publish .artifacts/release/ftai-dsh-plugin-acn-0.1.0.tgz --access public --registry=https://registry.npmjs.org/
 ```
 
-按 npm 提示完成账号认证。发布成功后，在全新 DSH profile 按 `@ftai/dsh-plugin-acn@0.1.0` 安装复验，将中英文 README 和使用指南的首选安装方式改为 npm，并为实际发布提交建立版本 tag。后续版本替换命令中的版本号；已发布的同名同版本不能覆盖。仓库、主页及问题反馈地址指向本插件仓库，团队服务部署链接继续指向 ACN 官方仓库。
+按 npm 提示完成账号认证。发布成功后，在全新 DSH profile 按 `@ftai/dsh-plugin-acn@0.1.0` 安装复验，为实际发布提交建立版本 tag，并创建对应的 GitHub Release，列出变化和升级注意事项，让订阅 Releases 的用户收到发版通知。发布前同步检查中英文 README 和使用指南的安装说明。后续版本替换命令中的版本号；已发布的同名同版本不能覆盖。仓库、主页及问题反馈地址指向本插件仓库，团队服务部署链接继续指向 ACN 官方仓库。
+
+GitHub Release 使用与 npm 一致的版本号，例如 tag `v0.1.0`，指向该包对应的源码提交。正文简要列出主要功能或修复、兼容的 DSH 版本和平台、安装包名、升级步骤及需要用户注意的变化，并链接使用指南与 npm 包页面。建议附件上传与 npm 发布时完全相同的 `.tgz`，供需要安装包的用户下载；不另行构建 Mac、Windows 两份包。GitHub 自动生成的源码归档不含构建后的 `lib/`，不能替代该安装包。
 
 ## 隔离插件界面调试
 
