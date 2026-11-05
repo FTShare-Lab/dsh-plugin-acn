@@ -37,7 +37,7 @@ jobs:
       - run: pnpm test --maxWorkers=4
       - run: pnpm build
       - run: pnpm pack --pack-destination .artifacts
-      - run: pnpm add --global @deepseek-ai/dsh@0.2.1-rc.2
+      - run: npm install --global @deepseek-ai/dsh@0.2.1-rc.2
       - run: pnpm smoke:install
       - uses: actions/upload-artifact@v4
         with:
