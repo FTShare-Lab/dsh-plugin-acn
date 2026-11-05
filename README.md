@@ -1,10 +1,14 @@
-# ACN 记忆框架
+# ACN · Agent Claim Network
 
 [English](README_EN.md) · [使用指南](docs/user_guide.md) · [开发文档](docs/index.md)
 
 **让每个 Agent 的经验成为团队可复用的知识。**
 
-ACN 记忆框架是 DeepSeek Harness（DSH）的知识协作插件。它从工作对话中沉淀有依据、带适用范围的经验，并通过团队服务，让不同 Agent 分享结论、检索彼此的知识、处理分歧和接收团队建议。也可以个人使用，在自己的会话之间积累与复用知识；接入团队能更充分地发挥 ACN 的协作价值。
+**ACN（Agent Claim Network）是面向团队的记忆框架**，让不同 Agent 通过可复用的知识相互协作。本仓库是它的 DeepSeek Harness（DSH）插件：从工作对话中沉淀有依据、带适用范围的经验，并通过团队服务分享结论、检索已有知识、处理分歧和接收团队建议。也可以个人使用，在自己的会话之间积累与复用知识；接入团队能更充分地发挥 ACN 的协作价值。
+
+一条这样的经验称为 **Claim**：它记录了什么情况下可以采用什么结论，以及支持结论的证据和来源。
+
+![ACN 经验复用示意：Agent A 发现问题并沉淀 Claim，Agent B 在新任务中查找和复用](https://raw.githubusercontent.com/FTShare-Lab/dsh-plugin-acn/main/docs/assets/acn-claim-reuse.png)
 
 | 能力 | 你可以做什么 |
 | --- | --- |
@@ -14,9 +18,30 @@ ACN 记忆框架是 DeepSeek Harness（DSH）的知识协作插件。它从工�
 | 知识整理 | 使用 Dream 清理临时记录、整合相关知识 |
 | 知识与活动 | 阅读知识正文、返回来源会话，查看处理进度和失败原因 |
 
-![DSH 中的 ACN 工作配置](docs/assets/upstream-settings.png)
+![DSH 中的 ACN 工作配置](https://raw.githubusercontent.com/FTShare-Lab/dsh-plugin-acn/main/docs/assets/upstream-settings.png)
 
 本插件管理以 Claim 为主体的可复用经验，在接入团队时促进经验分享与流动；不维护私有 Memory 及其管理。知识提炼时会过滤工具名包含 `memory` 的工具调用及其结果（不区分大小写）。
+
+## Agent、Router、Maintainer 如何协作
+
+| 角色 | 负责什么 | 在哪里运行 |
+| --- | --- | --- |
+| **Agent（A）· 执行任务的助手** | 完成工作、沉淀 Claim，按需借用团队经验；发现结论冲突时上报 Dispute（争议） | 每位成员的 DSH，通过本插件接入 |
+| **Router（R）· 团队知识检索服务** | 从团队知识中查找相关 Claim，返回来源与争议信息，供 Agent 判断是否适用 | 团队自行部署的服务 |
+| **Maintainer（M）· 团队知识维护服务** | 接收 Claim 和争议，维护团队规则，向 Agent 发出知识维护建议 | 团队自行部署的服务 |
+
+![ACN 团队模式下 Agent、Router、Maintainer 与 Claim 的协作流程](https://raw.githubusercontent.com/FTShare-Lab/agent-claim-network/7aa7a8ab37654871c5969f4bb0d8c1235ff3f1b9/docs/assets/acn-team-claim-flow.webp)
+
+协作图中的私有 Memory 不共享；在 DSH 中，私有记忆由 DSH 及用户选用的记忆插件管理，本插件专注于 Claim 的积累与团队协作。
+
+<details>
+<summary>查看原生 ACN 的团队知识复用演示</summary>
+
+![原生 ACN 终端演示：借用团队里其他 Agent 的判断](https://raw.githubusercontent.com/FTShare-Lab/agent-claim-network/7aa7a8ab37654871c5969f4bb0d8c1235ff3f1b9/docs/assets/acn-demo.gif)
+
+演示中，Agent 通过 Router 找到同事留下的两条经验：数据在 09:30 后才完整，缺失字段的合计应标为“暂定”。它据此修改日报，并展示文件变更。演示使用原生 ACN 终端界面；本插件在 DSH 中提供相应的知识协作能力。
+
+</details>
 
 ## 开始使用
 
