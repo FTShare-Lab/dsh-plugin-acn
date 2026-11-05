@@ -92,6 +92,7 @@ if (scenario.startsWith('disabled_')) patches.push({ id: `acn-${scenario.slice('
 
 let ctx: Context | undefined;
 let harness: AgentLoopTestHarness | undefined;
+const model = new LocalModel(scenario === 'calibrated');
 try {
   ctx = await boot('acn-smoke', configPath, patches, async (root) => {
     if (installedBaseUrl !== undefined) {
@@ -107,12 +108,13 @@ try {
       await root.plugin(PluginPackages, { resolution });
     }
     await mountAgentLoopTestDependencies(root, { workingDirectory: true });
-    root.llm.registerAdapter(['local-model'], new LocalModel(scenario === 'calibrated'));
+    root.llm.registerAdapter(['local-model'], model);
     await root.plugin(Commands);
     harness = await mountAgentLoopTestHarness(root);
     root.logger.exporter({
       export: (message) => {
         if (message.type === 'info') process.stdout.write(`${String(message.args[0])}\n`);
+        else if (message.type === 'warn' || message.type === 'error') process.stderr.write(`${message.type}: ${message.args.map(String).join(' ')}\n`);
       },
     });
   }, installedBaseUrl ?? new URL('../../../package.json', import.meta.url).href);
@@ -172,7 +174,9 @@ try {
         assert.ok(Date.now() < deadline, 'Installed formation must reach applied.'); await delay(20);
       }
       const knowledge = scopedContext.get('acnKnowledge'); assert.ok(knowledge);
-      assert.equal((await knowledge.listClaims()).items.length, 1); assert.equal((await knowledge.listTraces()).items.length, 1);
+      const claims = await knowledge.listClaims();
+      assert.equal(claims.items.length, 1, JSON.stringify({ scenario, calls: model.calls, jobs: await formation.worker.queue.list(), state: await formation.transcript.state(agent.session.id), events: agent.session.snapshotEvents().map((event) => ({ type: event.type, seq: event.seq, ...event.type === 'turn/end' ? { reason: event.data.reason } : {} })) }));
+      assert.equal((await knowledge.listTraces()).items.length, 1, 'Installed formation must persist a Trace.');
     }
     if (!configured) await assert.rejects(access(home), { code: 'ENOENT' });
     if (scenario === 'dispose') {
