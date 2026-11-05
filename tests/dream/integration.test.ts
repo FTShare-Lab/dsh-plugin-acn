@@ -222,6 +222,8 @@ describe('Dream through durable worker', () => {
     const f = await dreamFixture(async (...args) => { calls += 1; const request = JSON.parse(args[2]) as { phase: string; validation: unknown }; if (request.phase === 'review') { const validation = ValidationSchema.parse(request.validation); const jobs = await f.worker.queue.list(); const job = jobs.find((value) => value.kind === 'dream'); if (!job) throw new Error('Missing job.'); blockedPath = join(f.knowledge.context().paths.dreamJob(job.id), 'executions', `${validation.validation_id}.md`); await fs.mkdir(blockedPath, { recursive: true }); } return backend(...args); });
     try {
       await f.start(); const job = await f.dream.request(); await until(async () => (await f.knowledge.dreamStore().records(job.id)).length === 1, 'prepared receipt');
+      // prepared 文件可先于审计失败可见；确认原执行已退回队列后再解除故障。
+      await until(async () => { const saved = await f.worker.queue.read(job.id); return saved?.state === 'queued' && saved.lastErrorKind === 'storage'; }, 'audit failure persisted');
       expect(await new ClaimStore(f.knowledge.context()).list()).toEqual(input); expect(await new TraceStore(f.knowledge.context()).list()).toEqual([]);
       await fs.rm(blockedPath, { recursive: true }); await f.knowledge.dreamStore().recover(); await waitJob(f.worker.queue, job.id); expect(calls).toBe(3); expect((await f.knowledge.dreamStore().progress(job.id))?.entries[0]?.status).toBe('executed');
     } finally { await f.close(); }
