@@ -25,7 +25,7 @@ ACN 让不同 Agent 的工作经验在团队中流动：分享有依据的结论
 
 完成安装并启用 **ACN记忆框架**。
 
-不写版本号时，安装 npm 上 `latest` 标签对应的版本。需要特定版本时，在包名后加 `@版本号`，例如 `@ftai/dsh-plugin-acn@0.1.0`。
+不写版本号时，安装 npm 上 `latest` 标签对应的版本。需要特定版本时，在包名后加 `@版本号`，例如 `@ftai/dsh-plugin-acn@0.1.1`。
 
 ![在 DSH 中按 npm 包名添加插件](assets/install-package.png)
 

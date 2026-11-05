@@ -45,7 +45,7 @@ pnpm smoke:install
 
 ```sh
 pnpm pack --pack-destination .artifacts/release
-npm publish .artifacts/release/ftai-dsh-plugin-acn-0.1.0.tgz --dry-run --access public --registry=https://registry.npmjs.org/
+npm publish .artifacts/release/ftai-dsh-plugin-acn-0.1.1.tgz --dry-run --access public --registry=https://registry.npmjs.org/
 ```
 
 检查包内包含构建后的 `lib/`、提示词和文档，不含凭据、个人信息或测试日志；使用该包完成隔离安装。`--dry-run` 不上传内容，也不验证账号发布权限。准备完成后登录并发布已检查的包：
@@ -53,12 +53,12 @@ npm publish .artifacts/release/ftai-dsh-plugin-acn-0.1.0.tgz --dry-run --access 
 ```sh
 npm login --registry=https://registry.npmjs.org/
 npm whoami --registry=https://registry.npmjs.org/
-npm publish .artifacts/release/ftai-dsh-plugin-acn-0.1.0.tgz --access public --registry=https://registry.npmjs.org/
+npm publish .artifacts/release/ftai-dsh-plugin-acn-0.1.1.tgz --access public --registry=https://registry.npmjs.org/
 ```
 
-按 npm 提示完成账号认证。发布成功后，在全新 DSH profile 按 `@ftai/dsh-plugin-acn@0.1.0` 安装复验，为实际发布提交建立版本 tag，并创建对应的 GitHub Release，列出变化和升级注意事项，让订阅 Releases 的用户收到发版通知。发布前同步检查中英文 README 和使用指南的安装说明。后续版本替换命令中的版本号；已发布的同名同版本不能覆盖。仓库、主页及问题反馈地址指向本插件仓库，团队服务部署链接继续指向 ACN 官方仓库。
+发布前同步检查中英文 README 和使用指南，使用同一份安装包完成 Mac、Windows 验收，再提交版本变更并建立版本 tag。确认源码提交和 tag 的 CI 均通过后，创建对应的 GitHub Release 并上传已验收的安装包。随后执行 npm 发布，按提示完成账号认证；发布成功后，在两个平台的全新 DSH profile 按 `@ftai/dsh-plugin-acn@0.1.1` 从 npm 安装复验，并确认不带版本号时也会安装新版。后续版本替换命令中的版本号；已发布的同名同版本不能覆盖。仓库、主页及问题反馈地址指向本插件仓库，团队服务部署链接继续指向 ACN 官方仓库。
 
-GitHub Release 使用与 npm 一致的版本号，例如 tag `v0.1.0`，指向该包对应的源码提交。正文简要列出主要功能或修复、兼容的 DSH 版本和平台、安装包名、升级步骤及需要用户注意的变化，并链接使用指南与 npm 包页面。建议附件上传与 npm 发布时完全相同的 `.tgz`，供需要安装包的用户下载；不另行构建 Mac、Windows 两份包。GitHub 自动生成的源码归档不含构建后的 `lib/`，不能替代该安装包。
+GitHub Release 使用与 npm 一致的版本号，例如 tag `v0.1.1`，指向该包对应的源码提交。正文简要列出主要功能或修复、兼容的 DSH 版本和平台、安装包名、升级步骤及需要用户注意的变化，并链接使用指南与 npm 包页面。建议附件上传与 npm 发布时完全相同的 `.tgz`，供需要安装包的用户下载；不另行构建 Mac、Windows 两份包。GitHub 自动生成的源码归档不含构建后的 `lib/`，不能替代该安装包。
 
 ## 隔离插件界面调试
 

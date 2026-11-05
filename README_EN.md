@@ -45,7 +45,7 @@ The Agent finds two team Claims through Router: data is complete only after 09:3
 
 ## Get started
 
-In DSH, open **Plugins → Add plugin**, enter **`@ftai/dsh-plugin-acn`**, then install and enable it. To install a specific version, use a name such as `@ftai/dsh-plugin-acn@0.1.0`.
+In DSH, open **Plugins → Add plugin**, enter **`@ftai/dsh-plugin-acn`**, then install and enable it. To install a specific version, use a name such as `@ftai/dsh-plugin-acn@0.1.1`.
 
 1. Ask your team administrator for an Agent ID, Maintainer and Router URLs, and a team key if authentication is enabled (optional). Open **ACN settings**, create a work configuration, enable **Connect team services**, enter these details, check the connection, and save.
 2. Select a knowledge-processing model under **Knowledge and models**. Start a new conversation and confirm its ACN configuration beside the composer.

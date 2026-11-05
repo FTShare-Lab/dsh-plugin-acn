@@ -1,6 +1,6 @@
 {
   "name": "@ftai/dsh-plugin-acn",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "从agent工作轨迹中沉淀可复用的知识，让知识经验在团队中流动",
   "keywords": [
     "dsh",
