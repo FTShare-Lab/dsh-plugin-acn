@@ -46,6 +46,8 @@ for (const part of ['', ...group.config.filter((entry) => entry.name.startsWith(
       const images = [...detail.matchAll(/!\[[^\]]*\]\(([^)]+)\)/g)];
       assert.ok(images.length > 0, 'The localized detail must include the real configuration screenshot.');
       for (const image of images) {
+        // 公开托管的图片由客户端加载；这里只核对随包分发的相对资源。
+        if (/^https?:\/\//.test(image[1])) continue;
         const bytes = await readFile(join(dirname(detailPath), image[1]));
         assert.ok(bytes.length > 0, `Missing detail image: ${image[1]}`);
       }
