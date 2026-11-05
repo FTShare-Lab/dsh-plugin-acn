@@ -170,7 +170,8 @@ try {
       for (;;) {
         const jobs = await formation.worker.queue.list();
         assert.ok(!jobs.some((job) => job.state === 'failed'), 'Installed formation job must succeed.');
-        if (jobs.length > 0 && jobs.every((job) => job.state === 'succeeded')) break;
+        // 其他后台任务完成不能代替本会话的 Finalize；枚举未看到它时继续等待。
+        if (jobs.some((job) => job.kind === 'finalize' && job.sessionId === agent.session.id && job.state === 'succeeded')) break;
         assert.ok(Date.now() < deadline, 'Installed formation must reach applied.'); await delay(20);
       }
       const knowledge = scopedContext.get('acnKnowledge'); assert.ok(knowledge);
