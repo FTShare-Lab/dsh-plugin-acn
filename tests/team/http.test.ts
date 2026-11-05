@@ -76,7 +76,7 @@ describe('team HTTP', () => {
     finally { await team.close(); await server.close(); }
   });
   it('uses direct transport only for loopback hosts and retains prefixes', () => {
-    for (const endpoint of ['http://localhost:8', 'http://127.0.0.1:8', 'http://[::1]:8']) expect(bypassProxy(endpoint)).toBe(true);
+    for (const endpoint of ['http://localhost:8', 'http://sub.localhost:8', 'http://127.0.0.1:8', 'http://127.2.3.4:8', 'http://[::1]:8']) expect(bypassProxy(endpoint)).toBe(true);
     for (const endpoint of ['https://example.com', 'https://localhost.example.com', 'https://127.0.0.1.example.com']) expect(bypassProxy(endpoint)).toBe(false);
     expect(teamUrl('https://example.com/prefix/', '/health')).toBe('https://example.com/prefix/health');
     expect(() => resolveConfig({ team: { routerEndpoint: 'https://example.com/?key=value', maintainerEndpoint: 'https://example.com' } })).toThrow();

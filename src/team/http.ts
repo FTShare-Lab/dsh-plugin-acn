@@ -1,6 +1,8 @@
-// 请求时解析凭据引用；回环直连，其他地址沿用环境代理，重试与响应校验有界。
+// 请求时解析凭据引用；回环直连，优先环境代理并支持系统代理，重试与响应校验有界。
 import { setTimeout as delay } from 'node:timers/promises';
-import { Agent, EnvHttpProxyAgent, fetch } from 'undici';
+import { isIP } from 'node:net';
+import { Agent, EnvHttpProxyAgent, ProxyAgent, fetch } from 'undici';
+import { systemProxyFor } from './system-proxy.js';
 import type { z } from 'zod';
 import type { ResolvedConfig } from '../config.js';
 import type { AgentId } from '../protocol/ids.js';
@@ -18,7 +20,8 @@ function connectionFailure(error: unknown, timedOut: boolean): ConnectionFailure
 }
 
 export function bypassProxy(endpoint: string): boolean {
-  return ['localhost', '127.0.0.1', '::1', '[::1]'].includes(new URL(endpoint).hostname.toLowerCase());
+  const host = new URL(endpoint).hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  return host === 'localhost' || host.endsWith('.localhost') || host === '::1' || isIP(host) === 4 && host.startsWith('127.');
 }
 export function teamUrl(endpoint: string, path: string): string {
   const url = new URL(endpoint);
@@ -27,10 +30,13 @@ export function teamUrl(endpoint: string, path: string): string {
   return url.href;
 }
 export class TeamHttp {
-  private readonly dispatcher: Agent | EnvHttpProxyAgent;
+  private readonly dispatcher: Promise<Agent | EnvHttpProxyAgent | ProxyAgent>;
   private readonly stop = new AbortController();
   constructor(readonly service: 'router' | 'maintainer', readonly endpoint: string, readonly agentId: AgentId, readonly config: ResolvedConfig['team'], private readonly credential: CredentialResolver = environmentCredential) {
-    this.dispatcher = bypassProxy(endpoint) ? new Agent() : new EnvHttpProxyAgent();
+    const hasEnvironmentProxy = ['http_proxy', 'HTTP_PROXY', 'https_proxy', 'HTTPS_PROXY', 'all_proxy', 'ALL_PROXY'].some((name) => Boolean(process.env[name]?.trim()));
+    const fallback = process.env['all_proxy'] || process.env['ALL_PROXY'];
+    const environment = fallback ? { httpProxy: process.env['http_proxy'] || process.env['HTTP_PROXY'] || fallback, httpsProxy: process.env['https_proxy'] || process.env['HTTPS_PROXY'] || fallback } : {};
+    this.dispatcher = bypassProxy(endpoint) ? Promise.resolve(new Agent()) : hasEnvironmentProxy ? Promise.resolve(new EnvHttpProxyAgent(environment)) : systemProxyFor(endpoint).then((proxy) => proxy ? new ProxyAgent(proxy) : new Agent());
   }
   async credentialConfigured(): Promise<boolean> { return this.config.keyEnv !== '' && Boolean(await this.credential(this.config.keyEnv)); }
   async post<T>(path: string, data: unknown, schema: z.ZodType<T>, signal?: AbortSignal): Promise<T>;
@@ -45,7 +51,7 @@ export class TeamHttp {
         if (combined.aborted) throw new TeamError(timeout.aborted ? 'retryable' : 'cancelled', this.service, operation);
         const key = this.config.keyEnv ? await abortable(this.credential(this.config.keyEnv), combined) ?? '' : '';
         const response = await fetch(teamUrl(this.endpoint, path), {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, dispatcher: this.dispatcher,
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, dispatcher: await abortable(this.dispatcher, combined),
           redirect: 'error', signal: combined,
           body: JSON.stringify({ auth: { agent_id: this.agentId, acn_key: key }, data }),
         });
@@ -78,5 +84,5 @@ export class TeamHttp {
       }
     }
   }
-  async close(): Promise<void> { this.stop.abort(); await this.dispatcher.destroy(); }
+  async close(): Promise<void> { this.stop.abort(); await (await this.dispatcher).destroy(); }
 }
