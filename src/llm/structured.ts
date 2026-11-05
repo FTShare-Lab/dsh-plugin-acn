@@ -65,6 +65,8 @@ export async function structuredCall<T>(options: {
   for (let attempt = 1; attempt <= config.structuredRetries; attempt += 1) {
     signal.throwIfAborted();
     for (let transport = 1; transport <= 3; transport += 1) {
+      // 上次调用的审计写入会让出执行权，期间取消后不能再发起下一次重试。
+      signal.throwIfAborted();
       let response: StructuredResponse | undefined;
       const startedAt = Date.now();
       const timeout = AbortSignal.timeout(config.timeoutMs);

@@ -24,7 +24,8 @@ export async function formationFixture(backend: StructuredBackend, config: Confi
   return { root, knowledge, formation, warnings, close: async () => { await formation.close(); await fs.rm(root, { recursive: true, force: true }); } };
 }
 export async function waitJob(queue: JobQueue, id: string, wanted: Job['state'] = 'succeeded'): Promise<Job> {
-  const deadline = Date.now() + 8000;
+  // Windows CI 的真实文件锁与 fsync 较慢；等待预算不改变任务结果断言。
+  const deadline = Date.now() + (process.platform === 'win32' ? 30_000 : 8000);
   let current;
   while (Date.now() < deadline) {
     current = await queue.read(id);

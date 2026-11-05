@@ -2,10 +2,29 @@
 import fs from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import { formationFixture, emptyOutput, waitJob } from './helpers.js';
-import { transportError } from '../../src/llm/structured.js';
+import { structuredCall, transportError } from '../../src/llm/structured.js';
 
 describe('auxiliary call transport policy', () => {
+  it('does not start another transport when cancellation arrives during audit persistence', async () => {
+    let calls = 0;
+    const backend = () => { calls += 1; return Promise.reject(Object.assign(new Error('Temporary failure'), { status: 503 })); };
+    const fixture = await formationFixture(backend);
+    const context = fixture.knowledge.context(); const controller = new AbortController();
+    const mkdir = fs.mkdir.bind(fs);
+    const writing = vi.spyOn(fs, 'mkdir').mockImplementation(async (...args) => {
+      if (args[0] === context.paths.llmCalls) controller.abort(new Error('Stopped during audit'));
+      return mkdir(...args);
+    });
+    try {
+      await expect(structuredCall({ backend, context, config: fixture.knowledge.config.llm,
+        route: { provider: 'mock', model: 'mock' }, jobId: 'cancel-audit', system: '', input: '',
+        schema: z.object({}), parse: (value) => value, signal: controller.signal,
+      })).rejects.toThrow('Stopped during audit');
+      expect(calls).toBe(1);
+    } finally { writing.mockRestore(); await fixture.close(); }
+  });
   it.each([
     { error: { code: 'AUTH' }, label: 'AUTH', retryable: false },
     { error: { code: 'PRIVATE_FAILURE_MARKER', status: 403 }, label: 'AUTH', retryable: false },
