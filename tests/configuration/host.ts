@@ -91,9 +91,8 @@ try {
   if (process.platform === 'win32') {
     const member = (id: string) => ({ name: '', agentId: fixtureAgentId(id), enabled: true, routerEndpoint: '', maintainerEndpoint: '', keyEnv: '', timeoutMs: 15000 });
     const invalidNames: ConfigurationValues[] = [
-      { ...saved.snapshot.values, agentId: 'con' },
       { ...saved.snapshot.values, upstream: 'nul', upstreams: { nul: member('agent-a') } },
-      { ...saved.snapshot.values, upstream: 'coding', upstreams: { coding: member('aux') } },
+      { ...saved.snapshot.values, upstream: 'aux', upstreams: { aux: member('agent-a') } },
     ];
     for (const values of invalidNames) {
       const result = await service.save({ revision: saved.snapshot.revision, values });

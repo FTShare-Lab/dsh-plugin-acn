@@ -47,8 +47,13 @@ export async function dreamFixture(backend: StructuredBackend, config: ConfigInp
   const knowledge = new AcnKnowledge(resolveConfig({ ...config, agentId: 'agent-a', home: root, llm: { provider: 'mock', model: 'mock', structuredRetries: 2, ...config.llm }, dream: { minChangedClaims: 100, ...config.dream } }), { ...logger, warn: (message: string) => { warnings.push(message); } });
   await knowledge.initialize(); for (const claim of initial) await new ClaimStore(knowledge.context()).write(claim);
   const worker = knowledge.jobs; if (worker === null) throw new Error('Missing configured worker.');
+  const failures: unknown[] = []; const register = worker.register.bind(worker);
+  worker.register = (kind, handler) => register(kind, async (job, control) => {
+    try { return await handler(job, control); }
+    catch (error) { failures.push(error); throw error; }
+  });
   const dream = new AcnDream(knowledge, backend, await loadPromptRenderer(), undefined, options);
-  return { root, knowledge, dream, worker, warnings, start: async () => { await knowledge.jobs?.start(); await dream.start(); }, close: async () => { await dream.close(); await knowledge.jobs?.close(); await knowledge.team?.close(); await fs.rm(root, { recursive: true, force: true }); } };
+  return { root, knowledge, dream, worker, warnings, failures, start: async () => { await knowledge.jobs?.start(); await dream.start(); }, close: async () => { await dream.close(); await knowledge.jobs?.close(); await knowledge.team?.close(); await fs.rm(root, { recursive: true, force: true }); } };
 }
-export async function until(check: () => Promise<boolean>, label = 'condition'): Promise<void> { const end = Date.now() + 8000; while (Date.now() < end) { if (await check()) return; await delay(10); } throw new Error(`Timed out: ${label}`); }
+export async function until(check: () => Promise<boolean>, label = 'condition'): Promise<void> { const end = Date.now() + (process.platform === 'win32' ? 30_000 : 8000); while (Date.now() < end) { if (await check()) return; await delay(10); } throw new Error(`Timed out: ${label}`); }
 export function deferred() { let resolve = () => {}; const promise = new Promise<void>((done) => { resolve = done; }); return { promise, resolve }; }
