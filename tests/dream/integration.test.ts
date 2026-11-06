@@ -176,7 +176,7 @@ describe('Dream through durable worker', () => {
       const report = await fs.readFile(join(f.knowledge.context().paths.dreamJob(job.id), 'report.md'), 'utf8'); expect(report).toContain('group-a'); expect(report).toContain('included');
       const executions = await fs.readdir(join(f.knowledge.context().paths.dreamJob(job.id), 'executions')); expect(executions.filter((name) => name.endsWith('.md'))).toHaveLength(2);
       expect((await new UploadStore(f.knowledge.context()).read()).claims).toEqual([]); await expect(fs.stat(f.knowledge.context().paths.pendingUploads)).rejects.toMatchObject({ code: 'ENOENT' });
-    } catch (error) { throw new Error('Dream fixture did not finish.', { cause: f.failures.at(-1) ?? error }); }
+    } catch (error) { throw new AggregateError(f.failures, 'Dream fixture did not finish.', { cause: error }); }
     finally { await f.close(); }
   });
   it('allows zero changes and explicitly kept candidates without a quota', async () => {
