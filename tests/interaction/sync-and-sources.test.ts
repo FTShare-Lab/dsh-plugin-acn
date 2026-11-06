@@ -23,14 +23,14 @@ it('only shows synced for the exact acknowledged version and destination', async
     const context = f.knowledge.context(); const queue = new UploadStore(context); await queue.enqueue([f.claim], [], true);
     const deliver = new UploadDelivery(context, f.knowledge.team);
     await deliver.deliver();
-    expect((await executeInteraction(f.ctx, { action: 'knowledge', key: 'legacy' })).knowledge?.items[0]?.delivery).toBe('pending');
+    expect((await executeInteraction(f.ctx, { action: 'knowledge', key: 'personal' })).knowledge?.items[0]?.delivery).toBe('pending');
     failed = false; await deliver.deliver();
-    expect((await executeInteraction(f.ctx, { action: 'knowledge', key: 'legacy', delivery: 'synced' })).knowledge?.items.map((item) => item.id)).toEqual([f.claim.id]);
+    expect((await executeInteraction(f.ctx, { action: 'knowledge', key: 'personal', delivery: 'synced' })).knowledge?.items.map((item) => item.id)).toEqual([f.claim.id]);
     await new ClaimStore(context).write({ ...f.claim, statement: 'A later local version.' });
-    expect((await executeInteraction(f.ctx, { action: 'knowledge', key: 'legacy', delivery: 'synced' })).knowledge?.items).toEqual([]);
+    expect((await executeInteraction(f.ctx, { action: 'knowledge', key: 'personal', delivery: 'synced' })).knowledge?.items).toEqual([]);
     await new ClaimStore(context).write(f.claim);
     await new DeliveryStatusStore(context).acknowledge('claim', f.claim.id, claimRevision(f.claim), 'https://maintainer.example.org');
-    expect((await executeInteraction(f.ctx, { action: 'knowledge', key: 'legacy', delivery: 'synced' })).knowledge?.items).toEqual([]);
+    expect((await executeInteraction(f.ctx, { action: 'knowledge', key: 'personal', delivery: 'synced' })).knowledge?.items).toEqual([]);
   } finally { await f.close(); await server.close(); }
 });
 it('keeps a recorded source after the latest checkpoint changes and inspects cold sources without resuming', async () => {

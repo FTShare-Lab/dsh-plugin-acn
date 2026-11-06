@@ -55,6 +55,8 @@
 
 每份工作配置保存各自的知识。同一配置可跨项目复用，不同配置相互隔离；会话开始后归属固定。安装、选择配置、团队连接和常见问题见[使用指南](docs/user_guide.md)。
 
+已有按账号组织的 ACN 知识目录时，可在「知识与模型 → 知识目录」选择包含 `settings.json` 和 `upstreams/` 的账号目录，自动加载原工作配置和知识，并在原位置继续使用。
+
 ## 版本更新
 
 可在 [GitHub 仓库](https://github.com/FTShare-Lab/dsh-plugin-acn)选择「Watch → Custom → Releases」，订阅发版通知。当前 DSH 不会自动提醒本插件有新版本，也不会自动升级。

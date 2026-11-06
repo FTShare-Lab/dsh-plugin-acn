@@ -5,12 +5,12 @@ import type { Activity, InteractionRequest } from '../interaction.js';
 import { displayMessage } from '../interaction-messages.js';
 import { Button, muted } from './interaction-ui.js';
 import type { Copy } from './interaction-ui.js';
-export function activityKind(kind: string, c: Copy): string { return ({ recap: c('会话复盘', 'Session recap'), finalize: c('会话收尾', 'Session finalization'), inbox: c('团队收件', 'Team Inbox'), dream: c('Dream 整理', 'Dream'), delivery: c('团队投递', 'Team delivery') })[kind] ?? kind; }
+export function activityKind(kind: string, c: Copy): string { return ({ recap: c('会话复盘', 'Session recap'), finalize: c('会话收尾', 'Session finalization'), inbox: c('团队收件', 'Team Inbox'), dream: c('Dream 整理', 'Dream'), delivery: c('团队投递', 'Team delivery'), history: c('历史知识处理', 'Historical knowledge processing') })[kind] ?? kind; }
 export function activityState(item: Activity, c: Copy): string {
   if (item.state === 'succeeded' && item.incompleteCandidates?.length) return c('部分完成，有未完成项', 'Partially completed; unfinished items');
   if (item.state === 'succeeded' && item.budgetLimited) return c('已按额度收尾', 'Closed at the request budget');
   if (item.state === 'succeeded' && item.warnings?.length) return c('本地完成，有警告', 'Locally completed with warnings');
-  return ({ queued: c('等待处理', 'Queued'), running: c('正在处理', 'Running'), succeeded: c('本地处理完成', 'Locally completed'), failed: c('处理失败', 'Failed'), paused: c('已暂停', 'Paused'), rejected: c('团队拒绝，未投递', 'Rejected; not delivered') })[item.state] ?? item.state;
+  return ({ queued: c('等待处理', 'Queued'), running: c('正在处理', 'Running'), succeeded: c('本地处理完成', 'Locally completed'), failed: c('处理失败', 'Failed'), paused: c('已暂停', 'Paused'), cancelled: c('已取消', 'Cancelled'), rejected: c('团队拒绝，未投递', 'Rejected; not delivered') })[item.state] ?? item.state;
 }
 export function activitySummary(item: Activity, c: Copy): string {
   if (c('中文', 'English') === '中文') return item.summary;
@@ -40,7 +40,7 @@ export function ActivityDetails({ item, runtimeKey, busy, c, api, showSummary = 
     <p style={muted}>{item.entityId ?? item.id}{(item.kind !== 'delivery' || item.attempts > 0) && <> · {c('尝试次数', 'Attempts')}: {item.attempts}</>}</p>
     {item.sessionId && <div className="acn-source-sessions"><span className="acn-help">{c('来源会话', 'Source session')}</span><SourceSessionLink source={item.source ?? { id: item.sessionId, available: true }} api={api} c={c} open={openSource} /></div>}
     {handlerInactive && openComponents && <div><Button disabled={busy} onClick={openComponents}>{c('前往插件管理', 'Open plugin manager')}</Button></div>}
-    {item.kind !== 'delivery' && (item.state === 'failed' || item.state === 'paused') && <Button disabled={busy || handlerInactive} onClick={() => { action({ action: 'retry', key: runtimeKey, id: item.id }); }}>{handlerInactive ? c('启用组件后继续', 'Enable the component to continue') : item.state === 'paused' ? c('继续任务', 'Continue task') : c('重试任务', 'Retry task')}</Button>}
+    {item.kind !== 'delivery' && item.retryable !== false && (item.state === 'failed' || item.state === 'paused') && <Button disabled={busy || handlerInactive} onClick={() => { action({ action: 'retry', key: runtimeKey, id: item.id }); }}>{handlerInactive ? c('启用组件后继续', 'Enable the component to continue') : item.state === 'paused' ? c('继续任务', 'Continue task') : c('重试任务', 'Retry task')}</Button>}
     {item.kind === 'delivery' && item.retryable && <Button disabled={busy} onClick={() => { action({ action: 'retry_delivery', key: runtimeKey }); }}>{c('重试团队投递', 'Retry team delivery')}</Button>}
     {item.state === 'rejected' && !item.acknowledged && <Button disabled={busy} onClick={() => { action({ action: 'ack', key: runtimeKey, id: item.id, version: item.updatedAt }); }}>{c('标记已知悉', 'Mark acknowledged')}</Button>}
     {item.kind === 'dream' && item.state === 'succeeded' && (item.budgetLimited || Boolean(item.incompleteCandidates?.length)) && <Button disabled={busy} title={c('会调用知识模型并读取当前 Claim', 'Uses the knowledge model and reads current claims')} onClick={() => { action({ action: 'dream_again', key: runtimeKey, id: item.id }); }}>{c('重新整理当前知识', 'Start a new Dream')}</Button>}

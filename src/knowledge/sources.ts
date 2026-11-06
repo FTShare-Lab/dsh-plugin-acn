@@ -6,11 +6,13 @@ import { DreamStore } from '../dream/checkpoint.js';
 import { JobQueue } from '../worker/queue.js';
 import { z } from 'zod';
 import { ClaimIdSchema } from '../protocol/ids.js';
+import { historicalKnowledge } from '../store/history.js';
 
 export async function knowledgeSources(context: StoreContext, entityIds: readonly string[]): Promise<Map<string, string[]>> {
   const wanted = new Set(entityIds); const sources = new Map<string, Set<string>>();
   const add = (ids: readonly string[], session: string) => { for (const id of ids) if (wanted.has(id)) { const values = sources.get(id) ?? new Set<string>(); values.add(session); sources.set(id, values); } };
   if (wanted.size === 0) return new Map();
+  for (const [id, sessions] of (await historicalKnowledge(context)).sources) for (const session of sessions) add([id], session);
   const formation = new FormationStore(context);
   for (const session of await new TranscriptStore(context).sessions()) {
     try {

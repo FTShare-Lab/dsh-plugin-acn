@@ -1,13 +1,13 @@
 // 普通文件能力不能读取私有 Agent 根，避免从快照、回执或别名绕过领域工具。
 import fs from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import type { Context } from '@deepseek-ai/cordis';
 import type { FsTarget } from '@deepseek-ai/dsh-fs';
 import type {} from '@deepseek-ai/dsh-working-directory';
 import type { ToolExecution } from '@deepseek-ai/dsh-tools';
 import { createHash } from 'node:crypto';
 import type { AcnKnowledge } from '../knowledge/service.js';
-import { agentHomePath } from '../store/paths.js';
+import { expandHomePath } from '../store/paths.js';
 import { hasCode } from '../store/errors.js';
 
 const fileTools = new Set(['read', 'read_image', 'write', 'edit', 'grep', 'glob', 'str_replace_editor']);
@@ -27,7 +27,7 @@ async function* linkedFiles(root: string, signal: AbortSignal): AsyncGenerator<s
   }
 }
 export function protectKnowledgePaths(ctx: Context, knowledge: AcnKnowledge): void {
-  const privateHome = dirname(dirname(agentHomePath(knowledge.config.home, 'private-root')));
+  const privateHome = resolve(expandHomePath(knowledge.config.home));
   const privateAlias = async (path: string, recursive: boolean, signal: AbortSignal) => {
     const privateLinks = new Set<string>();
     for await (const identity of linkedFiles(privateHome, signal)) privateLinks.add(identity);
@@ -38,7 +38,7 @@ export function protectKnowledgePaths(ctx: Context, knowledge: AcnKnowledge): vo
   };
   const validated = new WeakMap<object, { fingerprint: string; cwd: string }>();
   const targetAllowed = async (target: FsTarget, recursive: boolean, signal?: AbortSignal): Promise<boolean> => {
-    const mapped = ctx.fs.processPathFromHostPath(dirname(dirname(agentHomePath(knowledge.config.home, 'private-root')))); if (mapped === undefined) return true;
+    const mapped = ctx.fs.processPathFromHostPath(resolve(expandHomePath(knowledge.config.home))); if (mapped === undefined) return true;
     const root = await ctx.fs.resolve(mapped, signal === undefined ? {} : { signal });
     return !ctx.fs.contains(root, target) && !(recursive && ctx.fs.contains(target, root));
   };

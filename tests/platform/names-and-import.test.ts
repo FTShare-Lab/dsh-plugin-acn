@@ -1,4 +1,5 @@
 // 本地 Windows 名称与导入解析独立验证，macOS 沿用原命令与协议 ID。
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -19,8 +20,8 @@ describe('local directory names', () => {
   it('keeps protocol IDs independent of local filesystem validation', () => {
     expect(AgentIdSchema.parse('con')).toBe('con');
     const config = resolveConfig({ upstream: 'nul', upstreams: { nul: { agentId: 'agent-a' } } });
-    if (process.platform === 'win32') { expect(() => agentHomePath('D:/ACN', 'con')).toThrow(/Windows reserved/); expect(() => resolveUpstream(config, 'nul')).toThrow(/Windows reserved/); }
-    else { expect(agentHomePath('~/.acn-dsh', 'con')).toBe(join(homedir(), '.acn-dsh', 'agents', 'con')); expect(resolveUpstream(config, 'nul')).toBeDefined(); }
+    if (process.platform === 'win32') { expect(agentHomePath('D:/ACN', 'con')).toContain('upstreams'); expect(() => resolveUpstream(config, 'nul')).toThrow(/Windows reserved/); }
+    else { expect(agentHomePath('~/.acn-dsh', 'con')).toBe(join(homedir(), '.acn-dsh', 'upstreams', 'personal', 'agents', createHash('sha256').update('agent\0con').digest('hex'))); expect(resolveUpstream(config, 'nul')).toBeDefined(); }
   });
 });
 describe('Windows import paths', () => {

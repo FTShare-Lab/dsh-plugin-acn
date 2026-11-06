@@ -50,7 +50,8 @@ describe('upstream settings', () => {
     fireEvent.change(screen.getByLabelText('Agent ID'), { target: { value: 'coding' } });
     fireEvent.click(screen.getByRole('button', { name: '保存配置' }));
     await waitFor(() => { expect(api.save).toHaveBeenCalled(); });
-    expect(vi.mocked(api.save).mock.calls[0]?.[0].values).toMatchObject({ upstream: 'coding', upstreams: { coding: { name: 'coding', agentId: 'coding', routerEndpoint: '', maintainerEndpoint: '' } } });
+    const submitted = vi.mocked(api.save).mock.calls[0]?.[0].values; const key = submitted?.upstream ?? '';
+    expect(key).toMatch(/^[0-9a-f-]{36}$/); expect(submitted?.upstreams?.[key]).toMatchObject({ name: 'coding', agentId: 'coding', routerEndpoint: '', maintainerEndpoint: '' });
     expect(api.interact).not.toHaveBeenCalled();
   });
   it.each([

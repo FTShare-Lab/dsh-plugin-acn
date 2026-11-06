@@ -12,6 +12,7 @@ export function configurationFieldError(path: string, c: Copy): string {
     routerEndpoint: c('Router 地址：以 http:// 或 https:// 开头，不含用户名、密码、查询参数或片段；两项团队地址需同时填写或留空。', 'Router URL: use http:// or https:// without username, password, query or fragment; set both team URLs or leave both empty.'),
     maintainerEndpoint: c('Maintainer 地址：以 http:// 或 https:// 开头，不含用户名、密码、查询参数或片段；两项团队地址需同时填写或留空。', 'Maintainer URL: use http:// or https:// without username, password, query or fragment; set both team URLs or leave both empty.'),
     home: c('知识目录：请填写非空的本机目录路径。', 'Knowledge directory: enter a nonempty host directory path.'),
+    libraryIndex: c('知识目录：无法读取有效的工作配置索引，请选择包含 settings.json 和 upstreams 的账号目录。原配置未改动。', 'Knowledge directory: the configuration index could not be read. Select the account directory containing settings.json and upstreams. The previous configuration is retained.'),
     upstream: c('默认工作配置：请选择已启用的配置。', 'Default work configuration: choose an enabled configuration.'),
   };
   return messages[field] ?? `${c('请检查配置字段', 'Check configuration field')}: ${path || c('工作配置', 'Work configuration')}`;

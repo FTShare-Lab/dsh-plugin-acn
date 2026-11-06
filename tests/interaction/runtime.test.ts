@@ -177,9 +177,9 @@ describe('session team interaction', () => {
       await turn(agent); expect(adapter.requests).toHaveLength(2);
     } finally { await flow.close(); await server.close(); }
   });
-  it.each(['personal', 'team-a'])('runs %s Dream in its own identity when the legacy connection is disabled', async (key) => {
+  it.each(['personal', 'team-a'])('runs %s Dream in its own identity when another configuration is disabled', async (key) => {
     const server = await teamServer((request) => reply(request.path)); const adapter = new ScriptAdapter([finishDream(), finishDream()]);
-    const flow = await flowHarness(adapter, { inbox: true, dream: true, config: { ...config(server.endpoint), team: { routerEndpoint: server.endpoint, maintainerEndpoint: server.endpoint }, legacyEnabled: false, dream: { enabled: true, minChangedClaims: 1000 } } });
+    const flow = await flowHarness(adapter, { inbox: true, dream: true, config: { upstream: 'personal', upstreams: { personal: { agentId: 'agent-a' }, 'team-a': { agentId: 'member-a', routerEndpoint: server.endpoint, maintainerEndpoint: server.endpoint }, disabled: { agentId: 'agent-disabled', enabled: false } }, dream: { enabled: true, minChangedClaims: 1000 } } });
     try {
       const agent = await flow.create(); const pool = flow.ctx.acnRuntime; await pool.select(agent.session.header, key);
       const services = await pool.service(agent.session.header); const knowledge = services.knowledge;

@@ -15,12 +15,8 @@ export const UpstreamSchema = z.strictObject({
   name: z.string().trim().max(80).default(''), agentId: AgentIdSchema, enabled: z.boolean().default(true),
   routerEndpoint: endpoint.default(''), maintainerEndpoint: endpoint.default(''),
   keyEnv: z.string().regex(/^(?:[A-Za-z_][A-Za-z0-9_]*)?$/).default(''), timeoutMs: positive().default(15_000),
-  // 旧安装只记录可推导的目录种类，不能把界面输入变成任意存储路径。
-  legacyStorage: z.enum(['base', 'personal', 'connection']).optional(),
-  legacyKey: z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/).optional(),
 }).superRefine((value, ctx) => {
   if (Boolean(value.routerEndpoint) !== Boolean(value.maintainerEndpoint)) ctx.addIssue({ code: 'custom', path: ['routerEndpoint'], message: 'Configure both team endpoints or neither.' });
-  if ((value.legacyStorage === 'connection') !== (value.legacyKey !== undefined)) ctx.addIssue({ code: 'custom', path: ['legacyStorage'], message: 'Invalid legacy storage mapping.' });
 });
 export type Upstream = z.infer<typeof UpstreamSchema>;
 
@@ -98,14 +94,16 @@ export function upstreamsOf(config: ResolvedConfig): Record<string, Upstream> {
   if (config.upstreams !== undefined) return config.upstreams;
   const items: Record<string, Upstream> = {};
   if (config.agentId !== '') {
-    items['personal'] = UpstreamSchema.parse({ name: '个人知识', agentId: config.agentId, legacyStorage: config.team.routerEndpoint ? 'personal' : 'base' });
-    if (config.team.routerEndpoint) items['legacy'] = UpstreamSchema.parse({ name: '原有团队', agentId: config.agentId, enabled: config.legacyEnabled, routerEndpoint: config.team.routerEndpoint, maintainerEndpoint: config.team.maintainerEndpoint, keyEnv: config.team.keyEnv, timeoutMs: config.team.timeoutMs, legacyStorage: 'base' });
+    items['personal'] = UpstreamSchema.parse({ name: config.team.routerEndpoint ? '团队' : '个人知识', agentId: config.agentId, enabled: config.legacyEnabled, routerEndpoint: config.team.routerEndpoint, maintainerEndpoint: config.team.maintainerEndpoint, keyEnv: config.team.keyEnv, timeoutMs: config.team.timeoutMs });
   }
   for (const connection of config.connections) {
     const { id, ...value } = connection;
     let key = id.toLowerCase();
     while (items[key] !== undefined || ['data', 'skills', 'logs', 'tmp'].includes(key)) key = `${key}_copy`;
-    items[key] = UpstreamSchema.parse({ ...value, legacyStorage: 'connection', legacyKey: id });
+    items[key] = UpstreamSchema.parse(value);
   }
   return items;
 }
+
+// 已解析的运行配置保留当前 upstream；单配置入口使用固定的个人或团队标识。
+export function activeUpstream(config: ResolvedConfig): string { return config.upstream || 'personal'; }

@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { parse, stringify } from 'yaml';
 import { boot, loadOverlayPatches } from '@deepseek-ai/dsh-app-boot';
@@ -19,7 +20,7 @@ import type { LlmModelInfo, StreamChunk } from '@deepseek-ai/dsh-llm';
 import type { PatchOptions } from '@deepseek-ai/cordis-plugin-include';
 import type {} from '../../src/dsh-adapter/configuration-service.js';
 import type { ConfigurationValues } from '../../src/configuration.js';
-import { ClaimStore } from '@ftai/dsh-plugin-acn/store';
+import { ClaimStore, agentHomePath } from '@ftai/dsh-plugin-acn/store';
 import { ClaimSchema } from '@ftai/dsh-plugin-acn/protocol';
 import type { AgentId } from '../../src/protocol/ids.js';
 // fixture 只构造静态合法 ID；类型导入不让宿主执行器在运行时依赖源码 JS 或预生成声明。
@@ -37,7 +38,7 @@ const base = join(root, 'cordis.yml'); const patch = join(root, 'cordis.patch.ym
 await writeFile(base, '[]\n');
 await writeFile(packagePath, JSON.stringify({ private: true, dsh: { profile: { bundles: [] } } }));
 const patches = loadOverlayPatches('configuration-test', fileURLToPath(new URL('../../cordis.patch.yml', import.meta.url)));
-patches.push({ id: 'acn-knowledge', config: { agentId: '', catalog: { maxClaims: 37 }, dream: { evidenceCalibration: true, enabled: false }, formation: { finalizeOnDispose: false, finalizeIdleMinutes: 0 } } });
+patches.push({ id: 'acn-knowledge', config: { agentId: '', home: join(root, 'initial-knowledge'), catalog: { maxClaims: 37 }, dream: { evidenceCalibration: true, enabled: false }, formation: { finalizeOnDispose: false, finalizeIdleMinutes: 0 } } });
 await writeFile(patch, '# Keep the profile comment.\n' + stringify(patches));
 const ctx = await boot('configuration-test', base, patches, async (context) => {
   context.provide('profileContext', { name: 'configuration-test', dir: root, patchPath: patch, installAnchor: fileURLToPath(new URL('../../package.json', import.meta.url)), cwd: root, home: join(root, 'home'), startedBundles: [], overlays: [], telemetryDisabledEnv: 'true' });
@@ -61,7 +62,7 @@ try {
   let saved = await service.save(request);
   assert.equal(saved.ok, true, JSON.stringify(saved));
   if (!saved.ok) throw new Error('Expected saved configuration.');
-  assert.equal(saved.snapshot.dataDirectory, join(home, 'agents', 'agent-a'));
+  assert.equal(saved.snapshot.dataDirectory, agentHomePath(home, 'agent-a'));
   const initialized = await service.interact({ action: 'select', sessionId: beforeSetup.agent.session.id, key: 'personal' });
   assert.equal(initialized.session?.available, true, 'The reused blank session can explicitly initialize after first configuration.');
   beforeSetup.agent.followup(createUserMessage({ content: [{ type: 'text', text: 'First configured task.' }], source: { kind: 'user' } }));
@@ -133,8 +134,8 @@ try {
   assert.equal(await readFile(patch, 'utf8'), beforeBusy);
   release?.(); model.hold = undefined; await live.agent.whenIdle();
 
-  await mkdir(join(home, 'agents', 'agent-a'), { recursive: true });
-  const retained = join(home, 'agents', 'agent-a', 'retained.txt'); await writeFile(retained, 'old knowledge is retained');
+  await mkdir(agentHomePath(home, 'agent-a'), { recursive: true });
+  const retained = join(agentHomePath(home, 'agent-a'), 'retained.txt'); await writeFile(retained, 'old knowledge is retained');
   const results = await Promise.all(['agent-b', 'agent-c'].map((agentId) => service.save({ revision: saved.snapshot.revision, values: { ...saved.snapshot.values, agentId } })));
   assert.equal(results.filter((result) => result.ok).length, 1);
   assert.ok(results.some((result) => !result.ok && result.code === 'conflict'));
@@ -207,13 +208,12 @@ try {
   let native = await service.read();
   const upgraded = { ...native.values, upstream: 'coding', upstreams: { coding: { name: '开发', agentId: fixtureAgentId('agent-a'), enabled: true, routerEndpoint: '', maintainerEndpoint: '', keyEnv: '', timeoutMs: 15000 }, review: { name: '审查', agentId: fixtureAgentId('agent-b'), enabled: true, routerEndpoint: '', maintainerEndpoint: '', keyEnv: '', timeoutMs: 15000 } } };
   const upgrade = await service.save({ revision: native.revision, values: upgraded }); assert.equal(upgrade.ok, true, JSON.stringify(upgrade));
-  assert.ok((await readFile(join(upgraded.home, 'upstream-migration-v1.yaml'), 'utf8')).includes('external-next'));
   // 跨平台迁移可以留下不用的旧身份；停用的配置不能阻止合法 upstream 的编辑与保存。
   const beforeLegacy = await service.read();
   const migrated = await service.save({ revision: beforeLegacy.revision, values: { ...beforeLegacy.values, agentId: 'con', upstreams: { ...upgraded.upstreams, retired: { ...upgraded.upstreams.review, agentId: fixtureAgentId('aux'), enabled: false } } } });
   assert.equal(migrated.ok, true, JSON.stringify(migrated));
   if (!migrated.ok) throw new Error('Expected inactive legacy identity to remain editable.');
-  assert.equal(migrated.snapshot.dataDirectory, join(upgraded.home, 'coding', 'data', 'agents', 'agent-a'));
+  assert.equal(migrated.snapshot.dataDirectory, agentHomePath(upgraded.home, 'agent-a', 'coding'));
   const edited = await service.save({ revision: migrated.snapshot.revision, values: { ...migrated.snapshot.values, showCompletion: false } });
   assert.equal(edited.ok, true, JSON.stringify(edited));
   if (!edited.ok) throw new Error('Expected valid upstream settings to save.');
@@ -250,7 +250,7 @@ try {
   const beforeBroken = await service.read();
   const withBroken = await service.save({ revision: beforeBroken.revision, values: { ...beforeBroken.values, upstreams: { ...beforeBroken.values.upstreams, broken: { ...upgraded.upstreams.review, enabled: false } } } });
   assert.equal(withBroken.ok, true, JSON.stringify(withBroken));
-  const brokenQueue = join(upgraded.home, 'broken', 'data', 'agents', 'agent-b', 'maintainer_uploads');
+  const brokenQueue = join(agentHomePath(upgraded.home, 'agent-b', 'broken'), 'maintainer_uploads');
   await mkdir(brokenQueue, { recursive: true }); await writeFile(join(brokenQueue, 'pending.yaml'), 'claims: invalid-queue\n');
   const recoveredSettings = await service.read(); assert.equal(recoveredSettings.upstreamPending?.['broken'], null);
   assert.equal((await service.save({ revision: recoveredSettings.revision, values: { ...recoveredSettings.values, showCompletion: false } })).ok, true);
@@ -278,6 +278,35 @@ try {
   const adopted = await service.read();
   assert.equal((await service.save({ revision: adopted.revision, values: { ...adopted.values, upstreams: { ...withHistorical.upstreams, credential_history: { ...withHistorical.upstreams.credential_history, keyEnv: '' } } } })).ok, true);
   assert.equal((await service.credential({ action: 'discard', reference: historicalReference })).ok, false);assert.equal(removed, false);
+  // 只修改知识根即可通过真实配置编辑器接入已有账号目录，旧实体保持原位置与归属。
+  const libraryRoot = join(root, 'account library');
+  const libraryKey = '77777777-7777-4777-8777-777777777777';
+  const reservedLibraryKey = '88888888-8888-4888-8888-888888888888';
+  const libraryAgent = 'agent-library';
+  const libraryPath = join(libraryRoot, 'upstreams', libraryKey, 'agents', createHash('sha256').update('agent\0').update(libraryAgent).digest('hex'));
+  await mkdir(join(libraryPath, 'claims'), { recursive: true });
+  const libraryClaim = ClaimSchema.parse({ id: 'claim_00000006', holder: libraryAgent, name: 'retained_library_rule', statement: 'Keep the date in example reports.', scope: 'example/library', confidence: 'medium', status: 'active', created_at: '2026-01-01T00:00:00Z', evidence_summary: 'A checked example.' });
+  const originalEntity = stringify(libraryClaim);
+  await writeFile(join(libraryPath, 'claims', `${libraryClaim.id}.yaml`), originalEntity);
+  await writeFile(join(libraryRoot, 'settings.json'), JSON.stringify({ schemaVersion: 1, upstreams: [{ summary: { id: libraryKey, name: 'Example library', agentId: libraryAgent, enabled: true, routerEndpoint: '', maintainerEndpoint: '' } }, { summary: { id: reservedLibraryKey, name: 'Digest directory', agentId: 'con', enabled: true, routerEndpoint: '', maintainerEndpoint: '' } }], preferences: { defaultUpstream: libraryKey } }));
+  const beforeLibrary = await service.read();
+  const librarySaved = await service.save({ revision: beforeLibrary.revision, values: { ...beforeLibrary.values, home: libraryRoot } });
+  assert.equal(librarySaved.ok, true, JSON.stringify(librarySaved));
+  if (!librarySaved.ok) throw new Error('Expected account library to load.');
+  assert.equal(librarySaved.snapshot.dataDirectory, libraryPath);
+  assert.deepEqual(Object.keys(librarySaved.snapshot.values.upstreams ?? {}), [libraryKey, reservedLibraryKey]);
+  const libraryView = await service.interact({ action: 'knowledge', key: libraryKey });
+  assert.equal(libraryView.knowledge?.items[0]?.id, libraryClaim.id);
+  assert.equal(await readFile(join(libraryPath, 'claims', `${libraryClaim.id}.yaml`), 'utf8'), originalEntity);
+  const librarySession = await create('account-library-session');
+  await service.interact({ action: 'select', sessionId: librarySession.agent.session.id, key: libraryKey });
+  await turn(librarySession.agent);
+  const libraryPool = entry.fiber?.ctx.acnRuntime; assert.ok(libraryPool);
+  const liveLibrary = await libraryPool.knowledge(librarySession.agent.session.header);
+  const retainedDetail = await liveLibrary.readClaim(libraryClaim.id);
+  await liveLibrary.updateClaim({ id: libraryClaim.id, expected_revision: retainedDetail.revision, name: 'revised_library_rule' });
+  assert.match(await readFile(join(libraryPath, 'claims', `${libraryClaim.id}.yaml`), 'utf8'), /revised_library_rule/);
+  await librarySession.dispose();
   await entry.fiber?.dispose();
   assert.equal((await service.read()).active, false);
   const inactive = await service.interact({ action: 'session', sessionId: coldId });

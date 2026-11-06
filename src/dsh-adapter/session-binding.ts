@@ -4,7 +4,7 @@ import type { SessionHeader, SessionEvent } from '@deepseek-ai/dsh-session';
 import { appendPluginRecord, pluginRecordOf } from '@deepseek-ai/dsh-session';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import type { ResolvedConfig } from '../config.js';
+import { activeUpstream, type ResolvedConfig } from '../config.js';
 import { agentHomePath } from '../store/paths.js';
 
 const BindingSchema = z.strictObject({ schemaVersion: z.literal(1), identity: z.string().regex(/^[0-9a-f]{64}$/) });
@@ -17,7 +17,7 @@ declare module '@deepseek-ai/dsh-session' {
 }
 // 身份随宿主会话日志持久化和继承；缓存只避免每次门禁重新扫描历史。
 const bindings = new WeakMap<SessionHeader, string | null>();
-export const identityOf = (config: ResolvedConfig): string => createHash('sha256').update(config.agentId === '' ? '' : agentHomePath(config.home, config.agentId)).digest('hex');
+export const identityOf = (config: ResolvedConfig): string => createHash('sha256').update(config.agentId === '' ? '' : agentHomePath(config.home, config.agentId, activeUpstream(config))).digest('hex');
 const selections = new WeakMap<SessionHeader, SessionSelection | undefined>();
 // 配置插件重载可能保留宿主 Agent；正在运行的实例继续使用原客户端配置。
 const runningConfigurations = new WeakMap<SessionHeader, ResolvedConfig>();

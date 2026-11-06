@@ -1,6 +1,7 @@
 // 集中生成本地路径；实体 ID 和会话标识必须先校验再拼接。
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { createHash } from 'node:crypto';
 import { AgentIdSchema, ClaimIdSchema, DisputeIdSchema, InboxIdSchema, TraceIdSchema } from '../protocol/ids.js';
 import { assertStorageName } from './path-names.js';
 
@@ -8,9 +9,12 @@ export function expandHomePath(home: string): string {
   return home === '~' ? homedir() : /^~[/\\]/.test(home) ? join(homedir(), home.slice(2)) : home;
 }
 
-export function agentHomePath(home: string, agentId: string): string {
-  const id = AgentIdSchema.parse(agentId); assertStorageName(id);
-  return join(resolve(expandHomePath(home)), 'agents', id);
+export function agentHomePath(home: string, agentId: string, upstream = 'personal'): string {
+  const id = AgentIdSchema.parse(agentId);
+  if (!/^[a-z0-9_-]+$/.test(upstream)) throw new Error('Invalid upstream identifier.');
+  assertStorageName(upstream);
+  const directory = createHash('sha256').update('agent').update(Uint8Array.of(0)).update(id).digest('hex');
+  return join(resolve(expandHomePath(home)), 'upstreams', upstream, 'agents', directory);
 }
 export function safeKey(value: string): string {
   if (!/^[a-zA-Z0-9_-]+$/.test(value)) throw new Error('Invalid local document identifier.');

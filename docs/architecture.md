@@ -11,6 +11,7 @@
 | `dsh-adapter/interaction-service.ts`、`store/presentation.ts` | 只读知识/活动、显式连接检查及重试、终态版本展示回执 |
 | `protocol/` | 规范 DTO、ID、时间、revision |
 | `store/` | 实体文件、原子写、跨进程锁、租约、队列、编辑恢复和私有文档 |
+| `store/library-directory.ts`、`store/history.ts` | 统一账号目录的配置索引、身份目录定位与历史记录只读投影；不接管旧队列或复制宿主凭据 |
 | `knowledge/service.ts` | Claim / Trace 浏览、修订、形成批次提交、知识版本与变化事件 |
 | `knowledge/pages.ts` | 稳定排序、Unicode 摘要和分页 |
 | `knowledge/catalog.ts`、`changes.ts`、`sessions.ts` | 冻结目录、累计身份差异与会话状态 |

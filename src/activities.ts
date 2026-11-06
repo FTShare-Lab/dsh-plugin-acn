@@ -13,6 +13,7 @@ import { ClaimIdSchema } from './protocol/ids.js';
 import fs from 'node:fs/promises';
 import { join } from 'node:path';
 import { hasCode } from './store/errors.js';
+import { historicalKnowledge } from './store/history.js';
 
 const Incomplete = z.object({ groupId: z.string(), claimIds: z.array(ClaimIdSchema), reason: z.string() });
 const labels: Record<string, string> = { claimCount: '更新 Claim', disputeCount: '形成争议', traceCount: '形成来源', applied: '更新 Claim', handled: '处理收件', uploadedClaims: '已投递 Claim', reportedDisputes: '已上报争议', modelSteps: '探索请求', wrapUpSteps: '收尾请求' };
@@ -84,6 +85,9 @@ export async function allActivities(knowledge: AcnKnowledge, supports: (kind: Jo
     rows.push({ id, kind: 'delivery', state: 'rejected', entityId: rejection.dispute_id, attempts: rejection.attempts, updatedAt, unseen: false, acknowledged,
       requiresAttention: !acknowledged, retryable: false, summary: '团队拒绝此版本的争议（409），已停止自动重试，并未成功投递。请核对关联知识，由 Agent 根据当前版本形成新的争议。', summaryInfo: { code: 'delivery.rejected', entityId: rejection.dispute_id, status: 409 } });
   }
+  const history = await historicalKnowledge(context);
+  for (const record of history.applications) rows.push({ id: `history-application-${record.id}`, kind: record.kind, state: record.state === 'applied' ? 'succeeded' : record.state === 'prepared' ? 'paused' : 'cancelled', attempts: record.attempts, updatedAt: record.updatedAt, unseen: false, retryable: false, requiresAttention: record.state === 'prepared', ...(record.sessionId === undefined ? {} : { sessionId: record.sessionId }), counts: { claimCount: record.claimCount, disputeCount: record.disputeCount, traceCount: record.traceCount }, summary: record.state === 'applied' ? '历史记录：本地处理完成。' : record.state === 'prepared' ? '历史记录：原程序尚未完成本地提交，请先在原程序中完成处理。' : '历史记录：处理已取消。' });
+  for (const record of history.deliveries) rows.push({ id: `history-delivery-${record.entity.kind}-${record.entity.value.id}-${record.updatedAt}`, kind: 'delivery', state: 'succeeded', entityId: record.entity.value.id, attempts: 0, updatedAt: record.updatedAt, sessionId: record.sessionId, unseen: false, retryable: false, summary: '历史记录：此版本已收到团队投递确认。' });
   return rows.sort((left, right) => right.updatedAt - left.updatedAt || left.id.localeCompare(right.id));
 }
 export interface ActivityPage { attentionOnly?: boolean; sourceSession?: string; kind?: string; state?: string; offset?: number }

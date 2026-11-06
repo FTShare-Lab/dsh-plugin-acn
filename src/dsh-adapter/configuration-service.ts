@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { messageInfo } from '../interaction-messages.js';
 import { access, stat } from 'node:fs/promises';
 import { constants } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname } from 'node:path';
 import type { Context, FiberState } from '@deepseek-ai/cordis';
 import type { Entry } from '@deepseek-ai/cordis-plugin-loader';
 import type {} from '@deepseek-ai/dsh-config-editor';
@@ -12,17 +12,16 @@ import { TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol';
 import type {} from '@deepseek-ai/dsh-agent';
 import type {} from '@deepseek-ai/dsh-tools';
 import { configurationBusy, runningConfiguration } from './session-binding.js';
-import { ConfigError, resolveConfig } from '../config.js';
+import { activeUpstream, ConfigError, resolveConfig } from '../config.js';
 import { configurationValues, mergeConfiguration, SaveConfigurationSchema } from '../configuration.js';
 import type { ConfigurationSnapshot, ConfigurationResult, ModelChoice, SaveConfiguration } from '../configuration.js';
-import { AgentPaths, agentHomePath } from '../store/paths.js';
+import { AgentPaths, agentHomePath, expandHomePath } from '../store/paths.js';
+import { prepareLibraryDirectory } from '../store/library-directory.js';
 import { invalidStorageName } from '../store/path-names.js';
 import { checkTeamConnection, executeInteraction } from './interaction-service.js';
 import { upstreamsOf, resolveUpstream } from '../upstreams.js';
 import { PendingUploadsSchema } from '../store/uploads.js';
-import { withFileLock } from '../store/lock.js';
-import { readYamlOr, writeYamlAtomic } from '../store/yaml.js';
-import { z } from 'zod';
+import { readYamlOr } from '../store/yaml.js';
 import type { InteractionRequest, InteractionResult } from '../interaction.js';
 import { credentialReference } from './team-credentials.js';
 import { CredentialRequestSchema } from '../credentials.js';
@@ -158,19 +157,20 @@ export class ConfigurationService extends TypertRemoteService {
     const models = await this.models();
     const entry = this.entry();
     const raw = entryConfig(entry);
-    const values = configurationValues(raw);
-    const config = resolveConfig(raw);
+    const effective = await prepareLibraryDirectory(raw, raw);
+    const values = configurationValues(effective);
+    const config = resolveConfig(effective);
     const upstreamPending: Record<string, number | null> = {};
     for (const key of Object.keys(upstreamsOf(config))) {
       try {
         const selected = resolveUpstream(config, key, true); if (selected === undefined) continue;
-        const path = new AgentPaths(agentHomePath(selected.home, selected.agentId)).pendingUploads;
+        const path = new AgentPaths(agentHomePath(selected.home, selected.agentId, activeUpstream(selected))).pendingUploads;
         const pending = await readYamlOr(path, PendingUploadsSchema, () => PendingUploadsSchema.parse({}));
         upstreamPending[key] = pending.claims.length + pending.disputes.length + (pending.consolidations?.length ?? 0) + (pending.acknowledgements?.length ?? 0);
       } catch { upstreamPending[key] = null; this.ctx.logger.warn('Could not read pending counts for an upstream; configuration remains available.'); }
     }
     let dataDirectory = '';
-    try { const selected = config.upstreams === undefined ? config : resolveUpstream(config, config.upstream); dataDirectory = selected?.agentId ? agentHomePath(selected.home, selected.agentId) : ''; }
+    try { const selected = config.upstreams === undefined ? config : resolveUpstream(config, config.upstream); dataDirectory = selected?.agentId ? agentHomePath(selected.home, selected.agentId, activeUpstream(selected)) : ''; }
     catch { this.ctx.logger.warn('Could not resolve the selected data directory; configuration remains available.'); }
     return { revision: configurationRevision(raw), values, models, active: entry.fiber?.state === activeState, dataDirectory, upstreamPending };
   }
@@ -189,25 +189,20 @@ export class ConfigurationService extends TypertRemoteService {
       if (values.upstreams === undefined && values.agentId === '') throw new ConfigError(['agentId']);
       if (values.mode === 'team' && (!values.routerEndpoint || !values.maintainerEndpoint)) throw new ConfigError(['team']);
       const previous = configurationValues(entryConfig(entry));
-      const candidate = resolveConfig(mergeConfiguration(entryConfig(entry), values));
+      const prepared = await prepareLibraryDirectory(entryConfig(entry), mergeConfiguration(entryConfig(entry), values));
+      const candidate = resolveConfig(prepared);
       const enabled = Object.entries(upstreamsOf(candidate)).filter(([, item]) => item.enabled);
-      const names = enabled.flatMap(([key, item]) => [key, item.agentId, item.legacyKey ?? '']);
+      const names = enabled.map(([key]) => key);
       if (names.some((name) => invalidStorageName(name))) return { ok: false, code: 'invalid', fields: ['windowsStorageName'] };
-      await checkDirectory(agentHomePath(candidate.home, 'example'));
-      for (const [key] of enabled) { const selected = resolveUpstream(candidate, key); if (selected !== undefined) await checkDirectory(agentHomePath(selected.home, selected.agentId)); }
-      if (values.upstreams !== undefined && previous.upstreams === undefined && (previous.agentId !== '' || (previous.connections?.length ?? 0) > 0)) {
-        const backup = join(dirname(dirname(agentHomePath(previous.home, 'example'))), 'upstream-migration-v1.yaml');
-        await withFileLock(`${backup}.lock`, async () => {
-          if (await readYamlOr(backup, z.unknown(), () => null) === null) await writeYamlAtomic(backup, entryConfig(entry), z.unknown(), this.ctx.logger);
-        });
-      }
+      await checkDirectory(expandHomePath(candidate.home));
+      for (const [key] of enabled) { const selected = resolveUpstream(candidate, key); if (selected !== undefined) await checkDirectory(agentHomePath(selected.home, selected.agentId, activeUpstream(selected))); }
       if (values.provider !== '' && !(await this.models()).some((model) => model.provider === values.provider && model.id === values.model)) {
         return { ok: false, code: 'unavailable', fields: ['llm'] };
       }
       this.checkIdle();
       this.pending += 1;
       let conflict = false;
-      const identity = (value: typeof previous) => value.upstreams !== undefined || value.agentId === '' ? '' : agentHomePath(value.home, value.agentId);
+      const identity = (value: typeof previous) => value.upstreams !== undefined || value.agentId === '' ? '' : agentHomePath(value.home, value.agentId, value.upstream || 'personal');
       const epoch = () => Math.max(Date.now(), ...this.ctx.agents.list().map((agent) => agent.session.header.createdAt));
       try { await this.ctx.configEditor.edit(entry, (current) => {
         // 宿主获取文件锁并重读外部修改后再次检查，防止两个窗口互相覆盖。
@@ -218,7 +213,7 @@ export class ConfigurationService extends TypertRemoteService {
           return { ...current, sessionEpoch: epoch() };
         }
         this.checkIdle();
-        const next = mergeConfiguration(current, values);
+        const next = { ...prepared };
         // 在交给持久化之前停止回收；即使响应失败，也可能已经落盘。
         this.protectCredentials(next);
         if (values.upstreams === undefined && identity(previous) !== identity(values)) next.sessionEpoch = epoch();

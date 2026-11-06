@@ -21,10 +21,10 @@ it('finds a pending stale claim beyond the first page without any team request',
     for (let i = 2; i <= 32; i += 1) await store.write(sampleClaim({ id: ClaimIdSchema.parse(`claim_${i.toString(16).padStart(8, '0')}`) }));
     const stale = sampleClaim({ id: ClaimIdSchema.parse('claim_00000021'), status: 'stale' }); await store.write(stale); await new UploadStore(f.knowledge.context()).enqueue([stale], [], true);
     const beforeRead = server.requests.length;
-    const result = await executeInteraction(f.ctx, { action: 'knowledge', key: 'legacy', status: 'stale', delivery: 'pending' });
+    const result = await executeInteraction(f.ctx, { action: 'knowledge', key: 'personal', status: 'stale', delivery: 'pending' });
     expect(result.ok).toBe(true); expect(result.knowledge?.items).toHaveLength(1);
     expect(result.knowledge?.items[0]).toMatchObject({ id: stale.id, delivery: 'pending', status: 'stale', summary: stale.statement });
-    const local = await executeInteraction(f.ctx, { action: 'knowledge', key: 'legacy', delivery: 'local' });
+    const local = await executeInteraction(f.ctx, { action: 'knowledge', key: 'personal', delivery: 'local' });
     expect(local.knowledge?.items.every((item) => item.delivery === 'local')).toBe(true); expect(local.knowledge?.items.some((item) => item.id === stale.id)).toBe(false);
     expect(server.requests).toHaveLength(beforeRead);
   } finally { await f.close(); await server.close(); }

@@ -1,4 +1,4 @@
-// 唯一配置承载行，发布隔离的领域服务；未配置身份时不访问磁盘。
+// 从账号目录发现工作配置并发布隔离领域服务，未配置时不启动知识任务。
 import type { Context } from '@deepseek-ai/cordis';
 import Schema from '@deepseek-ai/schemastery';
 import { resolveConfig } from '../config.js';
@@ -8,6 +8,7 @@ import { bindSession, sessionChanged, unboundSession, observeSelection, runningC
 import { protectKnowledgePaths } from '../dsh-adapter/knowledge-paths.js';
 import { RuntimePool } from '../dsh-adapter/runtime-pool.js';
 import { teamCredentials } from '../dsh-adapter/team-credentials.js';
+import { prepareLibraryDirectory, syncLibraryIndex } from '../store/library-directory.js';
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -39,7 +40,9 @@ export const Config: Schema = Schema.object({
 });
 
 export async function apply(ctx: Context, input: unknown = {}): Promise<void> {
-  const config = resolveConfig(input);
+  const raw = input as Record<string, unknown>;
+  const config = resolveConfig(await prepareLibraryDirectory(raw, raw));
+  await syncLibraryIndex(config, ctx.logger);
   const knowledge = new AcnKnowledge(config.upstreams === undefined ? config : { ...config, agentId: '' }, ctx.logger, teamCredentials(ctx));
   await knowledge.initialize();
   ctx.provide('acnKnowledge', knowledge);

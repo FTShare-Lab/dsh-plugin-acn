@@ -1,4 +1,4 @@
-// 真实宿主覆盖多份单人配置、默认预选、旧目录迁移与运行中客户端的生效边界。
+// 真实宿主覆盖多份单人配置、默认预选、统一目录隔离与运行中客户端的生效边界。
 import fs from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -11,14 +11,13 @@ import { ScriptAdapter, textResponse } from '../flow/adapter.js';
 import { KnowledgeSessions } from '../../src/knowledge/sessions.js';
 import { InboxStore } from '../../src/store/inbox.js';
 import { inboxMessage, emptyInternalize, teamServer } from '../team/helpers.js';
-import { resolveConfig, UpstreamSchema, upstreamsOf } from '../../src/config.js';
-import { resolveUpstream } from '../../src/upstreams.js';
+import { resolveConfig, UpstreamSchema } from '../../src/config.js';
+import { agentHomePath } from '../../src/store/paths.js';
 import { ClaimStore } from '../../src/store/claims.js';
 import { sampleClaim } from '../knowledge-fixtures.js';
 import { UploadStore } from '../../src/store/uploads.js';
 import { readKnowledge } from '../../src/dsh-adapter/interaction-service.js';
 import Knowledge from '../../src/plugins/knowledge.js';
-import { mergeConfiguration, configurationValues } from '../../src/configuration.js';
 
 const solo = (name: string, agentId = 'agent-a') => UpstreamSchema.parse({ name, agentId });
 const configuration = () => ({ upstream: 'coding', upstreams: { coding: solo('开发'), review: solo('审查') }, llm: { provider: 'mock', model: 'mock' }, formation: { idleRecap: false }, dream: { enabled: false } });
@@ -31,7 +30,7 @@ describe('upstream selection and ownership', () => {
       const first = await flow.create(); const pool = flow.ctx.acnRuntime;
       expect(pool.view(first.session.header)).toMatchObject({ key: 'coding', available: true, locked: false });
       const knowledge = await pool.knowledge(first.session.header);
-      expect(knowledge.context().paths.root).toBe(join(flow.root, 'knowledge', 'coding', 'data', 'agents', 'agent-a'));
+      expect(knowledge.context().paths.root).toBe(agentHomePath(join(flow.root, 'knowledge'), 'agent-a', 'coding'));
       await new ClaimStore(knowledge.context()).write(sampleClaim({ name: 'CODING_ONLY_KNOWLEDGE' }));
       const next = await flow.create('another-project-session');
       expect((await pool.knowledge(next.session.header)).context().paths.root).toBe(knowledge.context().paths.root);
@@ -92,12 +91,12 @@ describe('upstream selection and ownership', () => {
   it('freezes upstream instructions and resumes the snapshot after edits', async () => {
     const flow = await flowHarness(new ScriptAdapter([textResponse('Using instructions.')]), { persistence: true, config: configuration() });
     try {
-      await fs.mkdir(join(flow.root, 'knowledge', 'coding'), { recursive: true });
-      await fs.writeFile(join(flow.root, 'knowledge', 'coding', 'ACN.md'), 'UPSTREAM_INSTRUCTION_BEFORE');
+      await fs.mkdir(join(flow.root, 'knowledge', 'upstreams', 'coding'), { recursive: true });
+      await fs.writeFile(join(flow.root, 'knowledge', 'upstreams', 'coding', 'ACN.md'), 'UPSTREAM_INSTRUCTION_BEFORE');
       const handle = await flow.ctx.agents.create({ sessionId: SessionId('instructions'), agentOptions: { provider: 'mock', model: 'mock' } });
       expect(JSON.stringify(await flow.ctx.systemPrompt.assemble(assembleContextFor(handle.agent)))).toContain('UPSTREAM_INSTRUCTION_BEFORE');
       await turn(handle.agent); await handle.dispose();
-      await fs.writeFile(join(flow.root, 'knowledge', 'coding', 'ACN.md'), 'UPSTREAM_INSTRUCTION_AFTER');
+      await fs.writeFile(join(flow.root, 'knowledge', 'upstreams', 'coding', 'ACN.md'), 'UPSTREAM_INSTRUCTION_AFTER');
       const resumed = await flow.ctx.agents.resume({ resumeSessionId: SessionId('instructions'), agentOptions: { provider: 'mock', model: 'mock' } });
       try { const prompt = JSON.stringify(await flow.ctx.systemPrompt.assemble(assembleContextFor(resumed.agent))); expect(prompt).toContain('UPSTREAM_INSTRUCTION_BEFORE'); expect(prompt).not.toContain('UPSTREAM_INSTRUCTION_AFTER'); } finally { await resumed.dispose(); }
     } finally { await flow.close(); }
@@ -163,8 +162,8 @@ describe('upstream selection and ownership', () => {
     const server = await teamServer(() => ({ status: 503 })); const adapter = new ScriptAdapter([textResponse('Offline task.')]);
     const flow = await flowHarness(adapter, { formation: true, inbox: true, config: { ...configuration(), upstreams: { coding: solo('开发'), review: { ...solo('审查'), routerEndpoint: server.endpoint, maintainerEndpoint: server.endpoint } }, team: { retryCount: 0 } } });
     try {
-      await fs.mkdir(join(flow.root, 'knowledge', 'coding'), { recursive: true }); await fs.mkdir(join(flow.root, 'knowledge', 'review'), { recursive: true });
-      await fs.writeFile(join(flow.root, 'knowledge', 'coding', 'ACN.md'), 'DEFAULT_INSTRUCTIONS_PRIVATE'); await fs.writeFile(join(flow.root, 'knowledge', 'review', 'ACN.md'), 'TARGET_OFFLINE_INSTRUCTIONS');
+      await fs.mkdir(join(flow.root, 'knowledge', 'upstreams', 'coding'), { recursive: true }); await fs.mkdir(join(flow.root, 'knowledge', 'upstreams', 'review'), { recursive: true });
+      await fs.writeFile(join(flow.root, 'knowledge', 'upstreams', 'coding', 'ACN.md'), 'DEFAULT_INSTRUCTIONS_PRIVATE'); await fs.writeFile(join(flow.root, 'knowledge', 'upstreams', 'review', 'ACN.md'), 'TARGET_OFFLINE_INSTRUCTIONS');
       const handle = await flow.ctx.agents.create({ sessionId: SessionId('offline-ownership'), agentOptions: { provider: 'mock', model: 'mock' } });
       await flow.ctx.acnRuntime.select(handle.agent.session.header, 'review');
       const selected = await flow.ctx.acnRuntime.service(handle.agent.session.header); if (selected.formation === undefined) throw new Error('Missing formation.');
@@ -209,7 +208,7 @@ describe('upstream selection and ownership', () => {
     const adapter = new ScriptAdapter([textResponse('Continued after cancellation.')]);
     const flow = await flowHarness(adapter, { inbox: true, formation: true, config: { ...configuration(), upstreams: { coding: solo('开发'), review: { ...solo('审查'), routerEndpoint: server.endpoint, maintainerEndpoint: server.endpoint } } } });
     try {
-      await fs.mkdir(join(flow.root, 'knowledge', 'review'), { recursive: true }); await fs.writeFile(join(flow.root, 'knowledge', 'review', 'ACN.md'), 'CANCELLED_SELECTION_INSTRUCTIONS');
+      await fs.mkdir(join(flow.root, 'knowledge', 'upstreams', 'review'), { recursive: true }); await fs.writeFile(join(flow.root, 'knowledge', 'upstreams', 'review', 'ACN.md'), 'CANCELLED_SELECTION_INSTRUCTIONS');
       const agent = await flow.create(); const pool = flow.ctx.acnRuntime; const selecting = pool.select(agent.session.header, 'review');
       await vi.waitFor(() => { expect(pool.view(agent.session.header).phase).toBe('syncing'); });
       const cancelling = pool.cancel(agent.session.header); const running = turn(agent);
@@ -241,16 +240,6 @@ describe('upstream selection and ownership', () => {
       const first = JSON.stringify(adapter.requests[0]); expect(first).toContain('LEGACY_REFRESHED_CLAIM');
       expect(server.requests.filter((request) => request.path === '/claims/scopes/overview')).toHaveLength(before);
     } finally { release?.(); restore?.(); await flow.close(); await server.close(); }
-  });
-  it('maps legacy stores without copying or merging and forbids changing the stored mapping', () => {
-    const raw = resolveConfig({ agentId: 'agent-a', home: '/tmp/example-knowledge', team: { routerEndpoint: 'http://127.0.0.1:8101', maintainerEndpoint: 'http://127.0.0.1:8102' }, connections: [{ id: 'TEAM-A', name: '旧连接', agentId: 'agent-a', routerEndpoint: 'http://127.0.0.1:8101', maintainerEndpoint: 'http://127.0.0.1:8102' }] });
-    const profiles = upstreamsOf(raw);
-    expect(profiles['team-a']?.legacyKey).toBe('TEAM-A');
-    const migrated = resolveConfig(mergeConfiguration(raw, { ...configurationValues(raw), upstreams: profiles, upstream: 'personal' }));
-    expect(resolveUpstream(migrated, 'personal')?.home).toBe(join('/tmp/example-knowledge', 'personal'));
-    expect(resolveUpstream(migrated, 'legacy')?.home).toBe('/tmp/example-knowledge');
-    expect(resolveUpstream(migrated, 'team-a')?.home).toBe(join('/tmp/example-knowledge', 'connections', 'TEAM-A'));
-    expect(() => mergeConfiguration(migrated, { ...configurationValues(migrated), upstreams: { ...profiles, 'team-a': { ...profiles['team-a'] as NonNullable<typeof profiles['team-a']>, legacyKey: 'another' } } })).toThrow();
   });
   it('browses an unused upstream without initializing a worker or team request', async () => {
     const server = await teamServer((request) => response(request.path));

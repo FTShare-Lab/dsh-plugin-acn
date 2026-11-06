@@ -50,15 +50,16 @@ it('recognizes a newly saved configuration after a lost response without creatin
   vi.mocked(api.save).mockImplementation((request) => Promise.resolve({ ok: true, snapshot: { ...snapshot, revision: 'confirmed', values: request.values } }));
   fireEvent.click(screen.getByRole('button', { name: '保存配置' }));await waitFor(() => { expect(api.save).toHaveBeenCalledTimes(2); });
   const first = vi.mocked(api.save).mock.calls[0]?.[0];const second = vi.mocked(api.save).mock.calls[1]?.[0];
-  expect(second?.revision).toBe('saved');expect(Object.keys(second?.values.upstreams ?? {})).toEqual(['agent-new']);
-  expect(second?.values.upstreams?.['agent-new']?.keyEnv).toBe(first?.values.upstreams?.['agent-new']?.keyEnv);
+  const key = Object.keys(first?.values.upstreams ?? {})[0] ?? '';
+  expect(second?.revision).toBe('saved');expect(Object.keys(second?.values.upstreams ?? {})).toEqual([key]);
+  expect(second?.values.upstreams?.[key]?.keyEnv).toBe(first?.values.upstreams?.[key]?.keyEnv);
   expect(vi.mocked(api.credential as NonNullable<InteractionApi['credential']>).mock.calls.filter(([request]) => request.action === 'store')).toHaveLength(1);
 });
 it('does not adopt a competing configuration after an unknown first save', async () => {
   const snapshot: ConfigurationSnapshot = { revision: 'initial', active: true, dataDirectory: '', models: [], values: configurationValues({ upstreams: {}, upstream: '' }) };
   const api: InteractionApi = { read: vi.fn().mockResolvedValue(snapshot), interact: vi.fn(), save: vi.fn<InteractionApi['save']>().mockRejectedValueOnce(new Error('Unknown result.')).mockImplementation((request) => Promise.resolve({ ok: true, snapshot: { ...snapshot, revision: 'next', values: request.values } })) };
   render(<TeamSettingsPage api={api} t={(key) => zh[key]} openKnowledge={vi.fn()} />);
-  fireEvent.click(await screen.findByRole('button', { name: '新建工作配置' }));fireEvent.click(screen.getByRole('switch', { name: '连接团队服务' }));fireEvent.change(screen.getByLabelText('Agent ID'), { target: { value: 'agent-new' } });fireEvent.click(screen.getByRole('button', { name: '保存配置' }));await screen.findByRole('alert');
+  fireEvent.click(await screen.findByRole('button', { name: '新建工作配置' }));fireEvent.click(screen.getByRole('switch', { name: '连接团队服务' }));fireEvent.change(screen.getByLabelText('Agent ID'), { target: { value: 'agent-new' } });fireEvent.change(screen.getByLabelText('配置标识'), { target: { value: 'agent-new' } });fireEvent.click(screen.getByRole('button', { name: '保存配置' }));await screen.findByRole('alert');
   vi.mocked(api.read).mockResolvedValue({ ...snapshot, revision: 'other', values: configurationValues({ upstream: 'agent-new', upstreams: { 'agent-new': { agentId: 'other-agent' } } }) });
   fireEvent.click(screen.getByRole('button', { name: '刷新并保留草稿' }));await screen.findByText(/该配置标识已被其他配置使用/);
   fireEvent.click(screen.getByRole('button', { name: '保存配置' }));expect(api.save).toHaveBeenCalledTimes(1);

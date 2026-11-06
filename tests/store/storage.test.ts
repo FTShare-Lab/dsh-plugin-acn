@@ -1,5 +1,6 @@
 // 真实临时文件验证实体、队列、台账和编辑恢复的持久化语义。
 import fs from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -200,7 +201,7 @@ describe('private files and atomic primitives', () => {
     expect((await jobs.read('example-job'))?.state).toBe('queued');
     await expect(jobs.write('example-job', { schemaVersion: 2 })).rejects.toMatchObject({ kind: 'encode' });
     expect(() => ctx.paths.session('../../outside')).toThrow();
-    expect(agentHomePath(root, 'agent-a')).toBe(join(root, 'agents', 'agent-a'));
+    expect(agentHomePath(root, 'agent-a')).toBe(join(root, 'upstreams', 'personal', 'agents', createHash('sha256').update('agent\0agent-a').digest('hex')));
     expect(ctx.paths.workerLock).toBe(join(root, 'jobs', 'worker.lock'));
   });
   it('rejects a null versioned document instead of silently recreating state', async () => {

@@ -20,7 +20,7 @@ describe('native directory arguments', () => {
   it.each(['agent-a', 'con-team', 'console', 'company', 'lpt10'])('accepts ordinary component %s', (name) => { expect(portableLocalName(name)).toBe(true); });
   it.runIf(process.platform === 'win32')('expands a backslash home prefix and rejects reserved directories when activating storage', () => {
     expect(expandHomePath(String.raw`~\Work Folder\知识`)).toBe(join(homedir(), 'Work Folder', '知识'));
-    expect(() => agentHomePath(homedir(), 'con')).toThrow();
+    expect(agentHomePath(homedir(), 'con')).toContain('upstreams');
     expect(() => resolveUpstream(resolveConfig({ upstreams: { nul: { agentId: 'agent-a' } } }), 'nul')).toThrow();
     // 解析旧配置不访问目录，使用户能在页面停用不可用项，再保存合法配置。
     expect(resolveConfig({ upstreams: { archived: { agentId: 'con', enabled: false } } }).upstreams?.['archived']?.enabled).toBe(false);

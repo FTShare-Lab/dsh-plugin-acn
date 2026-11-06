@@ -35,10 +35,10 @@ describe('private filesystem permissions', () => {
   });
   it('protects stored private files of a connection before its runtime has ever been activated', async () => {
     const { call, f } = await setup();
-    const path = join(f.knowledge.config.home, 'connections', 'unused-team', 'agents', 'member-b', 'claims', 'claim_00000009.yaml');
+    const path = join(f.knowledge.config.home, 'upstreams', 'unused-team', 'agents', 'another-identity', 'claims', 'claim_00000009.yaml');
     await fs.mkdir(dirname(path), { recursive: true }); await fs.writeFile(path, 'UNUSED_TEAM_PRIVATE_MARKER');
     expect(await call('read', { file_path: path })).toMatchObject({ isError: true });
-    expect(await call('glob', { path: join(f.knowledge.config.home, 'connections'), pattern: '**/*' })).toMatchObject({ isError: true });
+    expect(await call('glob', { path: join(f.knowledge.config.home, 'upstreams'), pattern: '**/*' })).toMatchObject({ isError: true });
     expect(await fs.readFile(path, 'utf8')).toBe('UNUSED_TEAM_PRIVATE_MARKER');
   });
   it('protects read/write/edit/search and permits normal workspace tools', async () => {

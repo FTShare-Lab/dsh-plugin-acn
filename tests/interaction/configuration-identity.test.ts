@@ -1,4 +1,4 @@
-// 旧身份升级为工作配置时延续已验证归属；损坏或不匹配的绑定不能迁移。
+// 单配置切换为具名配置时延续已验证归属；损坏或不匹配的绑定不能获得权限。
 import { expect, it, vi } from 'vitest';
 import { SessionId, appendPluginRecord, pluginRecordOf } from '@deepseek-ai/dsh-session';
 import Knowledge from '../../src/plugins/knowledge.js';
@@ -14,7 +14,7 @@ import { teamServer } from '../team/helpers.js';
 it.each([
   { team: false, cold: false }, { team: false, cold: true },
   { team: true, cold: false }, { team: true, cold: true },
-])('preserves the same legacy identity after a settings migration (team=$team, cold=$cold)', async ({ team, cold }) => {
+])('preserves the same identity after changing the configuration form (team=$team, cold=$cold)', async ({ team, cold }) => {
   const server = await teamServer((request) => ({ body: request.path.endsWith('/overview') ? { scopes: [] } : { status: 'ok', team_auth_enabled: false } }));
   const adapter = new ScriptAdapter([textResponse('Original work.'), textResponse('Continued in the same identity.')]);
   const f = await flowHarness(adapter, { persistence: true, config: { ...(team ? { team: { routerEndpoint: server.endpoint, maintainerEndpoint: server.endpoint } } : {}), dream: { enabled: false } } });
@@ -22,7 +22,7 @@ it.each([
     const original = await f.ctx.agents.create({ sessionId: SessionId('legacy-work'), agentOptions: { provider: 'mock', model: 'mock' } });
     await turn(original.agent);
     expect(f.ctx.acnRuntime.view(original.agent.session.header).available).toBe(true);
-    const previous = f.knowledge.config; const key = team ? 'legacy' : 'personal';
+    const previous = f.knowledge.config; const key = 'personal';
     const profiles = upstreamsOf(previous); const profile = profiles[key];
     if (profile === undefined) throw new Error('Missing original work configuration.');
     // 设置页保存名称时生成 upstreams；新默认身份不能接管已开始的会话。
@@ -49,7 +49,7 @@ it.each([
   } finally { await f.close(); await server.close(); }
 });
 
-it.each(['malformed', 'conflicting', 'changed'] as const)('rejects legacy migration when the previous identity is %s', async (kind) => {
+it.each(['malformed', 'conflicting', 'changed'] as const)('rejects configuration adoption when the previous identity is %s', async (kind) => {
   const adapter = new ScriptAdapter([textResponse('Original work.')]);
   const f = await flowHarness(adapter, { config: { dream: { enabled: false } } });
   try {

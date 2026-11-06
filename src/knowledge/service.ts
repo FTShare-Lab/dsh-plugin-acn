@@ -30,6 +30,8 @@ import { InboxEffectStore } from '../inbox/effects.js';
 import { DreamStore } from '../dream/checkpoint.js';
 import { AnalysisReadBoundary, KnowledgeBusy } from './alignment.js';
 import { PresentationStore } from '../store/presentation.js';
+import { activeUpstream } from '../config.js';
+import { historicalKnowledge } from '../store/history.js';
 
 import { nextClaimUpdateAt } from './timestamps.js';
 export { nextClaimUpdateAt } from './timestamps.js';
@@ -46,7 +48,7 @@ export class AcnKnowledge {
   constructor(readonly config: ResolvedConfig, readonly logger: StoreLogger, credential?: CredentialResolver) {
     this.agentId = config.agentId || null;
     this.mode = config.team.routerEndpoint ? 'team' : 'solo';
-    this.storeContext = this.agentId === null ? null : { agentId: this.agentId, paths: new AgentPaths(agentHomePath(config.home, this.agentId)), mode: this.mode, logger };
+    this.storeContext = this.agentId === null ? null : { agentId: this.agentId, paths: new AgentPaths(agentHomePath(config.home, this.agentId, activeUpstream(config))), mode: this.mode, logger };
     this.team = this.agentId !== null && this.mode === 'team' ? new TeamFacade(config.team, this.agentId, logger, credential) : null;
     this.jobs = this.storeContext === null ? null : new DurableWorker(this.storeContext);
   }
@@ -59,6 +61,7 @@ export class AcnKnowledge {
   }
   async initialize(): Promise<void> {
     if (!this.configured) return;
+    if ((await historicalKnowledge(this.context())).applications.some((record) => record.state === 'prepared')) throw new KnowledgeError('conflict', '知识目录还有未完成的历史提交，请先在原程序完成处理；当前插件不会重放旧任务。');
     await new PresentationStore(this.context()).initialize();
     await cleanupAtomicTemps(this.context().paths.root, this.logger);
     await new DreamStore(this.context()).recover();

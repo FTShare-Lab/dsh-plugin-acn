@@ -27,7 +27,7 @@ import { identityOf, sessionAllowed, sessionSelection, restoreSessionBinding, re
 import { connectArchives } from './formation-archive.js';
 import { readYamlOr, writeYamlAtomic } from '../store/yaml.js';
 import { withFileLock } from '../store/lock.js';
-import { agentHomePath } from '../store/paths.js';
+import { expandHomePath } from '../store/paths.js';
 import { RouteSchema } from '../formation/transcript.js';
 import { JobError } from '../worker/types.js';
 import { abortable } from '../llm/structured.js';
@@ -85,9 +85,7 @@ export class RuntimePool {
     return Object.entries(upstreamsOf(this.base.config)).map(([key, item]) => ({ key, name: item.name || key, agentId: item.agentId, enabled: item.enabled, mode: item.routerEndpoint ? 'team' as const : 'solo' as const }));
   }
   config(key: string, includeDisabled = false): ResolvedConfig | undefined {
-    const profiles = upstreamsOf(this.base.config);
-    const mapped = profiles[key] === undefined ? Object.keys(profiles).find((name) => profiles[name]?.legacyKey === key) : key;
-    return mapped === undefined ? undefined : resolveUpstream(this.base.config, mapped, includeDisabled);
+    return resolveUpstream(this.base.config, key, includeDisabled);
   }
   private forSession(header: SessionHeader): ResolvedConfig | undefined {
     const config = this.config(this.key(header));
@@ -119,11 +117,10 @@ export class RuntimePool {
     return Promise.resolve(this.view(header, events));
   }
   key(header: SessionHeader): string {
-    const key = this.selected(header)?.key ?? (this.base.config.upstreams === undefined ? (this.base.mode === 'team' ? 'legacy' : 'personal') : this.defaultFor());
-    const profiles = upstreamsOf(this.base.config);
-    return profiles[key] === undefined ? Object.keys(profiles).find((name) => profiles[name]?.legacyKey === key) ?? key : key;
+    const key = this.selected(header)?.key ?? (this.base.config.upstreams === undefined ? 'personal' : this.defaultFor());
+    return key;
   }
-  isBase(key: string): boolean { return key === '' || this.base.config.upstreams === undefined && key === (this.base.mode === 'team' ? 'legacy' : 'personal'); }
+  isBase(key: string): boolean { return key === '' || this.base.config.upstreams === undefined && key === 'personal'; }
   allowed(header: SessionHeader): boolean {
     const selected = this.selected(header);
     if (selected === undefined) return this.base.config.upstreams === undefined ? sessionAllowed(this.ctx, this.base.config, header) : Object.keys(this.base.config.upstreams).length === 0;
@@ -243,7 +240,7 @@ export class RuntimePool {
     const hadUserAtStart = this.hasUser(header);
     if (this.syncs.get(header.id)?.phase === 'syncing') throw new JobError('busy', '收件同步仍在进行。');
     const selectedKey = this.key(header);
-    if (this.base.config.upstreams === undefined && selectedKey === 'personal') throw new JobError('connection', '单人模式没有团队收件箱。');
+    if (this.base.config.upstreams === undefined && this.base.mode === 'solo' && selectedKey === 'personal') throw new JobError('connection', '单人模式没有团队收件箱。');
     const controller = new AbortController();
     const state: SyncState = { phase: 'syncing', message: '正在同步团队收件并准备本地知识…', controller };
     this.syncs.set(header.id, state);
@@ -370,7 +367,7 @@ export class RuntimePool {
       text = '';
       const requested = this.ctx.sessions.get(header.id)?.snapshotEvents().some((event) => event.type === 'request/header') ?? true;
       if (!requested) {
-        try { text = await fs.readFile(join(resolve(agentHomePath(this.base.config.home, 'example'), '..', '..'), this.key(header), 'ACN.md'), 'utf8'); }
+        try { text = await fs.readFile(join(resolve(expandHomePath(this.base.config.home)), 'upstreams', this.key(header), 'ACN.md'), 'utf8'); }
         catch (error) { if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error; }
       }
       await writeYamlAtomic(file, text, z.string(), knowledge.logger);

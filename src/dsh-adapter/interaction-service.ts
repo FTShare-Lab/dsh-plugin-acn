@@ -32,6 +32,7 @@ import { resolve } from 'node:path';
 import { expandHomePath } from '../store/paths.js';
 import type { RuntimePool } from './runtime-pool.js';
 import type { CredentialResolver } from '../team/http.js';
+import { historicalKnowledge } from '../store/history.js';
 
 export async function checkTeamConnection(ctx: Context, connection: Extract<InteractionRequest, { action: 'check' }>['connection'], credential: CredentialResolver = teamCredentials(ctx), signal?: AbortSignal): Promise<InteractionResult> {
   if (!connection.routerEndpoint || !connection.maintainerEndpoint) return { ok: false, message: '单人配置不需要连接检查；请先填写两个团队地址。' };
@@ -63,12 +64,14 @@ export async function readKnowledge(pool: RuntimePool, key: string, kind: 'claim
     const pending = await new UploadStore(context).read();
     const pendingIds = new Set<string>([...pending.claims, ...pending.disputes].map((item) => item.id));
     const delivered = (await new DeliveryStatusStore(context).read()).delivered;
+    const historical = (await historicalKnowledge(context)).deliveries;
     const target = knowledge.team === null ? '' : deliveryTarget(config.team.maintainerEndpoint);
     const delivery = (item: typeof values[number]) => {
       if (pendingIds.has(item.id)) return 'pending' as const;
       const receipt = delivered[`${kind}-${item.id}`];
       const version = 'statement' in item ? claimRevision(item) : 'reporter_agent_id' in item ? disputeVersion(item) : '';
-      return target !== '' && receipt?.target === target && receipt.version === version ? 'synced' as const : 'local' as const;
+      const oldReceipt = historical.some((record) => record.entity.value.id === item.id && record.entity.kind === kind && deliveryTarget(record.endpoint) === target && (record.entity.kind === 'claim' ? claimRevision(record.entity.value) : disputeVersion(record.entity.value)) === version);
+      return target !== '' && (receipt?.target === target && receipt.version === version || oldReceipt) ? 'synced' as const : 'local' as const;
     };
     const text = query.toLocaleLowerCase();
     const matching = values.filter((item) => ('holder' in item ? item.holder === context.agentId : 'agent' in item ? item.agent === context.agentId : item.reporter_agent_id === context.agentId)

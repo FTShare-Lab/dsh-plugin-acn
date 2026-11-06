@@ -1,8 +1,6 @@
 // 插件设置编辑工作配置与高级偏好；未展示的字段保留，由同一领域校验器检查。
 import { z } from 'zod';
 import { resolveConfig, ConnectionSchema, UpstreamSchema, UpstreamNameSchema } from './config.js';
-import { ConfigError } from './config.js';
-import { upstreamsOf } from './upstreams.js';
 import { AdvancedConfigurationSchema, advancedConfiguration } from './advanced-configuration.js';
 
 export const ConfigurationValuesSchema = z.strictObject({
@@ -50,12 +48,6 @@ function record(value: unknown): Record<string, unknown> {
 }
 
 export function mergeConfiguration(raw: Record<string, unknown>, values: ConfigurationValues): Record<string, unknown> {
-  if (values.upstreams !== undefined) {
-    const previous = upstreamsOf(resolveConfig(raw));
-    for (const [key, value] of Object.entries(values.upstreams)) {
-      if (value.legacyStorage !== previous[key]?.legacyStorage || value.legacyKey !== previous[key]?.legacyKey) throw new ConfigError(['upstreams', key, 'legacyStorage']);
-    }
-  }
   const next: Record<string, unknown> = {
     ...raw, agentId: values.agentId, home: values.home,
     ...(values.upstreams === undefined ? {} : { upstreams: values.upstreams, upstream: values.upstream ?? '' }),

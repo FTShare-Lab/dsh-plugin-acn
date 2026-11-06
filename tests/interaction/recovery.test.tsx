@@ -137,6 +137,15 @@ it('keeps budget closure, unfinished groups and terminal delivery distinct in En
   fireEvent.click(screen.getByRole('button', { name: 'Mark acknowledged' })); expect(action).toHaveBeenCalledWith({ action: 'ack', key: 'coding', id: 'delivery-a', version: 1 });
 });
 
+it('does not offer to resume a read-only historical task', async () => {
+  const { ActivityDetails } = await import('../../src/client/ActivityDetails.js');
+  const { ActivitySchema } = await import('../../src/interaction.js');
+  const item = ActivitySchema.parse({ id: 'history-application-example', kind: 'history', state: 'paused', attempts: 1, updatedAt: 1, summary: '历史记录：请先在原程序完成处理。', retryable: false });
+  render(<ActivityDetails api={{ read: vi.fn(), save: vi.fn(), interact: vi.fn() }} item={item} runtimeKey="coding" busy={false} c={c} action={vi.fn()} openClaim={vi.fn()} />);
+  expect(screen.queryByRole('button', { name: '继续任务' })).toBeNull();
+  expect(screen.getByText(item.summary)).toBeTruthy();
+});
+
 it('merges an untouched team toggle and key reference changed by another window', async () => {
   const solo = { ...profile, routerEndpoint: '', maintainerEndpoint: '', keyEnv: '' };
   const initial = { ...snapshot, values: configurationValues({ upstream: 'coding', upstreams: { coding: solo } }) };

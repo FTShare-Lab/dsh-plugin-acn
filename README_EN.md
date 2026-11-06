@@ -55,6 +55,8 @@ For individual use, create a configuration with a stable Agent ID and leave **Co
 
 Each configuration has its own knowledge. Projects using the same configuration share that knowledge; separate configurations remain isolated. A conversation's configuration is fixed after it starts. See the [illustrated user guide](docs/user_guide.md) for details.
 
+To reuse an existing account-based ACN library, select its account directory containing `settings.json` and `upstreams/` under **Knowledge and models → Knowledge directory**. Its configurations and knowledge are loaded automatically and remain in their original locations.
+
 ## Updates
 
 In the [GitHub repository](https://github.com/FTShare-Lab/dsh-plugin-acn), choose **Watch → Custom → Releases** to subscribe to release notifications. DSH currently does not notify you of new versions of this plugin or upgrade it automatically.
