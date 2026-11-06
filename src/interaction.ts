@@ -2,7 +2,7 @@
 import { z } from 'zod';
 import { MessageInfoSchema } from './interaction-messages.js';
 import { ConnectionSchema, UpstreamSchema } from './config.js';
-import { ClaimIdSchema, TraceIdSchema } from './protocol/ids.js';
+import { ClaimIdSchema, DisputeIdSchema, TraceIdSchema } from './protocol/ids.js';
 
 export const RuntimeChoiceSchema = z.object({ key: z.string(), name: z.string(), agentId: z.string(), enabled: z.boolean(), mode: z.enum(['solo', 'team']) });
 export const SessionViewSchema = z.object({
@@ -21,13 +21,14 @@ export const ActivitySchema = z.object({
   summaryInfo: MessageInfoSchema.optional(), errorInfo: MessageInfoSchema.optional(), counts: z.record(z.string(), z.number()).optional(),
   warnings: z.array(z.string()).optional(), budgetLimited: z.boolean().optional(), requiresAttention: z.boolean().optional(),
   incompleteCandidates: z.array(z.object({ groupId: z.string(), claimIds: z.array(ClaimIdSchema), reason: z.string() })).optional(),
+  entityIds: z.array(z.union([ClaimIdSchema, DisputeIdSchema, TraceIdSchema])).optional(),
   entityId: z.string().optional(), retryable: z.boolean().optional(), acknowledged: z.boolean().optional(),
   reportPath: z.string().optional(), phase: z.enum(['exploration', 'wrap_up', 'finished']).optional(),
 });
 export type Activity = z.infer<typeof ActivitySchema>;
 export const KnowledgeViewSchema = z.object({ key: z.string(), name: z.string(), items: z.array(KnowledgeItemSchema), omitted: z.number(), activities: z.array(ActivitySchema), activitiesOmitted: z.number().nonnegative().optional(), attentionCount: z.number().nonnegative().optional(), runningCount: z.number().nonnegative().optional(), activityKinds: z.array(z.string()).optional(), activitySources: z.array(z.string()).optional(), pendingClaims: z.number(), pendingDisputes: z.number() });
 export type KnowledgeView = z.infer<typeof KnowledgeViewSchema>;
-const ReferenceIdSchema = z.union([ClaimIdSchema, TraceIdSchema]);
+const ReferenceIdSchema = z.union([ClaimIdSchema, DisputeIdSchema, TraceIdSchema]);
 export const KnowledgeReferenceSchema = z.object({ key: z.string(), id: ReferenceIdSchema, item: KnowledgeItemSchema.optional() });
 export type KnowledgeReference = z.infer<typeof KnowledgeReferenceSchema>;
 export const TeamConnectionInputSchema = z.union([ConnectionSchema, UpstreamSchema.safeExtend({ id: z.string().optional() })]);

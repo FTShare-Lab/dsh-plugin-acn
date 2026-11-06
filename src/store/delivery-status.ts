@@ -11,7 +11,7 @@ export const DeliveryIssueSchema = z.object({
   version: z.string().regex(/^[0-9a-f]{64}$/).optional(), status: z.number().int().optional(), attempts: z.number().int().nonnegative().default(0), updatedAt: z.number().int().nonnegative(),
 });
 export type DeliveryIssue = z.infer<typeof DeliveryIssueSchema>;
-const Receipt = z.object({ version: z.string(), target: z.string().regex(/^[0-9a-f]{64}$/) });
+const Receipt = z.object({ version: z.string(), target: z.string().regex(/^[0-9a-f]{64}$/), updatedAt: z.number().int().nonnegative().optional() });
 const State = z.object({ schemaVersion: z.literal(1), issues: z.record(z.string(), DeliveryIssueSchema), delivered: z.record(z.string(), Receipt).default({}) });
 export function deliveryTarget(endpoint: string): string { return createHash('sha256').update(new URL(endpoint).href.replace(/\/+$/, '')).digest('hex'); }
 export class DeliveryStatusStore {
@@ -21,7 +21,7 @@ export class DeliveryStatusStore {
     if (this.context.mode !== 'team') return;
     await withFileLock(`${this.context.paths.deliveryStatus}.lock`, async () => {
       const state = await this.read(); const key = `${kind}-${id}`;
-      state.delivered[key] = { version, target: deliveryTarget(endpoint) }; delete state.issues[key];
+      state.delivered[key] = { version, target: deliveryTarget(endpoint), updatedAt: Date.now() }; delete state.issues[key];
       await writeYamlAtomic(this.context.paths.deliveryStatus, state, State, this.context.logger);
     }, { timeoutMs: this.context.lockTimeoutMs });
   }

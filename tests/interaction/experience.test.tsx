@@ -31,9 +31,9 @@ it('refreshes visible running activity without replacing expanded details and st
   let finished = false;
   const api: InteractionApi = { read: vi.fn().mockResolvedValue(snapshot), save: vi.fn(), interact: vi.fn<InteractionApi['interact']>().mockImplementation(() => Promise.resolve({ ok: true, message: '', knowledge: { ...base, runningCount: finished ? 0 : 1, activities: [{ id: 'job-a', kind: 'dream', state: finished ? 'succeeded' : 'running', phase: finished ? 'finished' : 'exploration', attempts: 1, updatedAt: 1, summary: 'Example', unseen: false, reportPath: '/example/dream/report.md' }] } })) };
   render(<KnowledgePanel api={api} initialKey="coding" initialTab="activity" c={c} />);
-  const summary = await screen.findByLabelText('dream · 正在处理'); const details = summary.closest('details'); if (details) details.open = true;
+  const row = await screen.findByRole('article', { name: 'dream · 正在处理' }); const details = row.querySelector('details'); if (details) details.open = true;
   finished = true;
-  await screen.findByLabelText('dream · 本地处理完成', {}, { timeout: 3500 }); expect(details?.open).toBe(true);
+  await screen.findByLabelText('dream · 已应用到本地', {}, { timeout: 3500 }); expect(details?.open).toBe(true);
   expect(screen.getByText('/example/dream/report.md')).toBeDefined(); expect(screen.queryByRole('button', { name: '复制报告路径' })).toBeNull();
   const count = vi.mocked(api.interact).mock.calls.length; await new Promise((resolve) => setTimeout(resolve, 2200)); expect(api.interact).toHaveBeenCalledTimes(count);
 });

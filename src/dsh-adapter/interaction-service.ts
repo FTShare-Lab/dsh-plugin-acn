@@ -124,12 +124,12 @@ export async function executeInteraction(ctx: Context, input: InteractionRequest
       if (config === undefined || !config.agentId) throw new JobError('connection', '请选择可用的知识身份。');
       const knowledge = pool.isBase(request.key) ? pool.base : new AcnKnowledge(config, ctx.logger);
       try {
-        const trace = request.id.startsWith('trace_');
-        const entries = trace ? await new TraceStore(knowledge.context()).list() : await new ClaimStore(knowledge.context()).list();
-        const item = entries.find((value) => value.id === request.id && ('holder' in value ? value.holder : value.agent) === knowledge.agentId);
+        const kind = request.id.startsWith('trace_') ? 'trace' : request.id.startsWith('dispute_') ? 'dispute' : 'claim';
+        const entries = kind === 'trace' ? await new TraceStore(knowledge.context()).list() : kind === 'dispute' ? await new DisputeStore(knowledge.context()).list() : await new ClaimStore(knowledge.context()).list();
+        const item = entries.find((value) => value.id === request.id && ('holder' in value ? value.holder : 'agent' in value ? value.agent : value.reporter_agent_id) === knowledge.agentId);
         const origins = item === undefined ? [] : (await knowledgeSources(knowledge.context(), [item.id])).get(item.id) ?? [];
         const sources = await Promise.all(origins.map((id) => sourceSession(ctx, id, signal)));
-        return { ok: true, message: '', reference: { key: request.key, id: request.id, ...(item === undefined ? {} : { item: { kind: trace ? 'trace' : 'claim', id: item.id, name: item.name, status: 'status' in item ? String(item.status) : '', detail: JSON.stringify(item, null, 2), sources } }) } };
+        return { ok: true, message: '', reference: { key: request.key, id: request.id, ...(item === undefined ? {} : { item: { kind, id: item.id, name: item.name, status: 'status' in item ? String(item.status) : '', detail: JSON.stringify(item, null, 2), sources } }) } };
       } finally { if (knowledge !== pool.base) await knowledge.team?.close(); }
     }
     if (request.action === 'activity') return { ok: true, message: '', knowledge: await readKnowledge(pool, request.key, 'claim', '', 0, false, request) };

@@ -3,10 +3,11 @@ import { useEffect, useRef, useState } from 'react';
 import { settingsUpstreams } from './TeamSettingsPage.js';
 import type { InteractionApi } from './TeamSettingsPage.js';
 import { displayMessage, messageInfo } from '../interaction-messages.js';
-import { ActivityDetails, activityState, activitySummary, activityKind } from './ActivityDetails.js';
+import { activityState, activityKind } from './ActivityDetails.js';
 import type { InteractionRequest, KnowledgeView } from '../interaction.js';
 import { Button, Select, Tabs, configurationLabel, inputStyle } from './interaction-ui.js';
 import type { Copy } from './interaction-ui.js';
+import { ActivityCard } from './ActivityCard.js';
 import { KnowledgeReference } from './KnowledgeReference.js';
 import { knowledgeDate, knowledgeStatus } from './knowledge-labels.js';
 import { KnowledgeSources } from './SourceSessionLink.js';
@@ -28,7 +29,6 @@ export function KnowledgePanel({ api, initialKey, initialTab = 'knowledge', show
   const [busy, setBusy] = useState(false); const [refresh, setRefresh] = useState(0);
   const [sourceOnly, setSourceOnly] = useState(''); const [attention, setAttention] = useState(false);
   const [expandedKnowledge, setExpandedKnowledge] = useState<string>();
-  const [expandedActivities, setExpandedActivities] = useState<Set<string>>(() => new Set());
   const [references, setReferences] = useState<{ id: string; from: string; origin: HTMLElement | null }[]>([]);
   const reference = references.at(-1);
   const openClaim = (id: string, from: string) => { const origin = document.activeElement instanceof HTMLElement ? document.activeElement : null; setReferences((items) => [...items, { id, from, origin }]); };
@@ -70,7 +70,7 @@ export function KnowledgePanel({ api, initialKey, initialTab = 'knowledge', show
     {notice && <SettingsToast key={notice.id} text={notice.text} />}
     <div className="acn-knowledge-header">
     {showHeading && <div className="acn-page-heading"><h2>{c('知识与活动', 'Knowledge and activity')}</h2></div>}
-    <div className="acn-filterbar"><Select aria-label={c('知识身份', 'Knowledge identity')} disabled={acting} value={key} onChange={(event) => { setKey(event.target.value); setOffset(0); setActivityOffset(0); setMessage(''); setData(undefined); setReferences([]); setExpandedKnowledge(undefined); setExpandedActivities(new Set()); clearActivity(); }}>{choices.map((item) => <option key={item.key} value={item.key}>{item.name}</option>)}</Select><Button disabled={busy || acting} onClick={() => { setRefresh((value) => value + 1); }}>{c('刷新', 'Refresh')}</Button></div>
+    <div className="acn-filterbar"><Select aria-label={c('知识身份', 'Knowledge identity')} disabled={acting} value={key} onChange={(event) => { setKey(event.target.value); setOffset(0); setActivityOffset(0); setMessage(''); setData(undefined); setReferences([]); setExpandedKnowledge(undefined); clearActivity(); }}>{choices.map((item) => <option key={item.key} value={item.key}>{item.name}</option>)}</Select><Button disabled={busy || acting} onClick={() => { setRefresh((value) => value + 1); }}>{c('刷新', 'Refresh')}</Button></div>
     </div>
     {reference && <KnowledgeReference key={references.length} api={api} runtimeKey={key} id={reference.id} from={reference.from} origin={reference.origin} c={c} back={() => { setReferences((items) => items.slice(0, -1)); }} openClaim={openClaim} openSource={openSource} />}
     <div hidden={reference !== undefined}><Tabs<'knowledge' | 'activity'> label={c('知识页面', 'Knowledge pages')} choices={[[ 'knowledge', c('本地知识', 'Local knowledge') ], [ 'activity', c('处理活动', 'Activity') ]]} value={tab} change={(next) => { setData(undefined); setTab(next); }}>
@@ -94,7 +94,7 @@ export function KnowledgePanel({ api, initialKey, initialTab = 'knowledge', show
       </> : <>
         <div className="acn-filterbar"><Select aria-label={c('活动类型', 'Activity kind')} value={activityKindFilter} onChange={(event) => { setActivityKindFilter(event.target.value); setActivityOffset(0); }}><option value="">{c('全部类型', 'All kinds')}</option>{kindChoices.map((value) => <option key={value} value={value}>{activityKind(value, c)}</option>)}</Select><Select aria-label={c('来源会话筛选', 'Filter source session')} value={sourceOnly} onChange={(event) => { setSourceOnly(event.target.value); setActivityOffset(0); }}><option value="">{c('全部来源会话', 'All source sessions')}</option>{sourceChoices.map((value) => <option key={value} value={value}>{sourceTitles.current.get(value) || `${c('会话', 'Session')} ${value.slice(-12)}`}</option>)}</Select><Select aria-label={c('活动结果', 'Activity result')} value={activityStateFilter} onChange={(event) => { setActivityStateFilter(event.target.value); setActivityOffset(0); }}><option value="">{c('全部结果', 'All results')}</option>{['queued', 'running', 'succeeded', 'failed', 'paused', 'rejected'].map((value) => <option key={value} value={value}>{activityState({ id: '', kind: '', state: value, attempts: 0, updatedAt: 0, unseen: false, summary: '' }, c)}</option>)}</Select><label className="acn-help"><input type="checkbox" checked={attention} onChange={(event) => { setAttention(event.target.checked); setActivityOffset(0); }} /> {c('只看需要处理', 'Needs attention')}</label>{filteredActivity && <Button className="acn-text-button" onClick={clearActivity}>{c('查看全部活动', 'View all activity')}</Button>}</div>
         {data && activities.length === 0 && <p className="acn-empty">{filteredActivity ? c('当前筛选下没有处理活动。', 'No activity matches these filters.') : c('暂无处理活动。', 'No activity.')}</p>}
-        {activities.map((item) => <details key={item.id} className="acn-entity acn-activity" open={expandedActivities.has(item.id)} onToggle={(event) => { const open = event.currentTarget.open; setExpandedActivities((previous) => { if (previous.has(item.id) === open) return previous; const next = new Set(previous); if (open) next.add(item.id); else next.delete(item.id); return next; }); }}><summary aria-label={`${item.kind} · ${activityState(item, c)}`}><span className="acn-entity-main"><span className="acn-entity-title"><strong>{activityKind(item.kind, c)}</strong><span className="acn-badge" data-tone={['failed', 'rejected'].includes(item.state) ? 'danger' : item.requiresAttention ? 'warning' : item.state === 'succeeded' ? 'positive' : 'neutral'}>{activityState(item, c)}</span></span><span className="acn-entity-preview" role={item.error ? 'alert' : undefined}>{item.error ? displayMessage(item.error, c, item.errorInfo) : activitySummary(item, c)}</span></span><time className="acn-time">{knowledgeDate(item.updatedAt)}</time></summary><div className="acn-entity-detail"><ActivityDetails api={api} item={item} runtimeKey={key} busy={busy || acting} c={c} showSummary={false} action={(request) => { void action(request); }} openSource={openSource} openClaim={openClaim} openComponents={openComponents} /></div></details>)}
+        {activities.map((item) => <ActivityCard key={item.id} api={api} item={item} runtimeKey={key} busy={busy || acting} c={c} action={(request) => { void action(request); }} openSource={openSource} openClaim={openClaim} openComponents={openComponents} />)}
         <div className="acn-pagination"><Button disabled={busy || acting || activityOffset === 0} onClick={() => { setActivityOffset(Math.max(0, activityOffset - 30)); }}>{c('上一页活动', 'Previous activity page')}</Button><small>{c('第', 'Page')} {Math.floor(activityOffset / 30) + 1} {c('页', '')}</small><Button disabled={busy || acting || !data?.activitiesOmitted} onClick={() => { setActivityOffset(activityOffset + 30); }}>{c('下一页活动', 'Next activity page')}</Button></div>
       </>}
     </Tabs></div>

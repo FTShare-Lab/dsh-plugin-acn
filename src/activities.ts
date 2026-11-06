@@ -1,7 +1,7 @@
 // 将任务与投递台账投影为公开活动；先筛选后分页，不读取私有 Memory 内容。
 import type { AcnKnowledge } from './knowledge/service.js';
 import { JobQueue } from './worker/queue.js';
-import { DeliveryStatusStore } from './store/delivery-status.js';
+import { DeliveryStatusStore, deliveryTarget } from './store/delivery-status.js';
 import { RejectedDisputeStore } from './store/rejected-disputes.js';
 import { PresentationStore } from './store/presentation.js';
 import { UploadStore } from './store/uploads.js';
@@ -9,7 +9,7 @@ import { messageInfo } from './interaction-messages.js';
 import type { JobKind } from './worker/types.js';
 import type { Activity } from './interaction.js';
 import { z } from 'zod';
-import { ClaimIdSchema } from './protocol/ids.js';
+import { ClaimIdSchema, DisputeIdSchema, TraceIdSchema } from './protocol/ids.js';
 import fs from 'node:fs/promises';
 import { join } from 'node:path';
 import { hasCode } from './store/errors.js';
@@ -22,16 +22,18 @@ export function activityDetails(result: unknown) {
   const value = publicResult(result);
   const counts = Object.fromEntries(Object.keys(labels).flatMap((key) => typeof value[key] === 'number' ? [[key, value[key]]] : []));
   if (Array.isArray(value['updatedClaimIds'])) counts['claimCount'] = value['updatedClaimIds'].length;
+  const ids = z.array(z.union([ClaimIdSchema, DisputeIdSchema, TraceIdSchema]));
+  const entityIds = [...new Set(['entityIds', 'updatedClaimIds'].flatMap((key) => { const parsed = ids.safeParse(value[key]); return parsed.success ? parsed.data : []; }))];
   const incomplete = z.array(Incomplete).safeParse(value['incompleteCandidates']);
   const warnings = z.array(z.string()).safeParse(value['warnings']);
   const texts = Object.entries(counts).map(([key, count]) => `${labels[key]}: ${count}`);
   if (value['skipped'] === true || typeof value['skipped'] === 'string') texts.push('没有需要新增处理的内容');
-  if (value['changed'] === false) texts.push('没有新增记忆');
+  if (value['changed'] === false) texts.push('没有知识变更');
   if (value['applied'] === true) texts.push('本地处理完成');
   if (value['budgetLimited'] === true) texts.push('本次已按额度收尾；未完成项未执行，再次整理将读取当前知识');
   const skipped = Array.isArray(value['skipped']) ? value['skipped'].filter((id): id is string => typeof id === 'string') : [];
   if (skipped.length > 0) texts.push(`跳过 ${skipped.length} 组`);
-  return { counts, summary: texts.join('；') || (result == null ? '尚无处理结果' : '处理完成，可能未产生新知识'), warnings: warnings.success ? warnings.data : [], incompleteCandidates: incomplete.success ? incomplete.data : [], budgetLimited: value['budgetLimited'] === true };
+  return { counts, entityIds, summary: texts.join('；') || (result == null ? '尚无处理结果' : '处理完成，可能未产生新知识'), warnings: warnings.success ? warnings.data : [], incompleteCandidates: incomplete.success ? incomplete.data : [], budgetLimited: value['budgetLimited'] === true };
 }
 export function emptyInbox(result: unknown): boolean {
   const value = publicResult(result);
@@ -79,6 +81,18 @@ export async function allActivities(knowledge: AcnKnowledge, supports: (kind: Jo
       requiresAttention: !waiting, retryable: !waiting && issue.reason !== 'version', unseen: false,
     });
   }
+  // 尚未尝试的队列项也需要可见，避免有待投数却找不到处理入口。
+  for (const [kind, items] of [['claim', pending.claims], ['dispute', pending.disputes]] as const) for (const item of items) {
+    if (status.issues[`${kind}-${item.id}`] !== undefined) continue;
+    rows.push({ id: `delivery-${kind}-${item.id}`, kind: 'delivery', state: 'queued', entityId: item.id, attempts: 0, updatedAt: Date.parse('updated_at' in item ? item.updated_at ?? item.created_at : item.created_at), unseen: false, retryable: true, summary: '等待后台团队投递。' });
+  }
+  const target = knowledge.team === null ? '' : deliveryTarget(knowledge.config.team.maintainerEndpoint);
+  for (const [key, receipt] of Object.entries(status.delivered)) {
+    const id = key.replace(/^(claim|dispute)-/, '');
+    if (receipt.target !== target || !z.union([ClaimIdSchema, DisputeIdSchema]).safeParse(id).success) continue;
+    const source = rows.filter((row) => row.entityIds?.some((entityId) => entityId === id) && row.updatedAt <= (receipt.updatedAt ?? 0)).sort((a, b) => b.updatedAt - a.updatedAt)[0]?.sessionId;
+    rows.push({ id: `delivery-confirmed-${key}`, kind: 'delivery', state: 'succeeded', entityId: id, attempts: 0, updatedAt: receipt.updatedAt ?? 0, unseen: false, retryable: false, ...(source === undefined ? {} : { sessionId: source }), summary: '此版本已收到团队投递确认。' });
+  }
   // 拒绝先落盘再出队；即使在两者之间崩溃，页面也必须解释终止原因。
   for (const [version, rejection] of Object.entries(await new RejectedDisputeStore(context).read(true))) {
     const id = `delivery-rejected-${version}`; const updatedAt = Date.parse(rejection.rejected_at); const acknowledged = presentation?.seen[id] === updatedAt;
@@ -86,8 +100,8 @@ export async function allActivities(knowledge: AcnKnowledge, supports: (kind: Jo
       requiresAttention: !acknowledged, retryable: false, summary: '团队拒绝此版本的争议（409），已停止自动重试，并未成功投递。请核对关联知识，由 Agent 根据当前版本形成新的争议。', summaryInfo: { code: 'delivery.rejected', entityId: rejection.dispute_id, status: 409 } });
   }
   const history = await historicalKnowledge(context);
-  for (const record of history.applications) rows.push({ id: `history-application-${record.id}`, kind: record.kind, state: record.state === 'applied' ? 'succeeded' : record.state === 'prepared' ? 'paused' : 'cancelled', attempts: record.attempts, updatedAt: record.updatedAt, unseen: false, retryable: false, requiresAttention: record.state === 'prepared', ...(record.sessionId === undefined ? {} : { sessionId: record.sessionId }), counts: { claimCount: record.claimCount, disputeCount: record.disputeCount, traceCount: record.traceCount }, summary: record.state === 'applied' ? '历史记录：本地处理完成。' : record.state === 'prepared' ? '历史记录：原程序尚未完成本地提交，请先在原程序中完成处理。' : '历史记录：处理已取消。' });
-  for (const record of history.deliveries) rows.push({ id: `history-delivery-${record.entity.kind}-${record.entity.value.id}-${record.updatedAt}`, kind: 'delivery', state: 'succeeded', entityId: record.entity.value.id, attempts: 0, updatedAt: record.updatedAt, sessionId: record.sessionId, unseen: false, retryable: false, summary: '历史记录：此版本已收到团队投递确认。' });
+  for (const record of history.applications) rows.push({ id: `history-application-${record.id}`, kind: record.kind, state: record.state === 'applied' ? 'succeeded' : record.state === 'prepared' ? 'paused' : 'cancelled', attempts: record.attempts, updatedAt: record.updatedAt, unseen: false, retryable: false, requiresAttention: record.state === 'prepared', ...(record.sessionId === undefined ? {} : { sessionId: record.sessionId }), entityIds: record.entityIds.flatMap((id) => { const parsed = z.union([ClaimIdSchema, DisputeIdSchema, TraceIdSchema]).safeParse(id); return parsed.success ? [parsed.data] : []; }), counts: { claimCount: record.claimCount, disputeCount: record.disputeCount, traceCount: record.traceCount }, summary: record.state === 'applied' ? `更新 Claim: ${record.claimCount}；形成争议: ${record.disputeCount}；形成来源: ${record.traceCount}` : record.state === 'prepared' ? '历史记录：原程序尚未完成本地提交，请先在原程序中完成处理。' : '历史记录：处理已取消。' });
+  for (const record of history.deliveries) rows.push({ id: `history-delivery-${record.entity.kind}-${record.entity.value.id}-${record.updatedAt}`, kind: 'delivery', state: 'succeeded', entityId: record.entity.value.id, attempts: 0, updatedAt: record.updatedAt, sessionId: record.sessionId, unseen: false, retryable: false, summary: '此版本已收到团队投递确认。' });
   return rows.sort((left, right) => right.updatedAt - left.updatedAt || left.id.localeCompare(right.id));
 }
 export interface ActivityPage { attentionOnly?: boolean; sourceSession?: string; kind?: string; state?: string; offset?: number }

@@ -153,7 +153,7 @@ it.each(['inbox', 'dream', 'recap', 'finalize'] as const)('shows the persisted m
   const interact = vi.fn<InteractionApi['interact']>().mockResolvedValue({ ok: true, message: '', knowledge: { key: 'personal', name: '示例配置', items: [], omitted: 0, activities: [{ id: 'failed-model-job', kind, state: 'failed', attempts: 1, updatedAt: 1, unseen: true, summary: '', error }], pendingClaims: 0, pendingDisputes: 0 } });
   const api: InteractionApi = { read: vi.fn().mockResolvedValue(snapshot), save: vi.fn(), interact };
   render(<KnowledgePanel api={api} initialKey="personal" initialTab="activity" c={c} />);
-  fireEvent.click(await screen.findByLabelText(`${kind} · 处理失败`, { exact: false, selector: 'summary' }));
+  await screen.findByRole('article', { name: `${kind} · 处理失败` });
   expect(screen.getByRole('alert').textContent).toBe(error);
   fireEvent.click(screen.getByRole('button', { name: '重试任务' }));
   await waitFor(() => { expect(interact).toHaveBeenCalledWith({ action: 'retry', key: 'personal', id: 'failed-model-job' }, expect.any(AbortSignal)); });

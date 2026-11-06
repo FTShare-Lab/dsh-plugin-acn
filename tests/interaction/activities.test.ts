@@ -76,3 +76,8 @@ it('shows inactive queued handlers as paused and preserves their persistent queu
     expect((await allActivities(f.knowledge, () => true))[0]?.state).toBe('queued');
   } finally { await f.close(); }
 });
+
+it('projects valid public result links and omits malformed IDs', () => {
+  expect(activityDetails({ entityIds: ['claim_00000001', 'dispute_00000001', 'trace_00000001'], updatedClaimIds: ['claim_00000001'], privateData: 'hidden' }).entityIds).toEqual(['claim_00000001', 'dispute_00000001', 'trace_00000001']);
+  expect(activityDetails({ entityIds: ['not-an-id'] }).entityIds).toEqual([]);
+});

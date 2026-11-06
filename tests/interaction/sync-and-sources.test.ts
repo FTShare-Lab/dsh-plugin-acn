@@ -51,3 +51,17 @@ it('keeps a recorded source after the latest checkpoint changes and inspects col
     expect(resume).not.toHaveBeenCalled();
   } finally { await f.close(); }
 });
+
+it('opens a Dispute within the selected identity and never resolves another reporter', async () => {
+  const f = await flowHarness(new ScriptAdapter([]));
+  try {
+    const { DisputeStore } = await import('../../src/store/disputes.js');
+    const { DisputeSchema } = await import('../../src/protocol/dispute.js');
+    const store = new DisputeStore(f.knowledge.context());
+    const dispute = DisputeSchema.parse({ id: 'dispute_00000001', name: 'example_conflict', reporter_agent_id: f.knowledge.agentId, claims: [f.claim.id], summary: 'Check the example rule.', status: 'open', created_at: f.claim.created_at });
+    await store.write(dispute);
+    expect(await executeInteraction(f.ctx, { action: 'reference', key: 'personal', id: dispute.id })).toMatchObject({ ok: true, reference: { item: { kind: 'dispute', id: dispute.id } } });
+    await store.write({ ...dispute, reporter_agent_id: 'other-agent' });
+    expect((await executeInteraction(f.ctx, { action: 'reference', key: 'personal', id: dispute.id })).reference?.item).toBeUndefined();
+  } finally { await f.close(); }
+});

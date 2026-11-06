@@ -232,3 +232,33 @@ describe('existing account libraries', () => {
     expect(await f.knowledge.jobs?.queue.list()).toEqual([]);
   });
 });
+
+it('keeps historical Claim and Dispute acknowledgements separate from a newly queued revision', async () => {
+  const f = await fixture(); const context = f.knowledge.context();
+  const dispute = DisputeSchema.parse({ id: 'dispute_00000001', name: 'example_conflict', reporter_agent_id: 'agent-a', claims: [f.claim.id], summary: 'Check the example rule.', status: 'open', created_at: f.claim.created_at });
+  await new DisputeStore(context).write(dispute);
+  const batch = f.ledger.batches[0]; if (batch === undefined) throw new Error('Missing fixture batch.');
+  await f.write(f.relative(join(context.paths.uploads, 'ledger.yaml')), { ...f.ledger, batches: [{ ...batch, items: [...batch.items, { entity: { kind: 'dispute', value: dispute }, state: 'delivered', lastConnectionRevision: connectionRevision, presentationAtMicros: 1767225603000000 }] }] });
+  const ctx = { logger, sessions: { get: () => undefined }, get: () => undefined } as unknown as Context;
+  const pool = { ctx, config: () => f.selected, isBase: () => true, base: f.knowledge, supportsJob: () => false, choices: () => [] } as unknown as RuntimePool;
+  expect((await readKnowledge(pool, first, 'claim', '', 0)).items[0]?.delivery).toBe('synced');
+  expect((await readKnowledge(pool, first, 'dispute', '', 0)).items[0]?.delivery).toBe('synced');
+  const { UploadStore } = await import('../../src/store/uploads.js');
+  const revisedClaim = { ...f.claim, statement: 'Rechecked example rule.' }; const revisedDispute = { ...dispute, summary: 'Rechecked conflict evidence.' };
+  await new ClaimStore(context).write(revisedClaim); await new DisputeStore(context).write(revisedDispute);
+  await new UploadStore(context).enqueue([revisedClaim], [revisedDispute], true);
+  expect((await readKnowledge(pool, first, 'claim', '', 0)).items[0]?.delivery).toBe('pending');
+  expect((await readKnowledge(pool, first, 'dispute', '', 0)).items[0]?.delivery).toBe('pending');
+  expect((await allActivities(f.knowledge)).filter((row) => row.kind === 'delivery').map((row) => [row.entityId, row.state])).toEqual(expect.arrayContaining([[f.claim.id, 'succeeded'], [dispute.id, 'succeeded'], [f.claim.id, 'queued'], [dispute.id, 'queued']]));
+  const { DeliveryStatusStore } = await import('../../src/store/delivery-status.js');
+  const { claimRevision } = await import('../../src/protocol/revision.js'); const { disputeVersion } = await import('../../src/store/rejected-disputes.js');
+  const queue = new UploadStore(context); const receipts = new DeliveryStatusStore(context);
+  await receipts.acknowledge('claim', f.claim.id, claimRevision(revisedClaim), f.selected.team.maintainerEndpoint);
+  await receipts.acknowledge('dispute', dispute.id, disputeVersion(revisedDispute), f.selected.team.maintainerEndpoint);
+  await queue.removeDeliveredClaims([revisedClaim]); await queue.removeDeliveredDisputes([revisedDispute]);
+  expect((await readKnowledge(pool, first, 'claim', '', 0)).items[0]?.delivery).toBe('synced');
+  expect((await readKnowledge(pool, first, 'dispute', '', 0)).items[0]?.delivery).toBe('synced');
+  const recent = (await allActivities(f.knowledge)).filter((row) => row.id.startsWith('delivery-confirmed-'));
+  expect(recent).toHaveLength(2); expect(recent.every((row) => row.state === 'succeeded' && row.updatedAt > 0)).toBe(true);
+  expect((await allActivities(f.knowledge)).find((row) => row.id === `history-application-${applicationId}`)?.entityIds).toEqual([f.claim.id, f.trace.id]);
+});

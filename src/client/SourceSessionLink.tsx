@@ -5,10 +5,10 @@ import type { InteractionApi } from './TeamSettingsPage.js';
 import { Button } from './interaction-ui.js';
 import type { Copy } from './interaction-ui.js';
 
-export function SourceSessionLink({ source, api, c, open }: { source: SourceSession; api: InteractionApi; c: Copy; open?: ((id: string) => void) | undefined }) {
+export function SourceSessionLink({ source, api, c, open, label: customLabel }: { label?: string | undefined; source: SourceSession; api: InteractionApi; c: Copy; open?: ((id: string) => void) | undefined }) {
   const [checking, setChecking] = useState(false); const [error, setError] = useState(''); const controller = useRef<AbortController>();
   useEffect(() => () => { controller.current?.abort(); }, []);
-  const label = source.title || source.id;
+  const label = customLabel || source.title || source.id;
   async function navigate() {
     const current = new AbortController(); controller.current = current; setChecking(true); setError('');
     try {
