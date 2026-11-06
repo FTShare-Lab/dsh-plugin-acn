@@ -86,7 +86,7 @@ const patches = loadOverlayPatches('acn-smoke', patchPath);
 if (scenario === 'disabled') patches.push({ id: 'acn-knowledge', disabled: true });
 const configured = scenario === 'configured' || scenario === 'calibrated' || scenario.startsWith('disabled_');
 const home = join(process.cwd(), 'knowledge');
-if (configured) patches.push({ id: 'acn-knowledge', config: { agentId: 'agent-a', home, dream: { evidenceCalibration: scenario === 'calibrated' } } });
+patches.push({ id: 'acn-knowledge', config: { home, ...(configured ? { agentId: 'agent-a', dream: { evidenceCalibration: scenario === 'calibrated' } } : {}) } });
 if (scenario === 'calibrated') await writeFile(join(process.cwd(), 'source.txt'), 'Retry only read requests within the explicit service budget. Writes remain unverified.');
 if (scenario.startsWith('disabled_')) patches.push({ id: `acn-${scenario.slice('disabled_'.length)}`, disabled: true });
 
